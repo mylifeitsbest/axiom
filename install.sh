@@ -42,7 +42,13 @@ if command -v pacman >/dev/null 2>&1; then
     printf '\n[axiom]\nSigLevel = Required\nServer = %s/arch/$arch\n' "$REPO_URL" | $SUDO tee -a /etc/pacman.conf >/dev/null
   fi
   say "Устанавливаю…"
-  $SUDO pacman -Sy --noconfirm axiom
+  # В Arch нельзя делать -Sy без -u (частичное обновление ломает систему).
+  # Если есть терминал, pacman спросит подтверждение там; иначе ставим без вопросов.
+  if { : </dev/tty; } 2>/dev/null; then
+    $SUDO pacman -Syu --needed axiom-browser </dev/tty
+  else
+    $SUDO pacman -Syu --needed --noconfirm axiom-browser
+  fi
 elif command -v apt-get >/dev/null 2>&1; then
   say "Добавляю ключ подписи Axiom…"
   fetch "$REPO_URL/axiom.gpg" "$tmp/axiom.gpg"
@@ -56,10 +62,10 @@ elif command -v apt-get >/dev/null 2>&1; then
   say "Обновляю списки пакетов…"
   $SUDO apt-get update
   say "Устанавливаю…"
-  $SUDO apt-get install -y axiom
+  $SUDO apt-get install -y axiom-browser
 else
   die "не нашёл apt или pacman. Возьмите архив axiom-linux-x86_64.tar.gz: https://github.com/mylifeitsbest/axiom/releases/latest"
 fi
 
-say "Готово. Axiom есть в меню приложений, запуск из терминала: axiom"
+say "Готово. Axiom есть в меню приложений, запуск из терминала: axiom-browser"
 say "Обновления придут вместе с системой."

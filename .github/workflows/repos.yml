@@ -33,8 +33,10 @@ jobs:
         run: |
           mkdir -p repo && cd repo
           gh release download --repo "$GITHUB_REPOSITORY" --pattern axiom-x86_64.pkg.tar.zst
-          VER=$(bsdtar -xOf axiom-x86_64.pkg.tar.zst .PKGINFO | sed -n 's/^pkgver = //p')
-          PKG="axiom-$VER-x86_64.pkg.tar.zst"
+          INFO=$(bsdtar -xOf axiom-x86_64.pkg.tar.zst .PKGINFO)
+          NAME=$(printf '%s\n' "$INFO" | sed -n 's/^pkgname = //p')
+          VER=$(printf '%s\n' "$INFO" | sed -n 's/^pkgver = //p')
+          PKG="$NAME-$VER-x86_64.pkg.tar.zst"
           mv axiom-x86_64.pkg.tar.zst "$PKG"
           export GNUPGHOME="$(mktemp -d)"
           printf '%s\n' "$SIGNING_KEY" | gpg --batch --import
@@ -68,11 +70,12 @@ jobs:
       - name: Репозиторий APT
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils
-          POOL=site/apt/pool/main/a/axiom
+          POOL=site/apt/pool/main/a/axiom-browser
           mkdir -p "$POOL"
           gh release download --repo "$GITHUB_REPOSITORY" --pattern axiom_amd64.deb --dir "$POOL"
+          NAME=$(dpkg-deb -f "$POOL/axiom_amd64.deb" Package)
           VER=$(dpkg-deb -f "$POOL/axiom_amd64.deb" Version)
-          mv "$POOL/axiom_amd64.deb" "$POOL/axiom_${VER}_amd64.deb"
+          mv "$POOL/axiom_amd64.deb" "$POOL/${NAME}_${VER}_amd64.deb"
           cd site/apt
           mkdir -p dists/stable/main/binary-amd64
           apt-ftparchive packages pool > dists/stable/main/binary-amd64/Packages
@@ -121,13 +124,19 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           if command -v pacman >/dev/null 2>&1; then
-            pacman -Sy --noconfirm --needed curl
+            pacman -Syu --noconfirm --needed curl
           else
             apt-get update && apt-get install -y curl ca-certificates
           fi
           curl -fsSL "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/install.sh" | sh
-          test -x /usr/bin/axiom
-          test -f /usr/share/applications/axiom.desktop
-          test -f /usr/share/icons/hicolor/256x256/apps/axiom.png
-          if ldd /usr/bin/axiom | grep "not found"; then exit 1; fi
+          test -x /usr/bin/axiom-browser
+          test -f /usr/share/applications/axiom-browser.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/axiom-browser.png
+          if ldd /usr/bin/axiom-browser | grep "not found"; then exit 1; fi
+          # Поставился именно наш браузер, а не одноимённый пакет дистрибутива.
+          if command -v dpkg-query >/dev/null 2>&1; then
+            dpkg-query -W -f '${Package} ${Version} ${Maintainer}\n' axiom-browser | tee /dev/stderr | grep -q "Axiom contributors"
+          else
+            pacman -Qi axiom-browser | grep -E "^(Name|Version|URL)"
+          fi
           echo "Axiom установлен и все библиотеки на месте"

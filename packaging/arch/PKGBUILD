@@ -1,6 +1,8 @@
 # Maintainer: Axiom contributors <192708983+mylifeitsbest@users.noreply.github.com>
-pkgname=axiom
-pkgver=0.2.0
+# Имя `axiom-browser`, чтобы не путать с системой компьютерной алгебры Axiom.
+pkgname=axiom-browser
+_repo=axiom
+pkgver=0.2.1
 pkgrel=1
 pkgdesc='Лёгкий браузер на Rust: минимум памяти, DuckDuckGo и панель Google AI Mode'
 arch=('x86_64')
@@ -13,26 +15,26 @@ source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
 prepare() {
-  cd "$pkgname-$pkgver"
+  cd "$_repo-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-  cd "$pkgname-$pkgver"
+  cd "$_repo-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
   cargo build --frozen --release
 }
 
 package() {
-  cd "$pkgname-$pkgver"
-  install -Dm755 target/release/axiom "$pkgdir/usr/bin/axiom"
-  install -Dm644 packaging/linux/axiom.desktop "$pkgdir/usr/share/applications/axiom.desktop"
-  install -Dm644 assets/logo.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/axiom.svg"
+  cd "$_repo-$pkgver"
+  install -Dm755 target/release/axiom "$pkgdir/usr/bin/axiom-browser"
+  install -Dm644 packaging/linux/axiom-browser.desktop "$pkgdir/usr/share/applications/axiom-browser.desktop"
+  install -Dm644 assets/logo.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/axiom-browser.svg"
   for size in 16 24 32 48 64 128 256 512; do
     install -Dm644 "assets/linux/axiom-$size.png" \
-      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/axiom.png"
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/axiom-browser.png"
   done
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

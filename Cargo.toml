@@ -1,6 +1,6 @@
 [package]
 name = "axiom"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Лёгкий десктопный браузер на Rust: минимум памяти, DuckDuckGo и панель Google AI Mode"
 repository = "https://github.com/mylifeitsbest/axiom"
@@ -32,8 +32,12 @@ gtk = "0.18"
 winresource = "0.1.34"
 
 # Пакет для Debian, Ubuntu и Kali: `cargo deb --no-build` после `cargo build --release`.
+# Имя `axiom-browser`: в Debian уже есть пакет `axiom` (система компьютерной алгебры).
 [package.metadata.deb]
-name = "axiom"
+name = "axiom-browser"
+# Наш первый .deb (0.2.0) назывался `axiom`; система алгебры с версией 2021xxxx под условие не попадает.
+replaces = "axiom (<< 0.2.1)"
+breaks = "axiom (<< 0.2.1)"
 maintainer = "Axiom contributors <192708983+mylifeitsbest@users.noreply.github.com>"
 copyright = "2026, Axiom contributors"
 section = "web"
@@ -44,17 +48,17 @@ extended-description = """\
 DuckDuckGo во вкладке и Google AI Mode в боковой панели, прокси только для \
 панели ИИ, спящие вкладки и тонкая настройка внешнего вида."""
 assets = [
-    ["target/release/axiom", "usr/bin/", "755"],
-    ["packaging/linux/axiom.desktop", "usr/share/applications/", "644"],
-    ["assets/logo.svg", "usr/share/icons/hicolor/scalable/apps/axiom.svg", "644"],
-    ["assets/linux/axiom-16.png", "usr/share/icons/hicolor/16x16/apps/axiom.png", "644"],
-    ["assets/linux/axiom-24.png", "usr/share/icons/hicolor/24x24/apps/axiom.png", "644"],
-    ["assets/linux/axiom-32.png", "usr/share/icons/hicolor/32x32/apps/axiom.png", "644"],
-    ["assets/linux/axiom-48.png", "usr/share/icons/hicolor/48x48/apps/axiom.png", "644"],
-    ["assets/linux/axiom-64.png", "usr/share/icons/hicolor/64x64/apps/axiom.png", "644"],
-    ["assets/linux/axiom-128.png", "usr/share/icons/hicolor/128x128/apps/axiom.png", "644"],
-    ["assets/linux/axiom-256.png", "usr/share/icons/hicolor/256x256/apps/axiom.png", "644"],
-    ["assets/linux/axiom-512.png", "usr/share/icons/hicolor/512x512/apps/axiom.png", "644"],
+    ["target/release/axiom", "usr/bin/axiom-browser", "755"],
+    ["packaging/linux/axiom-browser.desktop", "usr/share/applications/", "644"],
+    ["assets/logo.svg", "usr/share/icons/hicolor/scalable/apps/axiom-browser.svg", "644"],
+    ["assets/linux/axiom-16.png", "usr/share/icons/hicolor/16x16/apps/axiom-browser.png", "644"],
+    ["assets/linux/axiom-24.png", "usr/share/icons/hicolor/24x24/apps/axiom-browser.png", "644"],
+    ["assets/linux/axiom-32.png", "usr/share/icons/hicolor/32x32/apps/axiom-browser.png", "644"],
+    ["assets/linux/axiom-48.png", "usr/share/icons/hicolor/48x48/apps/axiom-browser.png", "644"],
+    ["assets/linux/axiom-64.png", "usr/share/icons/hicolor/64x64/apps/axiom-browser.png", "644"],
+    ["assets/linux/axiom-128.png", "usr/share/icons/hicolor/128x128/apps/axiom-browser.png", "644"],
+    ["assets/linux/axiom-256.png", "usr/share/icons/hicolor/256x256/apps/axiom-browser.png", "644"],
+    ["assets/linux/axiom-512.png", "usr/share/icons/hicolor/512x512/apps/axiom-browser.png", "644"],
 ]
 
 [lints.clippy]

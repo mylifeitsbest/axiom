@@ -64,10 +64,12 @@ elif command -v apt-get >/dev/null 2>&1; then
   $SUDO install -Dm644 "$tmp/axiom.gpg" /usr/share/keyrings/axiom.gpg
   echo "deb [arch=amd64 signed-by=/usr/share/keyrings/axiom.gpg] $REPO_URL/apt stable main" \
     | $SUDO tee /etc/apt/sources.list.d/axiom.list >/dev/null
+  # При запуске через `curl | sh` stdin — это сам скрипт: вопросы debconf
+  # (например, tzdata в чистой системе) читали бы его и зависали. Ставим без вопросов.
   say "Обновляю списки пакетов…"
-  $SUDO apt-get update
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update </dev/null
   say "Устанавливаю…"
-  $SUDO apt-get install -y axiom-browser
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y axiom-browser </dev/null
 else
   die "не нашёл apt или pacman. Возьмите архив axiom-linux-x86_64.tar.gz: https://github.com/mylifeitsbest/axiom/releases/latest"
 fi

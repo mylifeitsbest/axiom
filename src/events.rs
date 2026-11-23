@@ -4,7 +4,10 @@ use std::{thread, time::Duration};
 
 use tao::event_loop::EventLoopProxy;
 
-use crate::{tabs::TabId, ui::hotkeys::Hotkey};
+use crate::{
+    tabs::{TabId, sleep::PageState},
+    ui::hotkeys::Hotkey,
+};
 
 /// Интервал служебного таймера: усыпление вкладок, сохранение сессии и истории.
 pub const TICK: Duration = Duration::from_secs(30);
@@ -26,8 +29,8 @@ pub enum UserEvent {
         url: String,
         ai: bool,
     },
-    /// Позиция прокрутки получена — вкладку можно усыплять.
-    ScrollCaptured(TabId, f64),
+    /// Страница ответила перед усыплением: позиция прокрутки и нет ли недописанного текста.
+    SleepChecked(TabId, PageState),
     FindResult(bool),
     /// Адреса от второго запуска `axiom.exe <url>` (клик по ссылке в другой программе).
     External(Vec<String>),

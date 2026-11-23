@@ -104,9 +104,10 @@ function createPanels(ax) {
         </div>`,
       memory: `
         <div class="card">
+          ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', '<input type="range" min="0" max="10" step="1" data-bkey="live_tabs">')}
           ${row('Усыплять вкладки', '<span id="sleepOut"></span>', '<input type="range" min="0" max="120" step="5" data-bkey="sleep_minutes">')}
         </div>
-        <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Вкладки, где играет звук, не засыпают. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
+        <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Не засыпают вкладки, где играет звук или остался недописанный текст. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
       data: `
         <div class="card hero-card"><div class="hero-ic">${icon('download')}</div>
           <div class="hero-t"><b>Перенести из Google Chrome</b><small>Закладки и история последнего профиля. Chrome можно не закрывать.</small><small class="imp-res" id="impRes"></small></div>
@@ -219,6 +220,8 @@ function createPanels(ax) {
     $$('[data-show]', box).forEach((el) => { const [k, v] = el.dataset.show.split('='); el.hidden = String(A[k]) !== v; });
     const so = $('#sleepOut', box);
     if (so) { const m = +B.sleep_minutes; so.textContent = m ? `Через ${m} мин без активности` : 'Никогда'; }
+    const lo = $('#liveOut', box);
+    if (lo) { const n = +B.live_tabs; lo.textContent = n ? `Не больше ${n}, лишние засыпают сразу` : 'Без ограничения'; }
   }
 
   // ---------- общие обработчики для листа и приветствия ----------

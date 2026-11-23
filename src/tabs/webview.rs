@@ -114,6 +114,7 @@ pub fn build_tab(
         .with_focused(spec.visible)
         .with_devtools(true)
         .with_hotkeys_zoom(true)
+        .with_initialization_script(super::sleep::DRAFT_TRACKER)
         .with_navigation_handler(|url| omnibox::is_navigable(&url))
         .with_document_title_changed_handler(move |title| {
             let _ = title_tx.send_event(UserEvent::TabTitle(id, title));

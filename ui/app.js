@@ -577,10 +577,12 @@
     if (S.aiOpen === app.classList.contains('ai-open')) return;
     clearTimeout(aiTimer);
     aiReady = false;
+    $('#aiBody').classList.remove('ready');
     app.classList.toggle('ai-open', S.aiOpen);
     queueLayout();
     // Нативная панель появляется, когда закончится анимация выезда.
-    if (S.aiOpen) aiTimer = setTimeout(() => { aiReady = true; queueLayout(); }, ms(420));
+    // Скелетон под готовой панелью не виден: прячем, чтобы его анимация не перерисовывала окно каждый кадр.
+    if (S.aiOpen) aiTimer = setTimeout(() => { aiReady = true; $('#aiBody').classList.add('ready'); queueLayout(); }, ms(420));
   }
   function toggleAi() {
     if (S.aiOpen) { send({ cmd: 'ai', open: false }); return; }

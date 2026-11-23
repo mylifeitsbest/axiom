@@ -50,9 +50,16 @@ pub fn styled<'a>(
 }
 
 /// Аргументы WebView2: умолчания wry, плюс тёмные сайты и прокси при необходимости.
+///
+/// Ради памяти выключены кэш «назад-вперёд» (после перехода он держит прежнюю
+/// страницу целиком, вместе с её процессом) и запасной процесс отрисовки,
+/// который Chromium заранее запускает впрок для следующего перехода.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
-    let mut args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    let mut args = String::from(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,\
+         BackForwardCache,SpareRendererForSitePerProcess",
+    );
     if force_dark {
         args.push_str(" --enable-features=WebContentsForceDark");
     }
@@ -196,20 +203,51 @@ fn gtk_container(window: &Window) -> gtk::Fixed {
     })
 }
 
-/// Фоновые вкладки просим WebView2 держать в «экономном» режиме памяти.
+/// Замораживает спрятанный webview: скрипты и таймеры страницы встают,
+/// а WebView2 сам переводит её память в экономный режим. Страницу со звуком
+/// не трогаем. Показ webview размораживает его, см. [`resume`].
 #[cfg(windows)]
-pub fn set_background(webview: &WebView, background: bool) {
-    use wry::{MemoryUsageLevel, WebViewExtWindows};
-    let level = if background {
-        MemoryUsageLevel::Low
-    } else {
-        MemoryUsageLevel::Normal
-    };
-    let _ = webview.set_memory_usage_level(level);
+pub fn suspend(webview: &WebView) {
+    use webview2_com::TrySuspendCompletedHandler;
+    use windows_core::BOOL;
+    let Some(core) = core3(webview) else { return };
+    let mut suspended = BOOL::default();
+    // SAFETY: core — живой COM-объект, указатель на локальную переменную.
+    if unsafe { core.IsSuspended(&mut suspended) }.is_ok() && suspended.as_bool() {
+        return;
+    }
+    if is_playing_audio(webview) {
+        return;
+    }
+    let handler = TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(())));
+    // SAFETY: обработчик — COM-объект, который WebView2 держит до вызова.
+    let _ = unsafe { core.TrySuspend(&handler) };
+}
+
+/// Размораживает webview перед показом или перед тем, как спросить страницу.
+#[cfg(windows)]
+pub fn resume(webview: &WebView) {
+    if let Some(core) = core3(webview) {
+        // SAFETY: core — живой COM-объект; для незамороженного webview вызов ничего не делает.
+        let _ = unsafe { core.Resume() };
+    }
+}
+
+#[cfg(windows)]
+type Core3 = webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+
+#[cfg(windows)]
+fn core3(webview: &WebView) -> Option<Core3> {
+    use windows_core::Interface;
+    use wry::WebViewExtWindows;
+    webview.webview().cast().ok()
 }
 
 #[cfg(not(windows))]
-pub fn set_background(_webview: &WebView, _background: bool) {}
+pub fn suspend(_webview: &WebView) {}
+
+#[cfg(not(windows))]
+pub fn resume(_webview: &WebView) {}
 
 /// Вкладку, которая играет звук, не усыпляем (музыка, звонки).
 #[cfg(windows)]

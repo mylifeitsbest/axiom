@@ -112,6 +112,7 @@ jobs:
 
   verify:
     needs: site
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -126,6 +127,10 @@ jobs:
           if command -v pacman >/dev/null 2>&1; then
             pacman -Syu --noconfirm --needed curl
           else
+            # archive.ubuntu.com из контейнеров GitHub бывает очень медленным — берём зеркало Azure.
+            sed -i 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g' \
+              /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+            echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
             apt-get update && apt-get install -y curl ca-certificates
           fi
           curl -fsSL "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/install.sh" | sh

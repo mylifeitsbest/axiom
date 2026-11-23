@@ -27,7 +27,7 @@ use crate::{
     tabs::{
         TabId, TabStore,
         omnibox::{self, NEWTAB},
-        webview::{self as tab_webview, TabSpec},
+        webview::{self as tab_webview, Look, TabSpec},
     },
     ui::{self, hotkeys::Hotkey},
 };
@@ -60,6 +60,8 @@ pub struct App {
     /// Последний запрос, отправленный в AI Mode (чтобы не грузить его дважды).
     last_ai_query: String,
     importing: bool,
+    /// Принудительно тёмные сайты: аргумент запуска WebView2, меняется только перезапуском.
+    force_dark: bool,
 }
 
 impl App {
@@ -72,8 +74,15 @@ impl App {
         #[cfg(target_os = "linux")]
         crate::ui::hotkeys::install_window(&window, events.clone());
         let mut context = WebContext::new(Some(paths.webview_data()));
-        let window_bg = ipc::parse_hex(&settings.colors.window).unwrap_or((20, 20, 24, 255));
-        let ui = build_ui(&window, &mut context, &events, window_bg)?;
+        let force_dark = settings.force_dark;
+        let ui_look = Look {
+            background: ipc::parse_hex(&settings.colors.window).unwrap_or((20, 20, 24, 255)),
+            theme: settings.colors.theme(),
+            force_dark,
+        };
+        #[cfg(target_os = "linux")]
+        tab_webview::apply_theme_globally(ui_look.theme);
+        let ui = build_ui(&window, &mut context, &events, ui_look)?;
         let ai = AiPanel::new(&settings.ai_proxy);
 
         let mut app = Self {
@@ -94,6 +103,7 @@ impl App {
             session_dirty: false,
             last_ai_query: String::new(),
             importing: false,
+            force_dark,
         };
         app.restore_session();
         app.open_external(open);
@@ -246,13 +256,23 @@ impl App {
                 }
             },
             UiCmd::SaveSettings { settings } => self.save_settings(settings),
-            UiCmd::ThemeColors { window, page } => {
-                if self.settings.colors.window != window || self.settings.colors.page != page {
+            UiCmd::ThemeColors {
+                window,
+                page,
+                scheme,
+            } => {
+                let colors = &self.settings.colors;
+                let scheme_changed = !scheme.is_empty() && colors.scheme != scheme;
+                if colors.window != window || colors.page != page || scheme_changed {
                     if let Some(rgba) = ipc::parse_hex(&window) {
                         let _ = self.ui.set_background_color(rgba);
                     }
                     self.settings.colors.window = window;
                     self.settings.colors.page = page;
+                    if scheme_changed {
+                        self.settings.colors.scheme = scheme;
+                        self.apply_site_theme();
+                    }
                     self.persist_settings();
                 }
             }
@@ -393,7 +413,7 @@ impl App {
             url: &url,
             bounds: self.content.unwrap_or_default(),
             visible: self.tabs.active == Some(id) && !self.overlay,
-            background: self.page_bg(),
+            look: self.look(),
             proxy: if ai { self.ai.proxy_config() } else { None },
             ai,
         };
@@ -563,7 +583,7 @@ impl App {
     // ---------- панель ИИ ----------
 
     fn open_ai(&mut self, query: Option<&str>) -> Result<()> {
-        let background = self.page_bg();
+        let look = self.look();
         self.ai.show(
             &self.window,
             &self.paths,
@@ -571,7 +591,7 @@ impl App {
             &self.events,
             query,
             self.ai_rect,
-            background,
+            look,
         )?;
         self.ai.place(self.ai_rect, self.overlay);
         Ok(())
@@ -906,6 +926,33 @@ impl App {
         }
     }
 
+    fn look(&self) -> Look {
+        Look {
+            background: self.page_bg(),
+            theme: self.settings.colors.theme(),
+            force_dark: self.force_dark,
+        }
+    }
+
+    /// Сайты сразу получают тему Axiom через `prefers-color-scheme`.
+    fn apply_site_theme(&self) {
+        let theme = self.settings.colors.theme();
+        #[cfg(windows)]
+        {
+            tab_webview::set_theme(&self.ui, theme);
+            for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
+                tab_webview::set_theme(webview, theme);
+            }
+            if let Some(webview) = &self.ai.webview {
+                tab_webview::set_theme(webview, theme);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        tab_webview::apply_theme_globally(theme);
+        #[cfg(not(any(windows, target_os = "linux")))]
+        let _ = theme;
+    }
+
     fn page_bg(&self) -> RGBA {
         ipc::parse_hex(&self.settings.colors.page).unwrap_or((25, 25, 30, 255))
     }
@@ -945,14 +992,13 @@ fn build_ui(
     window: &Window,
     context: &mut WebContext,
     events: &EventLoopProxy<UserEvent>,
-    background: RGBA,
+    look: Look,
 ) -> Result<WebView> {
     let ipc_events = events.clone();
     let builder = WebViewBuilder::new_with_web_context(context)
         .with_custom_protocol("axiom".into(), |_id, request| ui::serve(&request))
         .with_url(ui::url())
         .with_bounds(full_bounds(window))
-        .with_background_color(background)
         .with_devtools(cfg!(debug_assertions))
         .with_hotkeys_zoom(false)
         .with_navigation_handler(|url| ui::is_ui_origin(&url))
@@ -971,6 +1017,7 @@ fn build_ui(
             .with_browser_accelerator_keys(false)
             .with_default_context_menus(cfg!(debug_assertions))
     };
+    let builder = tab_webview::styled(builder, look, None);
     tab_webview::build_child(builder, window).context("не удалось создать интерфейс")
 }
 

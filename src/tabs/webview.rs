@@ -6,18 +6,91 @@
 use anyhow::{Context, Result};
 use tao::{event_loop::EventLoopProxy, window::Window};
 use wry::{
-    NewWindowResponse, PageLoadEvent, ProxyConfig, RGBA, Rect, WebContext, WebView, WebViewBuilder,
+    NewWindowResponse, PageLoadEvent, ProxyConfig, RGBA, Rect, Theme, WebContext, WebView,
+    WebViewBuilder,
 };
 
 use super::{TabId, omnibox};
 use crate::{events::UserEvent, ui::hotkeys};
+
+/// Внешний вид webview: фон до загрузки страницы и тема для сайтов.
+#[derive(Debug, Clone, Copy)]
+pub struct Look {
+    pub background: RGBA,
+    /// Что сайты видят в `prefers-color-scheme`.
+    pub theme: Theme,
+    /// Принудительное затемнение сайтов (фиксируется при запуске процесса).
+    pub force_dark: bool,
+}
+
+/// Общие настройки для всех webview: фон, тема и аргументы запуска WebView2.
+///
+/// Аргументы обязаны совпадать у всех webview с одной папкой данных, поэтому
+/// задаём их явно и одинаково для интерфейса, вкладок и панели ИИ.
+pub fn styled<'a>(
+    builder: WebViewBuilder<'a>,
+    look: Look,
+    proxy: Option<&ProxyConfig>,
+) -> WebViewBuilder<'a> {
+    let builder = builder.with_background_color(look.background);
+    #[cfg(windows)]
+    let builder = {
+        use wry::WebViewBuilderExtWindows;
+        builder
+            .with_theme(look.theme)
+            .with_additional_browser_args(browser_args(look.force_dark, proxy))
+    };
+    #[cfg(not(windows))]
+    let builder = match proxy {
+        Some(proxy) => builder.with_proxy_config(proxy.clone()),
+        None => builder,
+    };
+    builder
+}
+
+/// Аргументы WebView2: умолчания wry, плюс тёмные сайты и прокси при необходимости.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
+    let mut args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    if force_dark {
+        args.push_str(" --enable-features=WebContentsForceDark");
+    }
+    if let Some(proxy) = proxy {
+        let (scheme, endpoint) = match proxy {
+            ProxyConfig::Http(e) => ("http", e),
+            ProxyConfig::Socks5(e) => ("socks5", e),
+        };
+        args.push_str(&format!(
+            " --proxy-server={scheme}://{}:{}",
+            endpoint.host, endpoint.port
+        ));
+    }
+    args
+}
+
+/// Меняет тему сайтов на лету (WebView2 хранит её в профиле, поэтому
+/// достаточно вызвать для любого webview профиля).
+#[cfg(windows)]
+pub fn set_theme(webview: &WebView, theme: Theme) {
+    use wry::WebViewExtWindows;
+    let _ = webview.set_theme(theme);
+}
+
+/// WebKitGTK берёт `prefers-color-scheme` из настройки GTK.
+#[cfg(target_os = "linux")]
+pub fn apply_theme_globally(theme: Theme) {
+    use gtk::prelude::*;
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_application_prefer_dark_theme(matches!(theme, Theme::Dark));
+    }
+}
 
 pub struct TabSpec<'a> {
     pub id: TabId,
     pub url: &'a str,
     pub bounds: Rect,
     pub visible: bool,
-    pub background: RGBA,
+    pub look: Look,
     /// Для вкладок, открытых из панели ИИ: тот же прокси, что у панели.
     pub proxy: Option<ProxyConfig>,
     pub ai: bool,
@@ -33,12 +106,11 @@ pub fn build_tab(
     let ai = spec.ai;
     let (title_tx, load_tx, open_tx) = (events.clone(), events.clone(), events.clone());
 
-    let mut builder = WebViewBuilder::new_with_web_context(context)
+    let builder = WebViewBuilder::new_with_web_context(context)
         .with_url(spec.url)
         .with_bounds(spec.bounds)
         .with_visible(spec.visible)
         .with_focused(spec.visible)
-        .with_background_color(spec.background)
         .with_devtools(true)
         .with_hotkeys_zoom(true)
         .with_navigation_handler(|url| omnibox::is_navigable(&url))
@@ -56,9 +128,7 @@ pub fn build_tab(
             }
             NewWindowResponse::Deny
         });
-    if let Some(proxy) = spec.proxy {
-        builder = builder.with_proxy_config(proxy);
-    }
+    let builder = styled(builder, spec.look, spec.proxy.as_ref());
 
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
     hotkeys::install(&webview, events.clone());

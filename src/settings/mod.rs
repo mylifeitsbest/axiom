@@ -14,6 +14,8 @@ const MAX_SLEEP_MINUTES: u32 = 24 * 60;
 pub struct ThemeColors {
     pub window: String,
     pub page: String,
+    /// Что сайты видят в `prefers-color-scheme`: dark, light или auto (как в системе).
+    pub scheme: String,
 }
 
 impl Default for ThemeColors {
@@ -21,6 +23,17 @@ impl Default for ThemeColors {
         Self {
             window: "#141418".into(),
             page: "#19191e".into(),
+            scheme: "dark".into(),
+        }
+    }
+}
+
+impl ThemeColors {
+    pub fn theme(&self) -> wry::Theme {
+        match self.scheme.as_str() {
+            "light" => wry::Theme::Light,
+            "auto" => wry::Theme::Auto,
+            _ => wry::Theme::Dark,
         }
     }
 }
@@ -40,6 +53,8 @@ pub struct Settings {
     pub colors: ThemeColors,
     /// Пройдено ли приветствие первого запуска.
     pub onboarded: bool,
+    /// Принудительно затемнять сайты без своей тёмной темы (WebView2, после перезапуска).
+    pub force_dark: bool,
 }
 
 impl Default for Settings {
@@ -51,6 +66,7 @@ impl Default for Settings {
             sleep_minutes: 10,
             colors: ThemeColors::default(),
             onboarded: false,
+            force_dark: false,
         }
     }
 }
@@ -73,6 +89,7 @@ impl Settings {
         self.ai_proxy = incoming.ai_proxy.trim().to_string();
         self.sleep_minutes = incoming.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.onboarded |= incoming.onboarded;
+        self.force_dark = incoming.force_dark;
     }
 
     fn sanitized(mut self) -> Self {

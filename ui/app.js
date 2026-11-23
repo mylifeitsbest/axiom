@@ -45,7 +45,7 @@
   // ---------- состояние ----------
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: [], maximized: false };
   let A = { ...DEFAULTS };
-  let B = { double_search: true, ai_proxy: '', sleep_minutes: 10, live_tabs: 3, onboarded: true, check_updates: true };
+  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -214,7 +214,7 @@
         appearance: A,
         double_search: !!B.double_search,
         ai_proxy: String(B.ai_proxy || ''),
-        sleep_minutes: Math.round(clamp(B.sleep_minutes, 0, 1440, 10)),
+        sleep_minutes: Math.round(clamp(B.sleep_minutes, 0, 1440, 5)),
         live_tabs: Math.round(clamp(B.live_tabs, 0, 20, 3)),
         onboarded: !!B.onboarded,
         force_dark: !!B.force_dark,
@@ -715,7 +715,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 10, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false };
       applyAppearance();
       if (firstSettings) {
         // #settings:раздел, #onb:шаг, #downloads или #update[:install] — только для разработки (debug-сборка).

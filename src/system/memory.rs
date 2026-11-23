@@ -6,13 +6,13 @@
 
 const GB: u64 = 1024 * 1024 * 1024;
 
-/// Памяти не хватает: свободно меньше 10% (порог не ниже 1 ГБ и не выше 2 ГБ).
+/// Памяти не хватает: свободно меньше 15% (порог не ниже 1 ГБ и не выше 3 ГБ).
 pub fn is_low() -> bool {
     physical().is_some_and(|(available, total)| available < threshold(total))
 }
 
 fn threshold(total: u64) -> u64 {
-    (total / 10).clamp(GB, 2 * GB)
+    (total * 15 / 100).clamp(GB, 3 * GB)
 }
 
 /// Доступная и общая физическая память в байтах.
@@ -79,10 +79,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn threshold_is_ten_percent_within_bounds() {
+    fn threshold_is_fifteen_percent_within_bounds() {
         assert_eq!(threshold(4 * GB), GB);
-        assert_eq!(threshold(16 * GB), 16 * GB / 10);
-        assert_eq!(threshold(64 * GB), 2 * GB);
+        assert_eq!(threshold(16 * GB), 16 * GB * 15 / 100);
+        assert_eq!(threshold(64 * GB), 3 * GB);
     }
 
     #[test]

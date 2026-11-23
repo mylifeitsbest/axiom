@@ -69,7 +69,7 @@ impl Default for Settings {
             appearance: Map::new(),
             double_search: true,
             ai_proxy: String::new(),
-            sleep_minutes: 10,
+            sleep_minutes: 5,
             live_tabs: 3,
             colors: ThemeColors::default(),
             onboarded: false,

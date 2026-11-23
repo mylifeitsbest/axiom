@@ -19,7 +19,8 @@ pub struct Look {
     pub background: RGBA,
     /// Что сайты видят в `prefers-color-scheme`.
     pub theme: Theme,
-    /// Принудительное затемнение сайтов (фиксируется при запуске процесса).
+    /// Принудительное затемнение сайтов (фиксируется при запуске процесса). Только WebView2.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub force_dark: bool,
 }
 

@@ -9,9 +9,17 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use tao::{event_loop::EventLoopProxy, window::Window};
-use wry::{ProxyConfig, RGBA, Rect, WebContext, WebView, WebViewBuilder};
+use wry::{ProxyConfig, Rect, WebContext, WebView, WebViewBuilder};
 
-use crate::{events::UserEvent, storage::Paths, tabs::omnibox, ui::hotkeys};
+use crate::{
+    events::UserEvent,
+    storage::Paths,
+    tabs::{
+        omnibox,
+        webview::{Look, styled},
+    },
+    ui::hotkeys,
+};
 
 pub struct AiPanel {
     pub open: bool,
@@ -78,7 +86,7 @@ impl AiPanel {
         events: &EventLoopProxy<UserEvent>,
         query: Option<&str>,
         bounds: Option<Rect>,
-        background: RGBA,
+        look: Look,
     ) -> Result<()> {
         self.open = true;
         self.hidden_since = None;
@@ -93,11 +101,10 @@ impl AiPanel {
                 let proxy = self.proxy_config();
                 let start = url.unwrap_or_else(|| omnibox::AI_HOME.to_string());
                 let context = self.context(paths, shared);
-                let mut builder = WebViewBuilder::new_with_web_context(context)
+                let builder = WebViewBuilder::new_with_web_context(context)
                     .with_url(start)
                     .with_bounds(bounds.unwrap_or_default())
                     .with_visible(bounds.is_some())
-                    .with_background_color(background)
                     .with_navigation_handler(|url| omnibox::is_navigable(&url))
                     .with_new_window_req_handler({
                         let events = events.clone();
@@ -108,9 +115,7 @@ impl AiPanel {
                             wry::NewWindowResponse::Deny
                         }
                     });
-                if let Some(proxy) = proxy {
-                    builder = builder.with_proxy_config(proxy);
-                }
+                let builder = styled(builder, look, proxy.as_ref());
                 let webview = crate::tabs::webview::build_child(builder, window)
                     .context("не удалось создать панель ИИ")?;
                 hotkeys::install(&webview, events.clone());

@@ -142,8 +142,10 @@
       const win = toHex(getComputedStyle(probe).color);
       probe.style.color = 'var(--pg)';
       const page = toHex(getComputedStyle(probe).color);
-      const key = win + page;
-      if (key !== lastColors) { lastColors = key; send({ cmd: 'theme_colors', window: win, page }); }
+      // Сайты получают тему Axiom (prefers-color-scheme); «Авто» — как в системе.
+      const scheme = A.mode === 'system' ? 'auto' : root.dataset.mode;
+      const key = win + page + scheme;
+      if (key !== lastColors) { lastColors = key; send({ cmd: 'theme_colors', window: win, page, scheme }); }
     });
   }
   const hex = (v, d) => (/^#[0-9a-f]{6}$/i.test(v) ? v : d);
@@ -206,6 +208,7 @@
         ai_proxy: String(B.ai_proxy || ''),
         sleep_minutes: Math.round(clamp(B.sleep_minutes, 0, 1440, 10)),
         onboarded: !!B.onboarded,
+        force_dark: !!B.force_dark,
       },
     });
     if (now) run(); else saveTimer = setTimeout(run, 350);
@@ -692,7 +695,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 10, onboarded: !!s.onboarded };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 10, onboarded: !!s.onboarded, force_dark: !!s.force_dark };
       applyAppearance();
       if (firstSettings) {
         // #settings:раздел или #onb:шаг — только для разработки (debug-сборка).

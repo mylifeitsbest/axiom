@@ -64,6 +64,10 @@ function createPanels(ax) {
           ${row('Насыщенность фона', '0 — чистый серый', '<input type="range" min="0" max="0.06" step="0.002" data-key="tint">')}
           ${row('Чистый чёрный', 'Для OLED-экранов', toggle('data-key', 'oled'))}
         </div>
+        <h4>Сайты</h4><div class="card">
+          ${row('Тема сайтов', 'Сайты получают тему Axiom: в тёмном режиме DuckDuckGo, GitHub, YouTube и другие сами становятся тёмными', '<span class="pill-v" id="siteScheme"></span>')}
+          ${row('Тёмные сайты принудительно', 'Затемняет и сайты без своей тёмной темы, как флаг в Chrome. Применится после перезапуска Axiom.', toggle('data-bkey', 'force_dark'), 'id="forceDarkRow"')}
+        </div>
         <h4>Текст</h4><div class="card">
           ${row('Шрифт', '', '<select data-key="font"><option value="system">Системный</option><option value="rounded">Округлый</option><option value="mono">Моноширинный</option><option value="serif">С засечками</option><option value="custom">Свой…</option></select>')}
           ${row('Название шрифта', 'Любой установленный', '<input type="text" data-key="customFont" placeholder="Inter">', 'data-show="font=custom"')}
@@ -187,6 +191,8 @@ function createPanels(ax) {
       $('#impRes').textContent = importState.text;
       const pv = $('#pvw');
       if (pv) pv.dataset.l = ax.A.layout;
+      $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
+      $('#forceDarkRow').hidden = sys.platform !== 'windows';
     }
   }
 
@@ -222,7 +228,12 @@ function createPanels(ax) {
     const el = e.target;
     if (el.id === 'setFind') { filter(el.value); return; }
     if (el.dataset.key) ax.setA(el.dataset.key, readVal(el));
-    else if (el.dataset.bkey) { ax.B[el.dataset.bkey] = readVal(el); ax.saveSettings(); ax.refresh(); }
+    else if (el.dataset.bkey) {
+      ax.B[el.dataset.bkey] = readVal(el);
+      ax.saveSettings();
+      ax.refresh();
+      if (el.dataset.bkey === 'force_dark') ax.toast('Перезапустите Axiom, чтобы применить');
+    }
   }
 
   function onClick(e) {

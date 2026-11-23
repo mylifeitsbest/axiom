@@ -79,6 +79,8 @@ pub struct SettingsIn {
     pub sleep_minutes: u32,
     #[serde(default)]
     pub onboarded: bool,
+    #[serde(default)]
+    pub force_dark: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +133,9 @@ pub enum UiCmd {
     ThemeColors {
         window: String,
         page: String,
+        /// Тема для сайтов (`prefers-color-scheme`): dark, light или auto.
+        #[serde(default)]
+        scheme: String,
     },
     Window {
         action: WindowAction,
@@ -181,9 +186,16 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::Ai { query: Some(q), .. } => short(q, MAX_INPUT, "query")?,
         UiCmd::Suggest { q } | UiCmd::Find { q, .. } => short(q, 512, "query")?,
         UiCmd::Hotkey { action } => short(action, 32, "hotkey")?,
-        UiCmd::ThemeColors { window, page } => {
+        UiCmd::ThemeColors {
+            window,
+            page,
+            scheme,
+        } => {
             if parse_hex(window).is_none() || parse_hex(page).is_none() {
                 return Err(IpcError::Invalid("color"));
+            }
+            if !matches!(scheme.as_str(), "" | "dark" | "light" | "auto") {
+                return Err(IpcError::Invalid("scheme"));
             }
         }
         UiCmd::SaveSettings { settings } => {

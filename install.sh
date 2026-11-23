@@ -34,6 +34,11 @@ chmod 755 "$tmp"
 if command -v pacman >/dev/null 2>&1; then
   say "Добавляю ключ подписи Axiom…"
   fetch "$REPO_URL/axiom.asc" "$tmp/axiom.asc"
+  # Свежие контейнеры и некоторые сборки идут без локального ключа pacman.
+  if ! $SUDO pacman-key --list-secret-keys >/dev/null 2>&1 \
+    || [ -z "$($SUDO pacman-key --list-secret-keys 2>/dev/null)" ]; then
+    $SUDO pacman-key --init
+  fi
   $SUDO pacman-key --add "$tmp/axiom.asc"
   # Доверяем только ключу с известным отпечатком: подменённый ключ не пройдёт.
   $SUDO pacman-key --lsign-key "$KEY_ID"

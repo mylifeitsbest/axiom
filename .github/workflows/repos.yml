@@ -1,0 +1,132 @@
+name: Repositories
+
+# Подписанные репозитории APT и pacman на GitHub Pages из последнего релиза,
+# затем проверка установки в чистых Ubuntu, Kali и Arch.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  KEY_ID: 643C6DE601D4BBB661D5322AF2F379CD75CF5C03
+
+jobs:
+  arch:
+    # Только после настоящего релиза по тегу (тестовые ручные сборки пропускаем).
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SIGNING_KEY: ${{ secrets.PKG_SIGNING_KEY }}
+    steps:
+      - run: pacman -Syu --noconfirm --needed github-cli
+      - name: Репозиторий pacman
+        run: |
+          mkdir -p repo && cd repo
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern axiom-x86_64.pkg.tar.zst
+          VER=$(bsdtar -xOf axiom-x86_64.pkg.tar.zst .PKGINFO | sed -n 's/^pkgver = //p')
+          PKG="axiom-$VER-x86_64.pkg.tar.zst"
+          mv axiom-x86_64.pkg.tar.zst "$PKG"
+          export GNUPGHOME="$(mktemp -d)"
+          printf '%s\n' "$SIGNING_KEY" | gpg --batch --import
+          gpg --batch --yes --pinentry-mode loopback --local-user "$KEY_ID" --detach-sign "$PKG"
+          repo-add --sign --key "$KEY_ID" axiom.db.tar.gz "$PKG"
+          # GitHub Pages не хранит симлинки — заменяем их копиями.
+          for f in axiom.db axiom.files axiom.db.sig axiom.files.sig; do
+            if [ -L "$f" ]; then cp --remove-destination "$(readlink -f "$f")" "$f"; fi
+          done
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-repo
+          path: repo/
+
+  site:
+    needs: arch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SIGNING_KEY: ${{ secrets.PKG_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Репозиторий APT
+        run: |
+          POOL=site/apt/pool/main/a/axiom
+          mkdir -p "$POOL"
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern axiom_amd64.deb --dir "$POOL"
+          VER=$(dpkg-deb -f "$POOL/axiom_amd64.deb" Version)
+          mv "$POOL/axiom_amd64.deb" "$POOL/axiom_${VER}_amd64.deb"
+          cd site/apt
+          mkdir -p dists/stable/main/binary-amd64
+          apt-ftparchive packages pool > dists/stable/main/binary-amd64/Packages
+          gzip -9kf dists/stable/main/binary-amd64/Packages
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin=Axiom \
+            -o APT::FTPArchive::Release::Label=Axiom \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Architectures=amd64 \
+            -o APT::FTPArchive::Release::Components=main \
+            -o "APT::FTPArchive::Release::Description=Axiom browser" \
+            release dists/stable > Release.tmp
+          mv Release.tmp dists/stable/Release
+          export GNUPGHOME="$(mktemp -d)"
+          printf '%s\n' "$SIGNING_KEY" | gpg --batch --import
+          gpg --batch --yes --pinentry-mode loopback --local-user "$KEY_ID" --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --batch --yes --pinentry-mode loopback --local-user "$KEY_ID" --armor --detach-sign -o dists/stable/Release.gpg dists/stable/Release
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch-repo
+          path: site/arch/x86_64
+      - name: Страница и ключ
+        run: |
+          cp packaging/keys/axiom.asc packaging/keys/axiom.gpg packaging/site/index.html assets/logo.svg install.sh site/
+          touch site/.nojekyll
+          find site -type f | sort
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  verify:
+    needs: site
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04", "kalilinux/kali-rolling", "archlinux:latest"]
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - name: Установка скриптом и проверка
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          if command -v pacman >/dev/null 2>&1; then
+            pacman -Sy --noconfirm --needed curl
+          else
+            apt-get update && apt-get install -y curl ca-certificates
+          fi
+          curl -fsSL "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/install.sh" | sh
+          test -x /usr/bin/axiom
+          test -f /usr/share/applications/axiom.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/axiom.png
+          if ldd /usr/bin/axiom | grep "not found"; then exit 1; fi
+          echo "Axiom установлен и все библиотеки на месте"

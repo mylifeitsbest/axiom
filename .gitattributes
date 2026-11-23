@@ -1,3 +1,4 @@
 * text=auto eol=lf
 *.ico binary
+*.gpg binary
 *.png binary

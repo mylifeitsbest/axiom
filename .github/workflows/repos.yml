@@ -67,6 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Репозиторий APT
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils
           POOL=site/apt/pool/main/a/axiom
           mkdir -p "$POOL"
           gh release download --repo "$GITHUB_REPOSITORY" --pattern axiom_amd64.deb --dir "$POOL"

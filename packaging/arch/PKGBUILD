@@ -2,13 +2,13 @@
 # Имя `axiom-browser`, чтобы не путать с системой компьютерной алгебры Axiom.
 pkgname=axiom-browser
 _repo=axiom
-pkgver=0.2.1
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='Лёгкий браузер на Rust: минимум памяти, DuckDuckGo и панель Google AI Mode'
 arch=('x86_64')
 url='https://github.com/mylifeitsbest/axiom'
 license=('custom')
-depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'glib2' 'cairo' 'gdk-pixbuf2' 'xdg-utils' 'hicolor-icon-theme')
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'glib2' 'cairo' 'gdk-pixbuf2' 'xdg-utils' 'hicolor-icon-theme' 'curl')
 makedepends=('cargo')
 options=('!lto' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")

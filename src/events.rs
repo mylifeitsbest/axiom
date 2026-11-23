@@ -37,6 +37,8 @@ pub enum UserEvent {
     Download(DownloadEvent),
     /// Адреса от второго запуска `axiom.exe <url>` (клик по ссылке в другой программе).
     External(Vec<String>),
+    /// Проверка или скачивание обновления продвинулись (фоновый поток).
+    Update(crate::update::UpdateEvent),
     /// Импорт из Chrome завершился (выполняется в фоновом потоке).
     Imported(Result<crate::storage::chrome::Imported, String>),
     /// Окно так и не получило `ready` от интерфейса — показываем его принудительно.

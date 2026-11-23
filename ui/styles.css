@@ -447,6 +447,43 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .dlp.anim .dli:nth-child(3){animation-delay:calc(50ms*var(--k))}
 .dlp.anim .dli:nth-child(n+4){animation-delay:calc(75ms*var(--k))}
 
+/* ---------- обновление ---------- */
+.upd{position:relative;display:flex;align-items:center;align-self:center;gap:5px;height:24px;margin:0 4px 0 2px;padding:0 10px 0 7px;border-radius:999px;background:color-mix(in oklab,var(--acc) 16%,transparent);color:var(--acc);font-weight:600;white-space:nowrap;flex:none;transition:background-color var(--d1),transform var(--d1) var(--e)}
+.upd[hidden]{display:none}
+.upd:hover,.upd.on{background:color-mix(in oklab,var(--acc) 26%,transparent)}
+.upd:active{transform:scale(.95)}
+.upd .i{width:14px;height:14px;stroke-width:2.1}
+.upd.in{animation:pop var(--d3) var(--sp) both}
+.upd.in .i{animation:updNudge calc(700ms*var(--k)) var(--e) calc(300ms*var(--k)) 3}
+.upd.in::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;animation:updRing calc(1100ms*var(--k)) var(--e) calc(200ms*var(--k)) 2 both}
+.upd.busy .i{animation:updNudge calc(900ms*var(--k)) var(--e) infinite}
+@keyframes updNudge{40%{transform:translateY(-3px)}}
+@keyframes updRing{from{box-shadow:0 0 0 0 color-mix(in oklab,var(--acc) 55%,transparent)}to{box-shadow:0 0 0 9px transparent}}
+
+.upp{padding:14px 14px 12px}
+.upp-head{display:flex;align-items:center;gap:11px}
+.upp-logo{flex:none;line-height:0}
+.upp-logo svg{border-radius:9px;box-shadow:0 8px 18px -8px color-mix(in oklab,var(--acc) 60%,transparent)}
+.upp-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.upp-t b{font-size:calc(var(--fs) + 2.5px);font-weight:650;color:var(--t1);letter-spacing:-.01em}
+.upp-t small{color:var(--t3);font-size:calc(var(--fs) - 1px)}
+.upp-head .lnk{align-self:flex-start;margin:-2px -4px 0 0}
+.upp-msg{margin:12px 2px 0;color:var(--t2);line-height:1.5;font-variant-numeric:tabular-nums}
+.upp-err{color:#e5484d}
+.upp-warn{display:flex;align-items:center;gap:8px;margin:10px 0 0;padding:8px 10px;border-radius:calc(var(--r)*.75);background:color-mix(in oklab,#f0b429 13%,transparent);color:var(--t1)}
+.upp-warn .i{width:15px;height:15px;color:#f0b429}
+.upp-bar{display:block;margin:12px 2px 4px}
+.upp-cmd{display:flex;align-items:center;gap:6px;margin:10px 0 0;padding:4px 4px 4px 11px;border-radius:calc(var(--r)*.75);background:var(--bg);box-shadow:inset 0 0 0 1px var(--line)}
+.upp-cmd code{flex:1;min-width:0;font:12px/1.55 ui-monospace,"Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;color:var(--t1);user-select:all;cursor:text}
+.upp-cmd code span{white-space:nowrap}
+.upp-acts{display:flex;justify-content:flex-end;gap:6px;margin-top:14px}
+.upp-acts .btn{height:30px;padding:0 13px}
+.upp-acts .btn .i{width:14px;height:14px;stroke-width:2}
+.upp.on>*{animation:rise var(--d2) var(--e) both}
+.upp.on>:nth-child(2){animation-delay:calc(30ms*var(--k))}
+.upp.on>:nth-child(n+3){animation-delay:calc(60ms*var(--k))}
+.srow.has small{color:var(--acc)}
+
 /* ---------- края окна для изменения размера ---------- */
 .edge{position:fixed;z-index:50}
 .edge.n{top:0;left:8px;right:8px;height:4px;cursor:n-resize}

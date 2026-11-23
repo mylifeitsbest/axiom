@@ -13,7 +13,7 @@ function createPanels(ax) {
     { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'DuckDuckGo, Google AI Mode и прокси только для ИИ.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
     { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome.' },
-    { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка и браузер по умолчанию.' },
+    { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка, обновления и браузер по умолчанию.' },
     { id: 'keys', icon: 'keyboard', title: 'Клавиши', desc: 'Всё как в Chrome, плюс пара своих.' },
   ];
   const LAYOUTS = [
@@ -118,6 +118,10 @@ function createPanels(ax) {
           <div class="srow" id="instRow"><span class="sl"><b>Установка</b><small id="instNote"></small></span><span class="sc"><button class="btn primary" data-act="install" id="instBtn">Установить</button></span></div>
           <div class="srow"><span class="sl"><b>Браузер по умолчанию</b><small id="defNote"></small></span><span class="sc"><button class="btn" data-act="default" id="defBtn">Открыть параметры</button></span></div>
         </div>
+        <div class="card">
+          <div class="srow" id="updRow"><span class="sl"><b>Обновления</b><small id="updNote"></small></span><span class="sc"><button class="btn" data-act="update" id="updSet">Проверить</button></span></div>
+          ${row('Проверять автоматически', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии и больше ничего не отправляет', toggle('data-bkey', 'check_updates'))}
+        </div>
         <div class="note">${icon('monitor')}<span id="sysNote"></span></div>
         <div class="about">${logoSvg(44, 'about')}<span><b>Axiom</b><small id="verNote"></small></span></div>`,
       keys: `<div class="card keys">${KEYS.map(([k, v]) => `<div class="krow"><span>${v}</span><span>${kbd(k)}</span></div>`).join('')}</div>`,
@@ -188,6 +192,7 @@ function createPanels(ax) {
       $('#sysNote').textContent = win
         ? 'Windows не разрешает программам самим становиться браузером по умолчанию: Axiom откроет нужную страницу параметров, там достаточно выбрать Axiom.'
         : 'Axiom установлен пакетом (apt или pacman) и обновляется вместе с системой. Браузер по умолчанию меняется через xdg-settings.';
+      syncUpdate(sys);
       $('#verNote').textContent = `Версия ${sys.version || ''} · Rust + ${win ? 'WebView2' : sys.platform === 'linux' ? 'WebKitGTK' : 'WebKit'}`;
       $('#impRes').textContent = importState.text;
       const pv = $('#pvw');
@@ -195,6 +200,26 @@ function createPanels(ax) {
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
       $('#forceDarkRow').hidden = sys.platform !== 'windows';
     }
+  }
+
+  function syncUpdate(sys) {
+    const u = ax.update();
+    const b = $('#updSet');
+    const checking = u?.phase === 'checking';
+    b.disabled = checking;
+    b.classList.toggle('primary', !!u?.latest);
+    $('#updRow').classList.toggle('has', !!u?.latest);
+    if (u?.latest) {
+      b.textContent = 'Обновить';
+      $('#updNote').textContent = `Доступна версия ${u.latest}, у вас ${u.current}`;
+      return;
+    }
+    b.textContent = checking ? 'Проверяю…' : 'Проверить';
+    const current = u?.current || sys.version || '';
+    $('#updNote').textContent = checking ? 'Спрашиваю у GitHub…'
+      : u?.checked === 'ok' ? `У вас последняя версия — ${current}`
+      : u?.checked === 'failed' ? `Не удалось проверить: ${u.check_error}`
+      : `Установлена версия ${current}`;
   }
 
   function syncScope(box) {
@@ -268,6 +293,10 @@ function createPanels(ax) {
       case 'import': startImport(); break;
       case 'install': ax.send({ cmd: 'install' }); b.classList.add('busy'); break;
       case 'default': ax.send({ cmd: 'open_default_apps' }); break;
+      case 'update':
+        if (ax.update()?.latest) ax.openUpdate();
+        else ax.send({ cmd: 'update_check' });
+        break;
       default: break;
     }
   }

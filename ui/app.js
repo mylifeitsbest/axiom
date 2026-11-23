@@ -45,7 +45,7 @@
   // ---------- состояние ----------
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: [], maximized: false };
   let A = { ...DEFAULTS };
-  let B = { double_search: true, ai_proxy: '', sleep_minutes: 10, live_tabs: 3, onboarded: true };
+  let B = { double_search: true, ai_proxy: '', sleep_minutes: 10, live_tabs: 3, onboarded: true, check_updates: true };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -66,6 +66,9 @@
 
   // ---------- загрузки (ui/downloads.js) ----------
   const dl = createDownloads({ esc, send, ms, speed, setOverlay });
+
+  // ---------- обновления (ui/update.js) ----------
+  const upd = createUpdate({ esc, send, ms, speed, setOverlay, copyText: (t) => copyText(t), toast: (t) => toast(t), onChange: () => panels.sync() });
 
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
@@ -180,6 +183,7 @@
     $('#dsBtn').classList.toggle('on', !!B.double_search);
     place();
     dl.reposition();
+    upd.reposition();
     renderOmni();
     panels.sync();
     sendThemeColors();
@@ -214,6 +218,7 @@
         live_tabs: Math.round(clamp(B.live_tabs, 0, 20, 3)),
         onboarded: !!B.onboarded,
         force_dark: !!B.force_dark,
+        check_updates: B.check_updates !== false,
       },
     });
     if (now) run(); else saveTimer = setTimeout(run, 350);
@@ -664,11 +669,13 @@
       return;
     }
     if (e.key === 'Escape' && dl.isOpen()) { e.preventDefault(); dl.close(); return; }
+    if (e.key === 'Escape' && upd.isOpen()) { e.preventDefault(); upd.close(); return; }
     if (e.key === 'Escape' && panels.isOpen() && document.activeElement !== inp) { e.preventDefault(); panels.close(); }
   }, true);
   function hotkey(a) {
     if (a !== 'settings' && panels.isOpen()) panels.close();
     if (a !== 'downloads' && dl.isOpen()) dl.close();
+    if (upd.isOpen()) upd.close();
     switch (a) {
       case 'focus_omnibox': if (mode === 'find') exitFind(); inp.focus(); inp.select(); break;
       case 'toggle_ai': toggleAi(); break;
@@ -678,7 +685,7 @@
       default: send({ cmd: 'hotkey', action: a });
     }
   }
-  $('#setBtn').addEventListener('click', () => { dl.close(); panels.toggle(); });
+  $('#setBtn').addEventListener('click', () => { dl.close(); upd.close(); panels.toggle(); });
 
   // ---------- настройки и приветствие (ui/settings.js) ----------
   const panels = createPanels({
@@ -687,6 +694,8 @@
     PRESETS, ACCENTS,
     esc, send, toast, swap, ms, speed, setOverlay, copyText, setA, mergeAppearance,
     system: () => SYS,
+    update: () => upd.state(),
+    openUpdate() { panels.close(); dl.close(); upd.open(); },
     applyAppearance,
     saveSettings,
     refresh() { $('#dsBtn').classList.toggle('on', !!B.double_search); panels.sync(); },
@@ -706,14 +715,15 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 10, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 10, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false };
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел, #onb:шаг или #downloads — только для разработки (debug-сборка).
+        // #settings:раздел, #onb:шаг, #downloads или #update[:install] — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') panels.open(arg);
         else if (screen === 'onb') panels.openOnboarding(+arg || 0);
         else if (screen === 'downloads') dl.open();
+        else if (screen === 'update') upd.openSoon(arg === 'install');
         else if (!B.onboarded) panels.openOnboarding();
       }
       firstSettings = false;
@@ -745,6 +755,7 @@
     installed(m) { panels.onInstalled(m); },
     downloads(m) { dl.onList(m); },
     download_progress(m) { dl.onProgress(m); },
+    update(m) { upd.onState(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

@@ -1,0 +1,53 @@
+name: Release
+
+# Тег vX.Y.Z → сборка на Windows → файлы в GitHub Releases.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег релиза (например, v0.1.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Тесты
+        run: cargo test --locked
+
+      - name: Сборка
+        run: cargo build --release --locked
+
+      - name: Упаковка
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $exe = "dist/Axiom-$env:TAG-windows-x64.exe"
+          Copy-Item target/release/axiom.exe $exe
+          Compress-Archive -Path target/release/axiom.exe, README.md -DestinationPath "dist/Axiom-$env:TAG-windows-x64.zip"
+          Get-ChildItem dist -File | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt
+
+      - name: Публикация
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG dist/* --clobber
+          } else {
+            gh release create $env:TAG dist/* --title "Axiom $env:TAG" --generate-notes
+          }

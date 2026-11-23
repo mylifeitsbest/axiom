@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru" data-mode="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axiom</title>
+<link rel="stylesheet" href="styles.css">
+<style id="userCss"></style>
+</head>
+<body>
+<div id="app" class="app" data-layout="one">
+  <header class="bar" id="row1" data-drag></header>
+  <div class="bar row2" id="row2" data-drag></div>
+
+  <div class="main" id="main">
+    <aside class="side" id="side" data-drag>
+      <div class="side-top" id="sideTop" data-drag></div>
+    </aside>
+
+    <section class="content nt" id="content">
+      <div class="newtab" id="newtab">
+        <div class="clock" id="clock"></div>
+        <div class="date" id="date"></div>
+        <div class="tiles" id="tiles"></div>
+      </div>
+      <div class="sleeping" id="sleeping"><span data-i="moon"></span>Просыпается…</div>
+    </section>
+
+    <div class="resizer" id="aiResizer" title="Потяните, чтобы изменить ширину"></div>
+    <aside class="ai" id="ai">
+      <div class="ai-head">
+        <span class="ai-title"><span data-i="sparkles"></span>AI Mode</span>
+        <span class="pdot" id="pdot"></span>
+        <span class="grow"></span>
+        <button class="ib sm" id="aiPop" title="Открыть во вкладке" data-i="popout"></button>
+        <button class="ib sm" id="aiClose" title="Закрыть (Ctrl+K)" data-i="x"></button>
+      </div>
+      <div class="ai-body" id="aiBody"><div class="ai-skel"><i></i><i></i><i></i><i></i></div></div>
+    </aside>
+
+    <section class="sheet" id="sheet" aria-label="Настройки"></section>
+  </div>
+
+  <section class="onb" id="onb" aria-label="Добро пожаловать"></section>
+
+  <div class="sug" id="sug" role="listbox"></div>
+
+  <div class="edge n" data-edge="n"></div><div class="edge s" data-edge="s"></div>
+  <div class="edge e" data-edge="e"></div><div class="edge w" data-edge="w"></div>
+  <div class="edge ne" data-edge="ne"></div><div class="edge nw" data-edge="nw"></div>
+  <div class="edge se" data-edge="se"></div><div class="edge sw" data-edge="sw"></div>
+</div>
+
+<!-- Части интерфейса: app.js раскладывает их по строкам или в боковую панель -->
+<div id="parts" hidden>
+  <div class="nav" id="nav">
+    <button class="ib" data-act="back" title="Назад (Alt+←)" data-i="back"></button>
+    <button class="ib" data-act="forward" title="Вперёд (Alt+→)" data-i="fwd"></button>
+    <button class="ib" data-act="reload" title="Обновить (F5)" data-i="reload"></button>
+  </div>
+  <div class="tabs" id="tabs" data-drag>
+    <div class="tablist" id="tablist" role="tablist" data-drag></div>
+    <button class="ib nt-btn" id="newTabBtn" title="Новая вкладка (Ctrl+T)"><span data-i="plus"></span><span class="nt-label">Новая вкладка</span></button>
+  </div>
+  <div class="omni" id="omni">
+    <span class="omni-ic" id="omniIc"></span>
+    <input id="omniInput" type="text" spellcheck="false" autocomplete="off" placeholder="Поиск или адрес" aria-label="Адресная строка">
+    <span class="omni-view" id="omniView"></span>
+    <span class="omni-msg" id="omniMsg"></span>
+    <button class="ib sm star" id="starBtn" title="В закладки (Ctrl+D)" data-i="star" hidden></button>
+    <button class="ib sm ds" id="dsBtn" title="Двойной поиск: DuckDuckGo + ИИ" data-i="spark"></button>
+  </div>
+  <div class="acts" id="acts">
+    <button class="ib" id="aiBtn" title="AI Mode (Ctrl+K)" data-i="sparkles"></button>
+    <button class="ib" id="setBtn" title="Настройки (Ctrl+,)" data-i="sliders"></button>
+  </div>
+  <div class="wc" id="wc">
+    <button data-win="minimize" title="Свернуть" data-i="min"></button>
+    <button data-win="maximize" title="Развернуть" data-i="max"></button>
+    <button data-win="close" class="close" title="Закрыть" data-i="x"></button>
+  </div>
+  <div class="grow" id="growA" data-drag></div>
+</div>
+
+<script src="icons.js"></script>
+<script src="settings.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

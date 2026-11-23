@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Axiom — установка</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<style>
+  :root{--bg:#f6f6f8;--card:#fff;--t1:#15151a;--t2:#5d5d6b;--line:#0000000f;--acc:#5b6cff;--code:#f0f0f4}
+  @media (prefers-color-scheme:dark){:root{--bg:#0f0f13;--card:#17171d;--t1:#f1f1f5;--t2:#9a9aab;--line:#ffffff12;--acc:#8b9cff;--code:#101016}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--t1);font:15px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  main{max-width:760px;margin:0 auto;padding:64px 22px 80px}
+  header{display:flex;align-items:center;gap:18px;margin-bottom:10px}
+  header img{width:64px;height:64px;border-radius:16px}
+  h1{margin:0;font-size:34px;letter-spacing:-.02em}
+  .lead{color:var(--t2);margin:6px 0 34px}
+  h2{font-size:17px;margin:30px 0 10px}
+  .card{background:var(--card);border-radius:14px;padding:6px 18px 14px;box-shadow:0 0 0 1px var(--line)}
+  pre{margin:10px 0;padding:12px 14px;background:var(--code);border-radius:10px;overflow:auto;font:13px/1.55 ui-monospace,"Cascadia Code",Consolas,monospace;box-shadow:0 0 0 1px var(--line)}
+  p,li{color:var(--t2)}
+  a{color:var(--acc);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font:13px ui-monospace,"Cascadia Code",Consolas,monospace}
+  .fp{word-break:break-all}
+  footer{margin-top:40px;color:var(--t2);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <header><img src="logo.svg" alt=""><div><h1>Axiom</h1></div></header>
+  <p class="lead">Лёгкий браузер на Rust: минимум памяти, DuckDuckGo и Google AI Mode в боковой панели.</p>
+
+  <h2>Linux одной командой</h2>
+  <div class="card">
+    <p>Сам выберет apt или pacman, подключит подписанный репозиторий и установит Axiom. Обновления придут вместе с системой.</p>
+    <pre>curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh</pre>
+  </div>
+
+  <h2>Ubuntu, Debian, Kali — вручную</h2>
+  <div class="card">
+<pre>curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.gpg | sudo tee /usr/share/keyrings/axiom.gpg &gt; /dev/null
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/axiom.gpg] https://mylifeitsbest.github.io/axiom/apt stable main" | sudo tee /etc/apt/sources.list.d/axiom.list
+sudo apt update &amp;&amp; sudo apt install axiom</pre>
+  </div>
+
+  <h2>Arch, Manjaro, EndeavourOS — вручную</h2>
+  <div class="card">
+<pre>curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.asc | sudo pacman-key --add -
+sudo pacman-key --lsign-key 643C6DE601D4BBB661D5322AF2F379CD75CF5C03
+printf '\n[axiom]\nSigLevel = Required\nServer = https://mylifeitsbest.github.io/axiom/arch/$arch\n' | sudo tee -a /etc/pacman.conf
+sudo pacman -Sy axiom</pre>
+  </div>
+
+  <h2>Windows 10 и 11</h2>
+  <div class="card">
+    <p>В PowerShell, без прав администратора:</p>
+    <pre>irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex</pre>
+    <p>Или скачайте <a href="https://github.com/mylifeitsbest/axiom/releases/latest/download/Axiom-windows-x64.exe">Axiom-windows-x64.exe</a> и запустите.</p>
+  </div>
+
+  <h2>Ключ подписи</h2>
+  <div class="card">
+    <p>Пакеты и индексы репозиториев подписаны ключом «Axiom Packages», отпечаток:</p>
+    <p class="fp"><code>643C 6DE6 01D4 BBB6 61D5 322A F2F3 79CD 75CF 5C03</code></p>
+    <p><a href="axiom.asc">axiom.asc</a> · <a href="axiom.gpg">axiom.gpg</a></p>
+  </div>
+
+  <footer><a href="https://github.com/mylifeitsbest/axiom">Исходный код</a> · <a href="https://github.com/mylifeitsbest/axiom/releases">Все релизы</a></footer>
+</main>
+</body>
+</html>

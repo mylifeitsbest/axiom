@@ -49,30 +49,51 @@ irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
 
 Удаление: `axiom.exe --uninstall`, затем удалите папку `%LOCALAPPDATA%\Programs\Axiom` (профиль лежит в `%LOCALAPPDATA%\Axiom`).
 
-### Ubuntu, Debian, Kali (apt)
-
-```sh
-wget https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom_amd64.deb
-sudo apt install ./axiom_amd64.deb
-```
-
-apt сам поставит зависимости (WebKitGTK 4.1). Подходит для Ubuntu 22.04 и новее, Debian 12 и новее, Kali Rolling. Удаление: `sudo apt remove axiom`.
-
-### Arch, Manjaro, EndeavourOS (pacman)
-
-```sh
-sudo pacman -U https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-x86_64.pkg.tar.zst
-```
-
-Удаление: `sudo pacman -R axiom`. `PKGBUILD` лежит в [`packaging/arch`](packaging/arch/PKGBUILD), по нему можно собрать пакет самостоятельно (`makepkg -si`).
-
-### Любой Linux одной командой
+### Linux одной командой
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh
 ```
 
-Скрипт сам выберет apt или pacman, скачает пакет из последнего релиза и проверит контрольную сумму. Для других дистрибутивов есть архив [`axiom-linux-x86_64.tar.gz`](https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-linux-x86_64.tar.gz) с бинарником, `.desktop`-файлом и иконками (нужен установленный WebKitGTK 4.1).
+Скрипт сам выберет apt или pacman, подключит подписанный репозиторий Axiom и установит браузер. После этого Axiom обновляется вместе с системой: `sudo apt upgrade` или `sudo pacman -Syu`. Установку этим скриптом CI проверяет в чистых Ubuntu 22.04, Ubuntu 24.04, Kali и Arch.
+
+### Ubuntu, Debian, Kali (apt) — вручную
+
+```sh
+curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.gpg | sudo tee /usr/share/keyrings/axiom.gpg > /dev/null
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/axiom.gpg] https://mylifeitsbest.github.io/axiom/apt stable main" | sudo tee /etc/apt/sources.list.d/axiom.list
+sudo apt update && sudo apt install axiom
+```
+
+apt сам поставит зависимости (WebKitGTK 4.1). Подходит для Ubuntu 22.04 и новее, Debian 12 и новее, Kali Rolling. Удаление: `sudo apt remove axiom`.
+
+### Arch, Manjaro, EndeavourOS (pacman) — вручную
+
+```sh
+curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.asc | sudo pacman-key --add -
+sudo pacman-key --lsign-key 643C6DE601D4BBB661D5322AF2F379CD75CF5C03
+printf '\n[axiom]\nSigLevel = Required\nServer = https://mylifeitsbest.github.io/axiom/arch/$arch\n' | sudo tee -a /etc/pacman.conf
+sudo pacman -Sy axiom
+```
+
+Удаление: `sudo pacman -R axiom`. `PKGBUILD` лежит в [`packaging/arch`](packaging/arch/PKGBUILD), по нему можно собрать пакет самостоятельно (`makepkg -si`).
+
+### Без репозитория
+
+Пакеты из релиза можно поставить и напрямую, но тогда обновлять их придётся вручную:
+
+```sh
+# Ubuntu, Debian, Kali
+wget https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom_amd64.deb && sudo apt install ./axiom_amd64.deb
+# Arch
+sudo pacman -U https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-x86_64.pkg.tar.zst
+```
+
+Для других дистрибутивов есть архив [`axiom-linux-x86_64.tar.gz`](https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-linux-x86_64.tar.gz) с бинарником, `.desktop`-файлом и иконками (нужен установленный WebKitGTK 4.1).
+
+### Подпись пакетов
+
+Репозитории APT и pacman подписаны ключом «Axiom Packages», отпечаток `643C 6DE6 01D4 BBB6 61D5 322A F2F3 79CD 75CF 5C03`. Публичный ключ лежит в [`packaging/keys`](packaging/keys) и на [странице установки](https://mylifeitsbest.github.io/axiom/). Приватный ключ хранится только в секретах GitHub Actions.
 
 На Linux Axiom становится браузером по умолчанию кнопкой в настройках (через `xdg-settings`), а перенос данных работает и из Chrome, и из Chromium.
 
@@ -160,4 +181,4 @@ assets/            логотип, иконка и скрипт, который 
 - [ ] Страница во вкладке остаётся прямоугольной: дочерний WebView2 нельзя скруглить без перехода на композиционный хостинг.
 - [ ] Linux-пакеты собираются и проходят тесты в CI (Ubuntu 22.04, Arch), но вживую на рабочем столе Linux пока не прогонялись. Сообщайте о проблемах в Issues.
 - [ ] macOS пока не поддерживается сборками.
-- [ ] Свой репозиторий APT и pacman для обновлений через `apt upgrade` и `pacman -Syu`.
+- [x] Свой репозиторий APT и pacman для обновлений через `apt upgrade` и `pacman -Syu`.

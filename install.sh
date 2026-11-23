@@ -2,17 +2,18 @@
 # Установка Axiom на Linux одной командой:
 #   curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh
 #
-# Ubuntu, Debian, Kali — пакет .deb через apt; Arch и производные — пакет через pacman.
-# Пакет скачивается из последнего релиза и проверяется по SHA256SUMS.txt.
+# Подключает подписанный репозиторий Axiom, поэтому обновления приходят вместе
+# с системой: `sudo apt upgrade` или `sudo pacman -Syu`.
+# Ubuntu, Debian, Kali — apt; Arch и производные — pacman.
 set -eu
 
-REPO="mylifeitsbest/axiom"
-BASE="https://github.com/$REPO/releases/latest/download"
+REPO_URL="https://mylifeitsbest.github.io/axiom"
+KEY_ID="643C6DE601D4BBB661D5322AF2F379CD75CF5C03"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 
-[ "$(uname -s)" = "Linux" ] || die "этот скрипт для Linux. Для Windows: https://github.com/$REPO#установка"
+[ "$(uname -s)" = "Linux" ] || die "этот скрипт для Linux. Для Windows: https://github.com/mylifeitsbest/axiom#установка"
 [ "$(uname -m)" = "x86_64" ] || die "пока есть только сборка для x86_64"
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else
@@ -21,8 +22,8 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; else
 fi
 
 fetch() {
-  if command -v curl >/dev/null 2>&1; then curl -fL --progress-bar -o "$2" "$1"
-  elif command -v wget >/dev/null 2>&1; then wget -q --show-progress -O "$2" "$1"
+  if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" "$1"
   else die "нужен curl или wget"; fi
 }
 
@@ -31,26 +32,34 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 chmod 755 "$tmp"
 
 if command -v pacman >/dev/null 2>&1; then
-  file="axiom-x86_64.pkg.tar.zst"
+  say "Добавляю ключ подписи Axiom…"
+  fetch "$REPO_URL/axiom.asc" "$tmp/axiom.asc"
+  $SUDO pacman-key --add "$tmp/axiom.asc"
+  # Доверяем только ключу с известным отпечатком: подменённый ключ не пройдёт.
+  $SUDO pacman-key --lsign-key "$KEY_ID"
+  if ! grep -q '^\[axiom\]' /etc/pacman.conf; then
+    say "Подключаю репозиторий…"
+    printf '\n[axiom]\nSigLevel = Required\nServer = %s/arch/$arch\n' "$REPO_URL" | $SUDO tee -a /etc/pacman.conf >/dev/null
+  fi
+  say "Устанавливаю…"
+  $SUDO pacman -Sy --noconfirm axiom
 elif command -v apt-get >/dev/null 2>&1; then
-  file="axiom_amd64.deb"
+  say "Добавляю ключ подписи Axiom…"
+  fetch "$REPO_URL/axiom.gpg" "$tmp/axiom.gpg"
+  if command -v gpg >/dev/null 2>&1; then
+    gpg --batch --show-keys --with-colons "$tmp/axiom.gpg" 2>/dev/null | grep -q "fpr:::::::::$KEY_ID:" \
+      || die "отпечаток ключа не совпал"
+  fi
+  $SUDO install -Dm644 "$tmp/axiom.gpg" /usr/share/keyrings/axiom.gpg
+  echo "deb [arch=amd64 signed-by=/usr/share/keyrings/axiom.gpg] $REPO_URL/apt stable main" \
+    | $SUDO tee /etc/apt/sources.list.d/axiom.list >/dev/null
+  say "Обновляю списки пакетов…"
+  $SUDO apt-get update
+  say "Устанавливаю…"
+  $SUDO apt-get install -y axiom
 else
-  die "не нашёл apt или pacman. Возьмите архив axiom-linux-x86_64.tar.gz: https://github.com/$REPO/releases/latest"
-fi
-
-say "Скачиваю $file…"
-fetch "$BASE/$file" "$tmp/$file"
-fetch "$BASE/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt"
-
-say "Проверяю контрольную сумму…"
-(cd "$tmp" && grep " $file\$" SHA256SUMS.txt | sha256sum -c -) || die "контрольная сумма не совпала"
-chmod 644 "$tmp/$file"
-
-say "Устанавливаю…"
-if [ "$file" = "axiom_amd64.deb" ]; then
-  $SUDO apt-get install -y "$tmp/$file"
-else
-  $SUDO pacman -U --noconfirm "$tmp/$file"
+  die "не нашёл apt или pacman. Возьмите архив axiom-linux-x86_64.tar.gz: https://github.com/mylifeitsbest/axiom/releases/latest"
 fi
 
 say "Готово. Axiom есть в меню приложений, запуск из терминала: axiom"
+say "Обновления придут вместе с системой."

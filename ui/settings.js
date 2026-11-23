@@ -120,7 +120,7 @@ function createPanels(ax) {
         </div>
         <div class="card">
           <div class="srow" id="updRow"><span class="sl"><b>Обновления</b><small id="updNote"></small></span><span class="sc"><button class="btn" data-act="update" id="updSet">Проверить</button></span></div>
-          ${row('Проверять автоматически', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии и больше ничего не отправляет', toggle('data-bkey', 'check_updates'))}
+          ${row('Проверять автоматически', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии', toggle('data-bkey', 'check_updates'))}
         </div>
         <div class="note">${icon('monitor')}<span id="sysNote"></span></div>
         <div class="about">${logoSvg(44, 'about')}<span><b>Axiom</b><small id="verNote"></small></span></div>`,

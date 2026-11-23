@@ -1,0 +1,21 @@
+[Unit]
+Description=Caddy (HTTPS для axiom-stats)
+After=network.target
+
+[Service]
+User=caddy
+Group=caddy
+# Caddy сам получает и продлевает сертификат Let's Encrypt; хранит его в
+# /var/lib/caddy. Для портов 80/443 без root — одна возможность CAP_NET_BIND.
+Environment=XDG_DATA_HOME=/var/lib
+Environment=XDG_CONFIG_HOME=/etc
+ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+StateDirectory=caddy
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

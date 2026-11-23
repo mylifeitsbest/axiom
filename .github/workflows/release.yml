@@ -128,9 +128,16 @@ jobs:
           Пакет на Linux называется `axiom-browser`, команда запуска — `axiom-browser`.
 
           EOF
+          # Latest — только самая новая версия. Иначе перевыпуск старого тега
+          # стал бы «последним», и обновление предложило бы откат.
+          NEWEST=$( { gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name'; echo "$TAG"; } \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 )
+          if [ "$NEWEST" = "$TAG" ]; then LATEST=true; else LATEST=false; fi
+          echo "Самая новая версия: $NEWEST, $TAG помечается Latest: $LATEST"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            if [ "$LATEST" = true ]; then gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest; fi
           else
             gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Axiom $TAG" --notes-file notes.md --generate-notes
+              --title "Axiom $TAG" --notes-file notes.md --generate-notes --latest="$LATEST"
           fi

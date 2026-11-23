@@ -17,6 +17,7 @@ mod storage;
 mod system;
 mod tabs;
 mod ui;
+mod update;
 
 use anyhow::Result;
 use tao::{
@@ -55,16 +56,22 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
+    let updated = args.iter().any(|a| a == update::UPDATED_FLAG);
     let urls: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
 
     let paths = storage::Paths::resolve()?;
+    // Новую версию запустила старая: ждём, пока та закроется, иначе адреса ушли бы ей.
+    if updated {
+        update::finish(&paths);
+    }
     // Если Axiom уже открыт — передаём ему адреса и выходим.
     let Some(server) = instance::claim(&paths, &urls) else {
         return Ok(());
     };
+    update::cleanup();
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
-    let mut app = App::new(&event_loop, paths, &urls)?;
+    let mut app = App::new(&event_loop, paths, &urls, updated)?;
     events::spawn_ticker(event_loop.create_proxy());
     if let Some(server) = server {
         server.spawn(event_loop.create_proxy());

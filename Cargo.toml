@@ -1,6 +1,6 @@
 [package]
 name = "axiom"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Лёгкий десктопный браузер на Rust: минимум памяти, DuckDuckGo и панель Google AI Mode"
 repository = "https://github.com/mylifeitsbest/axiom"
@@ -13,6 +13,8 @@ directories = "6.0.0"
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Проверка скачанного обновления по SHA256SUMS.txt (та же версия, что у wry).
+sha2 = "0.10.9"
 tao = "0.37.3"
 thiserror = "2.0.21"
 url = "2.5.9"
@@ -42,7 +44,7 @@ maintainer = "Axiom contributors <192708983+mylifeitsbest@users.noreply.github.c
 copyright = "2026, Axiom contributors"
 section = "web"
 priority = "optional"
-depends = "$auto, xdg-utils"
+depends = "$auto, xdg-utils, curl"
 extended-description = """\
 Лёгкий браузер на Rust и системном WebView (WebKitGTK). Двойной поиск: \
 DuckDuckGo во вкладке и Google AI Mode в боковой панели, прокси только для \

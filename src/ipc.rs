@@ -82,6 +82,12 @@ pub struct SettingsIn {
     pub onboarded: bool,
     #[serde(default)]
     pub force_dark: bool,
+    #[serde(default = "yes")]
+    pub check_updates: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,6 +176,10 @@ pub enum UiCmd {
     },
     DownloadsClear,
     DownloadsFolder,
+    /// «Проверить» в настройках.
+    UpdateCheck,
+    /// «Обновить»: скачать новую версию и перезапуститься.
+    UpdateInstall,
 }
 
 /// Разбирает и проверяет сообщение интерфейса.
@@ -329,6 +339,7 @@ pub enum ToUi<'a> {
         received: u64,
         total: Option<u64>,
     },
+    Update(crate::update::View),
 }
 
 #[cfg(test)]
@@ -349,6 +360,11 @@ mod tests {
         assert!(matches!(
             parse(r#"{"cmd":"download_open","id":3}"#),
             Ok(UiCmd::DownloadOpen { id: 3 })
+        ));
+        // Откуда качать обновление, решает Rust: у команды нет полей.
+        assert!(matches!(
+            parse(r#"{"cmd":"update_install"}"#),
+            Ok(UiCmd::UpdateInstall)
         ));
         assert!(
             parse(r#"{"cmd":"layout","content":{"x":0,"y":0,"w":-5,"h":10},"ai":null}"#).is_err()

@@ -59,6 +59,8 @@ pub struct Settings {
     pub onboarded: bool,
     /// Принудительно затемнять сайты без своей тёмной темы (WebView2, после перезапуска).
     pub force_dark: bool,
+    /// Узнавать у GitHub о новых версиях (раз в несколько часов).
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -72,6 +74,7 @@ impl Default for Settings {
             colors: ThemeColors::default(),
             onboarded: false,
             force_dark: false,
+            check_updates: true,
         }
     }
 }
@@ -96,6 +99,7 @@ impl Settings {
         self.live_tabs = incoming.live_tabs.min(MAX_LIVE_TABS);
         self.onboarded |= incoming.onboarded;
         self.force_dark = incoming.force_dark;
+        self.check_updates = incoming.check_updates;
     }
 
     fn sanitized(mut self) -> Self {

@@ -35,6 +35,7 @@ use crate::{
         webview::{self as tab_webview, Look, TabSpec},
     },
     ui::{self, hotkeys::Hotkey},
+    update::{UpdateEvent, Updater},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,10 +73,18 @@ pub struct App {
     importing: bool,
     /// Принудительно тёмные сайты: аргумент запуска WebView2, меняется только перезапуском.
     force_dark: bool,
+    updater: Updater,
+    /// Запущены сразу после обновления: скажем об этом, когда интерфейс будет готов.
+    just_updated: bool,
 }
 
 impl App {
-    pub fn new(event_loop: &EventLoop<UserEvent>, paths: Paths, open: &[String]) -> Result<Self> {
+    pub fn new(
+        event_loop: &EventLoop<UserEvent>,
+        paths: Paths,
+        open: &[String],
+        just_updated: bool,
+    ) -> Result<Self> {
         let settings = Settings::load(&paths);
         let history = History::load(&paths);
         let bookmarks = Bookmarks::load(&paths);
@@ -117,6 +126,8 @@ impl App {
             last_ai_query: String::new(),
             importing: false,
             force_dark,
+            updater: Updater::new(),
+            just_updated,
         };
         app.restore_session();
         app.open_external(open);
@@ -151,6 +162,7 @@ impl App {
             UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
             UserEvent::Download(event) => self.on_download(event),
+            UserEvent::Update(event) => return Ok(self.on_update(event)),
             UserEvent::External(urls) => {
                 self.open_external(&urls);
                 self.window.set_minimized(false);
@@ -177,8 +189,13 @@ impl App {
                 });
                 self.push_state();
                 self.push_downloads();
+                self.push_update(false);
                 self.push_window_state();
                 self.show_window();
+                if std::mem::take(&mut self.just_updated) {
+                    let text = format!("Axiom обновлён до версии {}", env!("CARGO_PKG_VERSION"));
+                    self.send(&ToUi::Toast { text: &text });
+                }
                 if self.tabs.active_tab().is_some_and(|t| t.is_newtab()) {
                     let _ = self.ui.focus();
                 }
@@ -343,6 +360,16 @@ impl App {
                     text: "Не найдена папка «Загрузки»",
                 }),
             },
+            UiCmd::UpdateCheck => {
+                if self.updater.check(&self.events, true) {
+                    self.push_update(false);
+                }
+            }
+            UiCmd::UpdateInstall => {
+                if self.updater.install(&self.events) {
+                    self.push_update(false);
+                }
+            }
         }
         Ok(Flow::Continue)
     }
@@ -972,6 +999,7 @@ impl App {
     // ---------- память: усыпление ----------
 
     fn on_tick(&mut self) {
+        self.updater.tick(self.settings.check_updates, &self.events);
         self.drop_unanswered();
         let idle = self.idle_limit();
         self.sleep_idle_tabs(idle);
@@ -1170,6 +1198,35 @@ impl App {
         let _ = self.history.save_if_dirty(&self.paths);
         let _ = self.downloads.save_if_dirty(&self.paths);
         self.persist_settings();
+    }
+
+    // ---------- обновления ----------
+
+    fn on_update(&mut self, event: UpdateEvent) -> Flow {
+        match event {
+            UpdateEvent::Checked(latest) => {
+                let manual = self.updater.on_checked(latest);
+                self.push_update(manual);
+            }
+            UpdateEvent::Progress(received) => {
+                self.updater.on_progress(received);
+                self.push_update(false);
+            }
+            UpdateEvent::Downloaded(result) => {
+                let restart = self.updater.on_downloaded(result);
+                self.push_update(false);
+                if restart {
+                    // Новая версия уже запущена и ждёт, пока этот процесс закроется.
+                    return Flow::Exit;
+                }
+            }
+        }
+        Flow::Continue
+    }
+
+    fn push_update(&self, manual: bool) {
+        let busy = self.downloads.iter().any(|d| d.status == Status::Active);
+        self.send(&ToUi::Update(self.updater.view(manual, busy)));
     }
 
     // ---------- связь с интерфейсом ----------

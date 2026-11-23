@@ -17,7 +17,7 @@ use crate::{
     storage::Paths,
     tabs::{
         omnibox,
-        webview::{self as tab_webview, Look, styled},
+        webview::{Look, styled},
     },
     ui::hotkeys,
 };
@@ -94,7 +94,6 @@ impl AiPanel {
         let url = query.filter(|q| !q.trim().is_empty()).map(omnibox::ai_url);
         match &self.webview {
             Some(webview) => {
-                tab_webview::resume(webview);
                 if let Some(url) = url {
                     webview.load_url(&url)?;
                 }
@@ -142,7 +141,6 @@ impl AiPanel {
         let Some(webview) = &self.webview else { return };
         match bounds {
             Some(rect) if self.open && !overlay => {
-                tab_webview::resume(webview);
                 let _ = webview.set_bounds(rect);
                 let _ = webview.set_visible(true);
             }
@@ -164,16 +162,6 @@ impl AiPanel {
         let idle = limit.is_some_and(|limit| self.hidden_for(limit));
         if idle {
             self.webview = None;
-        }
-    }
-
-    /// Замораживает панель, спрятанную дольше `after`, как фоновую вкладку.
-    pub fn suspend_if_hidden(&self, after: Duration) {
-        if let Some(webview) = &self.webview
-            && !self.open
-            && self.hidden_for(after)
-        {
-            tab_webview::suspend(webview);
         }
     }
 

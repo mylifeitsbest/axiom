@@ -447,7 +447,6 @@ impl App {
             && let Some(tab) = self.tabs.get_mut(prev)
         {
             tab.last_active = Instant::now();
-            // Заморозится на тике, если не вернуться за `SUSPEND_AFTER`.
             if let Some(webview) = &tab.webview {
                 let _ = webview.set_visible(false);
             }
@@ -465,7 +464,6 @@ impl App {
             tab.keep_alive = false;
             is_newtab = tab.is_newtab();
             if let Some(webview) = &tab.webview {
-                tab_webview::resume(webview);
                 if let Some(rect) = self.content {
                     let _ = webview.set_bounds(rect);
                 }
@@ -1008,7 +1006,6 @@ impl App {
         if !self.downloads.busy_untracked() {
             self.ai.sleep_if_idle(idle);
         }
-        self.suspend_hidden();
         if self.session_dirty {
             self.save_session();
         }
@@ -1064,26 +1061,6 @@ impl App {
         }
     }
 
-    /// Замораживает фоновые вкладки, на которые не возвращались `SUSPEND_AFTER`,
-    /// и спрятанную панель ИИ. Вкладки, которые ещё грузятся, не трогаем.
-    fn suspend_hidden(&self) {
-        let active = self.tabs.active;
-        for tab in self.tabs.iter() {
-            // Вкладку с идущей загрузкой не трогаем, как и при усыплении.
-            let hidden = Some(tab.id) != active
-                && !tab.loading
-                && tab.sleep_requested.is_none()
-                && tab.last_active.elapsed() >= sleep::SUSPEND_AFTER
-                && !self.downloads.is_busy(tab.id);
-            if let Some(webview) = tab.webview.as_ref().filter(|_| hidden) {
-                tab_webview::suspend(webview);
-            }
-        }
-        if !self.downloads.busy_untracked() {
-            self.ai.suspend_if_hidden(sleep::SUSPEND_AFTER);
-        }
-    }
-
     /// Загруженные фоновые вкладки, которые можно усыпить: без звука,
     /// без недописанного текста, без идущих загрузок и без уже отправленного запроса.
     fn sleep_candidates(&self) -> Vec<(Instant, TabId)> {
@@ -1110,8 +1087,6 @@ impl App {
         let Some(webview) = &tab.webview else {
             return;
         };
-        // Замороженная страница не выполнит скрипт, пока её не разморозить.
-        tab_webview::resume(webview);
         let asked = webview.evaluate_script_with_callback(sleep::PROBE, move |raw| {
             let _ = events.send_event(UserEvent::SleepChecked(id, PageState::parse(&raw)));
         });

@@ -2,7 +2,7 @@
 # Имя `axiom-browser`, чтобы не путать с системой компьютерной алгебры Axiom.
 pkgname=axiom-browser
 _repo=axiom
-pkgver=0.3.2
+pkgver=0.3.3
 pkgrel=1
 pkgdesc='Лёгкий браузер на Rust: минимум памяти, DuckDuckGo и панель Google AI Mode'
 arch=('x86_64')

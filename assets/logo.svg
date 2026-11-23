@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Axiom</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d1d26"/>
+      <stop offset="1" stop-color="#0f0f13"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="66.6" x2="0" y2="189.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c3cbff"/>
+      <stop offset="1" stop-color="#7d8cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="url(#bg)"/>
+  <path d="M69.1 189.4 L128 66.6 L186.9 189.4" fill="none" stroke="url(#mark)" stroke-width="23" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="128" cy="153.6" r="14.1" fill="#fff"/>
+</svg>

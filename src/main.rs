@@ -13,6 +13,7 @@ mod events;
 mod instance;
 mod ipc;
 mod settings;
+mod stats;
 mod storage;
 mod system;
 mod tabs;
@@ -69,6 +70,7 @@ fn run() -> Result<()> {
         return Ok(());
     };
     update::cleanup();
+    stats::start(&paths.root);
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let mut app = App::new(&event_loop, paths, &urls, updated)?;

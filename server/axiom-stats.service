@@ -1,0 +1,22 @@
+[Unit]
+Description=Axiom stats collector
+After=network.target
+
+[Service]
+# Служба работает под одноразовым непривилегированным пользователем, база — в
+# /var/lib/axiom-stats (создаёт systemd). Секретный ключ панели — в env-файле.
+DynamicUser=yes
+StateDirectory=axiom-stats
+EnvironmentFile=/etc/axiom-stats.env
+Environment=AXIOM_STATS_DB=/var/lib/axiom-stats/stats.db
+Environment=AXIOM_STATS_HOST=127.0.0.1
+Environment=AXIOM_STATS_PORT=8787
+ExecStart=/usr/bin/python3 /opt/axiom-stats/stats.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

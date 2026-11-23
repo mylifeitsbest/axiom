@@ -56,6 +56,8 @@ pub enum DownloadEvent {
         /// Вкладка, из которой начали загрузку (известна только на Windows).
         tab: Option<TabId>,
     },
+    // Прогресс и отмену сейчас присылает только WebView2 (Windows).
+    #[cfg_attr(not(windows), allow(dead_code))]
     Progress {
         id: DownloadId,
         received: u64,
@@ -73,6 +75,7 @@ pub enum DownloadEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Done,
+    #[cfg_attr(not(windows), allow(dead_code))]
     Cancelled,
     Failed(String),
 }

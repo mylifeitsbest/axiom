@@ -1,6 +1,9 @@
 //! Состояние браузера и обработка событий главного цикла.
 
-use std::time::{Duration, Instant};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use tao::{
@@ -13,8 +16,9 @@ use wry::{NewWindowResponse, RGBA, Rect, WebContext, WebView, WebViewBuilder};
 
 use crate::{
     ai_panel::{AiPanel, proxy},
+    downloads::{self, DownloadEvent, Downloads, Status},
     events::{TICK, UserEvent},
-    ipc::{self, Edge, TabView, ToUi, UiCmd, WindowAction},
+    ipc::{self, DownloadView, Edge, TabView, ToUi, UiCmd, WindowAction},
     settings::Settings,
     storage::{
         Paths,
@@ -42,6 +46,10 @@ pub enum Flow {
 /// Поля объявлены в порядке уничтожения: сначала webview, окно — последним.
 pub struct App {
     tabs: TabStore,
+    /// Webview вкладок, закрытых посреди загрузки. Без своего webview WebView2
+    /// перестаёт сообщать о загрузке и не может её завершить, поэтому держим
+    /// его скрытым, пока загрузка не закончится.
+    parked: Vec<(TabId, WebView)>,
     ai: AiPanel,
     ui: WebView,
     context: WebContext,
@@ -51,6 +59,7 @@ pub struct App {
     settings: Settings,
     history: History,
     bookmarks: Bookmarks,
+    downloads: Downloads,
     /// Область контента и панели ИИ от интерфейса (логические px).
     content: Option<Rect>,
     ai_rect: Option<Rect>,
@@ -70,6 +79,7 @@ impl App {
         let settings = Settings::load(&paths);
         let history = History::load(&paths);
         let bookmarks = Bookmarks::load(&paths);
+        let downloads = Downloads::load(&paths);
         let events = event_loop.create_proxy();
         let window = build_window(event_loop)?;
         #[cfg(target_os = "linux")]
@@ -88,6 +98,7 @@ impl App {
 
         let mut app = Self {
             tabs: TabStore::default(),
+            parked: Vec::new(),
             ai,
             ui,
             context,
@@ -97,6 +108,7 @@ impl App {
             settings,
             history,
             bookmarks,
+            downloads,
             content: None,
             ai_rect: None,
             overlay: false,
@@ -138,6 +150,7 @@ impl App {
             }
             UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
+            UserEvent::Download(event) => self.on_download(event),
             UserEvent::External(urls) => {
                 self.open_external(&urls);
                 self.window.set_minimized(false);
@@ -163,6 +176,7 @@ impl App {
                     status: system::status(),
                 });
                 self.push_state();
+                self.push_downloads();
                 self.push_window_state();
                 self.show_window();
                 if self.tabs.active_tab().is_some_and(|t| t.is_newtab()) {
@@ -292,6 +306,43 @@ impl App {
                 let _ = self.window.drag_resize_window(resize_direction(dir));
             }
             UiCmd::Find { q, backwards } => self.find(&q, backwards),
+            UiCmd::DownloadOpen { id } => {
+                if self
+                    .downloads
+                    .get(id)
+                    .is_some_and(|d| d.status == Status::Done)
+                {
+                    self.download_action(id, downloads::open);
+                }
+            }
+            UiCmd::DownloadShow { id } => self.download_action(id, downloads::reveal),
+            UiCmd::DownloadCancel { id } => {
+                if !downloads::cancel(id) {
+                    self.send(&ToUi::Toast {
+                        text: "Эту загрузку нельзя отменить",
+                    });
+                }
+            }
+            UiCmd::DownloadRemove { id } => {
+                if self.downloads.remove(id) {
+                    self.push_downloads();
+                }
+            }
+            UiCmd::DownloadsClear => {
+                self.downloads.clear();
+                self.push_downloads();
+            }
+            UiCmd::DownloadsFolder => match downloads::folder() {
+                Some(dir) => {
+                    let _ = std::fs::create_dir_all(&dir);
+                    if let Err(err) = downloads::open(&dir) {
+                        self.toast_error(&err);
+                    }
+                }
+                None => self.send(&ToUi::Toast {
+                    text: "Не найдена папка «Загрузки»",
+                }),
+            },
         }
         Ok(Flow::Continue)
     }
@@ -444,6 +495,9 @@ impl App {
     }
 
     fn load_in_tab(&mut self, id: TabId, url: String) -> Result<()> {
+        if url == NEWTAB {
+            self.park_if_busy(id);
+        }
         let Some(tab) = self.tabs.get_mut(id) else {
             return Ok(());
         };
@@ -490,11 +544,16 @@ impl App {
     }
 
     fn close_tab(&mut self, id: TabId) {
+        self.close_tab_with(id, true);
+    }
+
+    fn close_tab_with(&mut self, id: TabId, remember: bool) {
         let Some(index) = self.tabs.index_of(id) else {
             return;
         };
         let was_active = self.tabs.active == Some(id);
-        drop(self.tabs.remove(id));
+        self.park_if_busy(id);
+        drop(self.tabs.remove(id, remember));
         self.session_dirty = true;
         if self.tabs.len() == 0 {
             let fresh = self.tabs.add(NEWTAB.into(), String::new(), false, None);
@@ -548,11 +607,15 @@ impl App {
             return;
         };
         tab.loading = started;
-        if omnibox::is_navigable(&url) && url != "about:blank" {
+        let blank = url == "about:blank";
+        if omnibox::is_navigable(&url) && !blank {
             tab.url = url;
         }
         if !started {
-            self.history.record(&tab.url, &tab.title);
+            // Вкладка, открытая ради загрузки, страницу так и не показала — в историю её не пишем.
+            if !blank {
+                self.history.record(&tab.url, &tab.title);
+            }
             if let (Some(y), Some(webview)) = (tab.scroll.take(), &tab.webview) {
                 let _ = webview.evaluate_script(&format!("window.scrollTo(0,{y})"));
             }
@@ -610,6 +673,125 @@ impl App {
         self.ai.webview = None;
         let id = self.tabs.add(url, "AI Mode".into(), true, None);
         self.activate(id);
+    }
+
+    // ---------- загрузки ----------
+
+    fn on_download(&mut self, event: DownloadEvent) {
+        if let DownloadEvent::Progress { id, received, .. } = event {
+            self.downloads.apply(event);
+            if let Some(d) = self
+                .downloads
+                .get(id)
+                .filter(|d| d.status == Status::Active)
+            {
+                self.send(&ToUi::DownloadProgress {
+                    id,
+                    received,
+                    total: d.total,
+                });
+            }
+            return;
+        }
+        let blank_tab = match event {
+            DownloadEvent::Started { tab, .. } => tab,
+            _ => None,
+        };
+        let text = self.downloads.apply(event).and_then(|d| match d.status {
+            Status::Active => Some(format!("Скачивается {}", d.name())),
+            Status::Done => Some(format!("Скачано: {}", d.name())),
+            // Отменил сам пользователь — сообщать незачем.
+            Status::Cancelled => None,
+            Status::Failed => Some(format!("{}: {}", d.error, d.name())),
+        });
+        if let Some(text) = text {
+            self.send(&ToUi::Toast { text: &text });
+        }
+        if let Some(tab) = blank_tab {
+            self.close_blank_tab(tab);
+        }
+        self.release_parked();
+        self.push_downloads();
+    }
+
+    /// Прячет webview вкладки, если она ещё что-то скачивает (см. `parked`).
+    fn park_if_busy(&mut self, id: TabId) {
+        if !self.downloads.is_busy(id) {
+            return;
+        }
+        if let Some(webview) = self.tabs.get_mut(id).and_then(|t| t.webview.take()) {
+            let _ = webview.set_visible(false);
+            tab_webview::set_low_memory(&webview);
+            self.parked.push((id, webview));
+        }
+    }
+
+    fn release_parked(&mut self) {
+        let downloads = &self.downloads;
+        self.parked.retain(|(id, _)| downloads.is_busy(*id));
+    }
+
+    /// Ссылка с `target=_blank` или адрес файла в новой вкладке: страница так и не
+    /// открылась, осталась пустая вкладка. Закрываем её, как Chrome; загрузка
+    /// идёт дальше. Последнюю вкладку не закрываем — она становится новой.
+    fn close_blank_tab(&mut self, id: TabId) {
+        let blank = self.tabs.get(id).is_some_and(|t| {
+            t.webview
+                .as_ref()
+                .and_then(|w| w.url().ok())
+                .is_some_and(|u| u.is_empty() || u == "about:blank")
+        });
+        if !blank {
+            return;
+        }
+        if self.tabs.len() > 1 {
+            self.close_tab_with(id, false);
+        } else if let Err(err) = self.load_in_tab(id, NEWTAB.into()) {
+            eprintln!("вкладка загрузки: {err:#}");
+        }
+    }
+
+    fn download_action(&mut self, id: u64, action: fn(&Path) -> Result<()>) {
+        let Some(path) = self.downloads.get(id).map(|d| d.path.clone()) else {
+            return;
+        };
+        if let Err(err) = action(&path) {
+            self.toast_error(&err);
+            // Файл могли удалить: список покажет это.
+            self.push_downloads();
+        }
+    }
+
+    fn toast_error(&self, err: &anyhow::Error) {
+        let text = format!("{err:#}");
+        let mut chars = text.chars();
+        let text: String = match chars.next() {
+            Some(first) => first.to_uppercase().chain(chars).collect(),
+            None => text.clone(),
+        };
+        self.send(&ToUi::Toast { text: &text });
+    }
+
+    fn push_downloads(&self) {
+        let items = self
+            .downloads
+            .iter()
+            .map(|d| DownloadView {
+                id: d.id,
+                name: d.name(),
+                url: d.url.clone(),
+                received: d.received,
+                total: d.total,
+                status: d.status,
+                error: d.error.clone(),
+                at: d.at,
+                exists: d.status != Status::Done || d.path.exists(),
+            })
+            .collect();
+        self.send(&ToUi::Downloads {
+            items,
+            can_cancel: downloads::CAN_CANCEL,
+        });
     }
 
     // ---------- закладки, импорт, ссылки извне ----------
@@ -794,10 +976,16 @@ impl App {
         let idle = self.idle_limit();
         self.sleep_idle_tabs(idle);
         self.limit_live_tabs();
-        self.ai.sleep_if_idle(idle);
+        // Скачивание из панели ИИ прервалось бы вместе с её webview.
+        if !self.downloads.busy_untracked() {
+            self.ai.sleep_if_idle(idle);
+        }
         self.suspend_hidden();
         if self.session_dirty {
             self.save_session();
+        }
+        if let Err(err) = self.downloads.save_if_dirty(&self.paths) {
+            eprintln!("список загрузок не сохранён: {err:#}");
         }
         if let Err(err) = self.history.save_if_dirty(&self.paths) {
             eprintln!("история не сохранена: {err:#}");
@@ -853,24 +1041,29 @@ impl App {
     fn suspend_hidden(&self) {
         let active = self.tabs.active;
         for tab in self.tabs.iter() {
+            // Вкладку с идущей загрузкой не трогаем, как и при усыплении.
             let hidden = Some(tab.id) != active
                 && !tab.loading
                 && tab.sleep_requested.is_none()
-                && tab.last_active.elapsed() >= sleep::SUSPEND_AFTER;
+                && tab.last_active.elapsed() >= sleep::SUSPEND_AFTER
+                && !self.downloads.is_busy(tab.id);
             if let Some(webview) = tab.webview.as_ref().filter(|_| hidden) {
                 tab_webview::suspend(webview);
             }
         }
-        self.ai.suspend_if_hidden(sleep::SUSPEND_AFTER);
+        if !self.downloads.busy_untracked() {
+            self.ai.suspend_if_hidden(sleep::SUSPEND_AFTER);
+        }
     }
 
     /// Загруженные фоновые вкладки, которые можно усыпить: без звука,
-    /// без недописанного текста и без уже отправленного запроса.
+    /// без недописанного текста, без идущих загрузок и без уже отправленного запроса.
     fn sleep_candidates(&self) -> Vec<(Instant, TabId)> {
         let active = self.tabs.active;
         self.tabs
             .iter()
             .filter(|t| Some(t.id) != active && t.sleep_requested.is_none() && !t.keep_alive)
+            .filter(|t| !self.downloads.is_busy(t.id))
             .filter(|t| {
                 t.webview
                     .as_ref()
@@ -905,10 +1098,15 @@ impl App {
     /// Страница не ответила за целый тик (зависла) — усыпляем без позиции прокрутки.
     fn drop_unanswered(&mut self) {
         let mut changed = false;
+        let downloads = &self.downloads;
         for tab in self.tabs.iter_mut() {
-            if tab.sleep_requested.is_some_and(|at| at.elapsed() >= TICK) {
+            if !tab.sleep_requested.is_some_and(|at| at.elapsed() >= TICK) {
+                continue;
+            }
+            tab.sleep_requested = None;
+            // Пока ждали ответа, в странице началась загрузка — не усыпляем.
+            if !downloads.is_busy(tab.id) {
                 tab.webview = None;
-                tab.sleep_requested = None;
                 changed = true;
             }
         }
@@ -926,6 +1124,10 @@ impl App {
             return;
         }
         tab.sleep_requested = None;
+        // Пока страница отвечала, в ней началась загрузка.
+        if self.downloads.is_busy(id) {
+            return;
+        }
         if page.keep {
             // Недописанный текст: вкладка остаётся, вместо неё усыпим следующую по давности.
             tab.keep_alive = true;
@@ -966,6 +1168,7 @@ impl App {
     pub fn shutdown(&mut self) {
         self.save_session();
         let _ = self.history.save_if_dirty(&self.paths);
+        let _ = self.downloads.save_if_dirty(&self.paths);
         self.persist_settings();
     }
 
@@ -1055,8 +1258,13 @@ fn build_window(event_loop: &EventLoop<UserEvent>) -> Result<Window> {
     let builder = {
         use tao::platform::windows::{IconExtWindows, WindowBuilderExtWindows};
         // Иконка встроена в exe как ресурс №1 (см. build.rs).
-        let icon = tao::window::Icon::from_resource(1, None).ok();
-        builder.with_undecorated_shadow(true).with_window_icon(icon)
+        let icon = || tao::window::Icon::from_resource(1, None).ok();
+        // with_window_icon задаёт только ICON_SMALL. Без ICON_BIG панель задач берёт
+        // иконку exe из кэша значков Windows, и после обновления там остаётся старый логотип.
+        builder
+            .with_undecorated_shadow(true)
+            .with_window_icon(icon())
+            .with_taskbar_icon(icon())
     };
     builder.build(event_loop).context("не удалось создать окно")
 }
@@ -1104,6 +1312,9 @@ fn build_ui(
             .with_default_context_menus(cfg!(debug_assertions))
     };
     let builder = tab_webview::styled(builder, look, None);
+    // На Linux обработчик загрузок общий для всех webview, а путь выбирает первый
+    // зарегистрированный — интерфейс создаётся раньше вкладок.
+    let builder = downloads::attach(builder, events);
     tab_webview::build_child(builder, window).context("не удалось создать интерфейс")
 }
 

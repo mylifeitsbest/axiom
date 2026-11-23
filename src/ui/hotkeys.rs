@@ -25,6 +25,7 @@ pub enum Hotkey {
     Find,
     Settings,
     Bookmark,
+    Downloads,
 }
 
 impl Hotkey {
@@ -43,6 +44,7 @@ impl Hotkey {
             "find" => Self::Find,
             "settings" => Self::Settings,
             "bookmark" => Self::Bookmark,
+            "downloads" => Self::Downloads,
             other => {
                 let n: u8 = other.strip_prefix("tab_")?.parse().ok()?;
                 if (1..=9).contains(&n) {
@@ -70,6 +72,7 @@ impl Hotkey {
             Self::Find => "find".into(),
             Self::Settings => "settings".into(),
             Self::Bookmark => "bookmark".into(),
+            Self::Downloads => "downloads".into(),
         }
     }
 
@@ -77,7 +80,7 @@ impl Hotkey {
     pub fn is_ui(self) -> bool {
         matches!(
             self,
-            Self::FocusOmnibox | Self::ToggleAi | Self::Find | Self::Settings
+            Self::FocusOmnibox | Self::ToggleAi | Self::Find | Self::Settings | Self::Downloads
         )
     }
 
@@ -103,6 +106,7 @@ impl Hotkey {
             (VK_F5, false, false, false) => Self::Reload,
             (VK_COMMA, true, false, false) => Self::Settings,
             (v, true, false, false) if v == key(b'D') => Self::Bookmark,
+            (v, true, false, false) if v == key(b'J') => Self::Downloads,
             (VK_LEFT, false, false, true) => Self::Back,
             (VK_RIGHT, false, false, true) => Self::Forward,
             (v, true, false, false) if (key(b'1')..=key(b'9')).contains(&v) => {
@@ -229,6 +233,7 @@ mod tests {
             Hotkey::SelectTab(3),
             Hotkey::Settings,
             Hotkey::Back,
+            Hotkey::Downloads,
         ] {
             assert_eq!(Hotkey::parse(&h.name()), Some(h));
         }
@@ -249,6 +254,10 @@ mod tests {
         assert_eq!(
             Hotkey::from_vk(u32::from(b'4'), true, false, false),
             Some(Hotkey::SelectTab(4))
+        );
+        assert_eq!(
+            Hotkey::from_vk(u32::from(b'J'), true, false, false),
+            Some(Hotkey::Downloads)
         );
         assert_eq!(Hotkey::from_vk(u32::from(b'C'), true, false, false), None);
     }

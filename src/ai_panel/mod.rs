@@ -12,6 +12,7 @@ use tao::{event_loop::EventLoopProxy, window::Window};
 use wry::{ProxyConfig, Rect, WebContext, WebView, WebViewBuilder};
 
 use crate::{
+    downloads,
     events::UserEvent,
     storage::Paths,
     tabs::{
@@ -117,9 +118,11 @@ impl AiPanel {
                         }
                     });
                 let builder = styled(builder, look, proxy.as_ref());
+                let builder = downloads::attach(builder, events);
                 let webview = crate::tabs::webview::build_child(builder, window)
                     .context("не удалось создать панель ИИ")?;
                 hotkeys::install(&webview, events.clone());
+                downloads::install(&webview, None, events.clone());
                 self.webview = Some(webview);
             }
         }

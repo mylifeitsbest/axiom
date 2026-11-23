@@ -66,6 +66,11 @@ const ASSETS: &[Asset] = &[
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/settings.js"),
     },
+    Asset {
+        path: "/downloads.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/downloads.js"),
+    },
 ];
 
 pub fn serve(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {

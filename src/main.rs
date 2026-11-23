@@ -8,6 +8,7 @@
 
 mod ai_panel;
 mod app;
+mod downloads;
 mod events;
 mod instance;
 mod ipc;

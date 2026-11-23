@@ -47,6 +47,15 @@
 
   <div class="sug" id="sug" role="listbox"></div>
 
+  <div class="dlp" id="dlp" role="dialog" aria-label="Загрузки">
+    <div class="dlp-head">
+      <b>Загрузки</b>
+      <button class="lnk" data-h="folder" title="Открыть папку «Загрузки»"><span data-i="folder"></span>Папка</button>
+      <button class="lnk" id="dlClear" data-h="clear" title="Убрать завершённые из списка">Очистить</button>
+    </div>
+    <div class="dlp-list" id="dlList"></div>
+  </div>
+
   <div class="edge n" data-edge="n"></div><div class="edge s" data-edge="s"></div>
   <div class="edge e" data-edge="e"></div><div class="edge w" data-edge="w"></div>
   <div class="edge ne" data-edge="ne"></div><div class="edge nw" data-edge="nw"></div>
@@ -73,6 +82,10 @@
     <button class="ib sm ds" id="dsBtn" title="Двойной поиск: DuckDuckGo + ИИ" data-i="spark"></button>
   </div>
   <div class="acts" id="acts">
+    <button class="ib dl" id="dlBtn" title="Загрузки (Ctrl+J)" hidden>
+      <svg class="ring" viewBox="0 0 28 28" aria-hidden="true"><circle class="rt" cx="14" cy="14" r="12"/><circle class="rp" cx="14" cy="14" r="12" pathLength="100"/></svg>
+      <span data-i="download"></span>
+    </button>
     <button class="ib" id="aiBtn" title="AI Mode (Ctrl+K)" data-i="sparkles"></button>
     <button class="ib" id="setBtn" title="Настройки (Ctrl+,)" data-i="sliders"></button>
   </div>
@@ -86,6 +99,7 @@
 
 <script src="icons.js"></script>
 <script src="settings.js"></script>
+<script src="downloads.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

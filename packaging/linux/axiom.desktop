@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Axiom
+GenericName=Web Browser
+GenericName[ru]=Веб-браузер
+Comment=Lightweight browser with DuckDuckGo and Google AI Mode
+Comment[ru]=Лёгкий браузер с DuckDuckGo и Google AI Mode
+Exec=axiom %U
+Icon=axiom
+Terminal=false
+StartupNotify=true
+StartupWMClass=axiom
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+Keywords=browser;web;internet;ai;браузер;

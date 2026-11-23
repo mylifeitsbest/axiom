@@ -25,20 +25,23 @@ pub struct Imported {
     pub history: Vec<Entry>,
 }
 
-/// Папка данных Chrome текущего пользователя.
+/// Папка данных Chrome (на Linux также Chromium — он стоит в Kali и Arch).
 fn user_data_dir() -> Option<PathBuf> {
     let base = directories::BaseDirs::new()?;
     #[cfg(windows)]
-    let dir = base
+    let candidates = [base
         .data_local_dir()
         .join("Google")
         .join("Chrome")
-        .join("User Data");
+        .join("User Data")];
     #[cfg(target_os = "macos")]
-    let dir = base.data_dir().join("Google").join("Chrome");
+    let candidates = [base.data_dir().join("Google").join("Chrome")];
     #[cfg(not(any(windows, target_os = "macos")))]
-    let dir = base.config_dir().join("google-chrome");
-    dir.is_dir().then_some(dir)
+    let candidates = [
+        base.config_dir().join("google-chrome"),
+        base.config_dir().join("chromium"),
+    ];
+    candidates.into_iter().find(|dir| dir.is_dir())
 }
 
 pub fn is_available() -> bool {
@@ -56,7 +59,8 @@ fn last_profile(user_data: &Path) -> String {
 }
 
 pub fn import(paths: &Paths) -> Result<Imported> {
-    let user_data = user_data_dir().ok_or_else(|| anyhow!("Chrome не найден"))?;
+    let user_data =
+        user_data_dir().ok_or_else(|| anyhow!("не найден профиль Chrome или Chromium"))?;
     let profile = last_profile(&user_data);
     let dir = user_data.join(&profile);
     let bookmarks = read_bookmarks(&dir.join("Bookmarks")).unwrap_or_default();

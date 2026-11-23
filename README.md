@@ -10,7 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mylifeitsbest/axiom/releases/latest"><b>Скачать для Windows</b></a>
+  <a href="https://github.com/mylifeitsbest/axiom/releases/latest/download/Axiom-windows-x64.exe"><b>Windows</b></a> ·
+  <a href="https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom_amd64.deb"><b>Ubuntu / Debian / Kali</b></a> ·
+  <a href="https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-x86_64.pkg.tar.zst"><b>Arch</b></a> ·
+  <a href="https://github.com/mylifeitsbest/axiom/releases/latest">Все файлы</a>
 </p>
 
 <p align="center">
@@ -31,13 +34,46 @@
 
 ## Установка
 
-1. Скачайте `Axiom-…-windows-x64.exe` со страницы [Releases](https://github.com/mylifeitsbest/axiom/releases/latest).
-2. Запустите его. Файл не подписан, поэтому Windows SmartScreen может показать предупреждение: «Подробнее» → «Выполнить в любом случае».
-3. При первом запуске откроется приветствие: выберите вид, перенесите данные из Chrome, нажмите «Установить» и «Выбрать браузер по умолчанию».
+### Windows 10 и 11
 
-Нужен WebView2 Runtime. В Windows 10 и 11 он уже есть. Если его нет, установите с [сайта Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
+Одной командой в PowerShell (скачает последний релиз, проверит SHA256 и установит без прав администратора):
 
-Удаление: `axiom.exe --uninstall` убирает регистрацию и ярлык. После этого удалите папку `%LOCALAPPDATA%\Programs\Axiom`, а при желании и профиль `%LOCALAPPDATA%\Axiom`.
+```powershell
+irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
+```
+
+Или вручную: скачайте [`Axiom-windows-x64.exe`](https://github.com/mylifeitsbest/axiom/releases/latest/download/Axiom-windows-x64.exe) и запустите. Файл не подписан, поэтому SmartScreen может предупредить: «Подробнее» → «Выполнить в любом случае». При первом запуске откроется приветствие: выбор вида, перенос из Chrome, «Установить» и выбор браузера по умолчанию.
+
+Нужен WebView2 Runtime. В Windows 10 и 11 он уже есть.
+
+Удаление: `axiom.exe --uninstall`, затем удалите папку `%LOCALAPPDATA%\Programs\Axiom` (профиль лежит в `%LOCALAPPDATA%\Axiom`).
+
+### Ubuntu, Debian, Kali (apt)
+
+```sh
+wget https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom_amd64.deb
+sudo apt install ./axiom_amd64.deb
+```
+
+apt сам поставит зависимости (WebKitGTK 4.1). Подходит для Ubuntu 22.04 и новее, Debian 12 и новее, Kali Rolling. Удаление: `sudo apt remove axiom`.
+
+### Arch, Manjaro, EndeavourOS (pacman)
+
+```sh
+sudo pacman -U https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-x86_64.pkg.tar.zst
+```
+
+Удаление: `sudo pacman -R axiom`. `PKGBUILD` лежит в [`packaging/arch`](packaging/arch/PKGBUILD), по нему можно собрать пакет самостоятельно (`makepkg -si`).
+
+### Любой Linux одной командой
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh
+```
+
+Скрипт сам выберет apt или pacman, скачает пакет из последнего релиза и проверит контрольную сумму. Для других дистрибутивов есть архив [`axiom-linux-x86_64.tar.gz`](https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-linux-x86_64.tar.gz) с бинарником, `.desktop`-файлом и иконками (нужен установленный WebKitGTK 4.1).
+
+На Linux Axiom становится браузером по умолчанию кнопкой в настройках (через `xdg-settings`), а перенос данных работает и из Chrome, и из Chromium.
 
 ## Память
 
@@ -71,7 +107,7 @@ Google AI Mode доступен не во всех странах. В «Наст
 |---|---|
 | Windows | работает |
 | macOS | нужна macOS 14+ и сборка с фичей `mac-proxy` у wry (пока не включена) |
-| Linux | WebKitGTK поддерживает прокси на уровне контекста, но сборка под Linux пока не проверялась |
+| Linux | WebKitGTK: прокси задаётся на уровне контекста, у панели ИИ свой контекст |
 
 Обходной путь, если прокси на вашей платформе не работает: системный прокси или VPN с раздельным туннелированием только для `google.com`.
 
@@ -85,8 +121,9 @@ cargo build --release
 ```
 
 - **Windows**: [Rust](https://rustup.rs) и Visual Studio Build Tools с рабочей нагрузкой «Разработка классических приложений на C++». Через winget: `winget install Rustlang.Rustup Microsoft.VisualStudio.2022.BuildTools`.
-- **macOS**: Xcode Command Line Tools (`xcode-select --install`).
-- **Linux** (не проверено): `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`, `libxdo-dev`.
+- **Ubuntu, Debian, Kali**: `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev pkg-config build-essential`. Пакет: `cargo install cargo-deb && cargo build --release && cargo deb --no-build`.
+- **Arch**: `sudo pacman -S --needed rust webkit2gtk-4.1 gtk3 libsoup3 base-devel`, пакет — `makepkg -si` в `packaging/arch`.
+- **macOS** (не проверено): Xcode Command Line Tools (`xcode-select --install`).
 
 Проверки, которые гоняет CI: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 
@@ -120,4 +157,6 @@ assets/            логотип, иконка и скрипт, который 
 - [ ] Индикатор памяти по процессам браузера
 - [ ] Пароли и входы из Chrome не переносятся: Chrome шифрует их ключом, привязанным к самому Chrome. Axiom предлагает сохранить пароль при входе.
 - [ ] Страница во вкладке остаётся прямоугольной: дочерний WebView2 нельзя скруглить без перехода на композиционный хостинг.
-- [ ] macOS и Linux пока не проверялись: код кроссплатформенный, но сборки под них не тестировались.
+- [ ] Linux-пакеты собираются и проходят тесты в CI (Ubuntu 22.04, Arch), но вживую на рабочем столе Linux пока не прогонялись. Сообщайте о проблемах в Issues.
+- [ ] macOS пока не поддерживается сборками.
+- [ ] Свой репозиторий APT и pacman для обновлений через `apt upgrade` и `pacman -Syu`.

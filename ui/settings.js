@@ -110,10 +110,10 @@ function createPanels(ax) {
         <div class="note">${icon('lock')}<span>Пароли и входы на сайты не переносятся: Chrome шифрует их так, что прочитать их может только он сам. Войдите на нужные сайты один раз — Axiom предложит сохранить пароль.</span></div>`,
       system: `
         <div class="card">
-          <div class="srow"><span class="sl"><b>Установка</b><small id="instNote"></small></span><span class="sc"><button class="btn primary" data-act="install" id="instBtn">Установить</button></span></div>
-          <div class="srow"><span class="sl"><b>Браузер по умолчанию</b><small id="defNote"></small></span><span class="sc"><button class="btn" data-act="default">Открыть параметры</button></span></div>
+          <div class="srow" id="instRow"><span class="sl"><b>Установка</b><small id="instNote"></small></span><span class="sc"><button class="btn primary" data-act="install" id="instBtn">Установить</button></span></div>
+          <div class="srow"><span class="sl"><b>Браузер по умолчанию</b><small id="defNote"></small></span><span class="sc"><button class="btn" data-act="default" id="defBtn">Открыть параметры</button></span></div>
         </div>
-        <div class="note">${icon('monitor')}<span>Windows не разрешает программам самим становиться браузером по умолчанию: Axiom откроет нужную страницу параметров, там достаточно выбрать Axiom.</span></div>
+        <div class="note">${icon('monitor')}<span id="sysNote"></span></div>
         <div class="about">${logoSvg(44, 'about')}<span><b>Axiom</b><small id="verNote"></small></span></div>`,
       keys: `<div class="card keys">${KEYS.map(([k, v]) => `<div class="krow"><span>${v}</span><span>${kbd(k)}</span></div>`).join('')}</div>`,
     };
@@ -174,10 +174,16 @@ function createPanels(ax) {
     if (onb.classList.contains('on')) syncScope(onb);
     if (built) {
       const sys = ax.system();
+      const win = sys.platform === 'windows';
+      $('#instRow').hidden = !sys.can_install;
       $('#instNote').textContent = sys.installed ? 'Установлен в профиль пользователя, есть в меню «Пуск»' : 'Сейчас запущена переносная копия. Установка скопирует Axiom в профиль и добавит в «Пуск».';
       $('#instBtn').textContent = sys.installed ? 'Обновить регистрацию' : 'Установить';
       $('#defNote').textContent = sys.default_browser ? 'Axiom — браузер по умолчанию' : 'Сейчас по умолчанию другой браузер';
-      $('#verNote').textContent = `Версия ${sys.version || '0.1.0'} · Rust + WebView2`;
+      $('#defBtn').textContent = win ? 'Открыть параметры' : 'Сделать основным';
+      $('#sysNote').textContent = win
+        ? 'Windows не разрешает программам самим становиться браузером по умолчанию: Axiom откроет нужную страницу параметров, там достаточно выбрать Axiom.'
+        : 'Axiom установлен пакетом (apt или pacman) и обновляется вместе с системой. Браузер по умолчанию меняется через xdg-settings.';
+      $('#verNote').textContent = `Версия ${sys.version || ''} · Rust + ${win ? 'WebView2' : sys.platform === 'linux' ? 'WebKitGTK' : 'WebKit'}`;
       $('#impRes').textContent = importState.text;
       const pv = $('#pvw');
       if (pv) pv.dataset.l = ax.A.layout;
@@ -347,8 +353,8 @@ function createPanels(ax) {
           <h2>Сделать основным?</h2>
           <p class="lead">Ссылки из Telegram, почты и других программ будут открываться в Axiom.</p>
           <div class="card onb-cardw">
-            <div class="srow"><span class="sl"><b>Установить в систему</b><small id="onbInst"></small></span><span class="sc"><button class="btn primary" data-act="install" id="onbInstBtn">Установить</button></span></div>
-            <div class="srow"><span class="sl"><b>Браузер по умолчанию</b><small id="onbDef">Windows откроет параметры — выберите там Axiom</small></span><span class="sc"><button class="btn" data-act="default">Выбрать</button></span></div>
+            <div class="srow" id="onbInstRow"><span class="sl"><b>Установить в систему</b><small id="onbInst"></small></span><span class="sc"><button class="btn primary" data-act="install" id="onbInstBtn">Установить</button></span></div>
+            <div class="srow"><span class="sl"><b>Браузер по умолчанию</b><small id="onbDef"></small></span><span class="sc"><button class="btn" data-act="default" id="onbDefBtn">Выбрать</button></span></div>
           </div>
         </section>
         <section class="step" data-step="done">
@@ -405,12 +411,17 @@ function createPanels(ax) {
   function syncOnbSystem() {
     if (!onbBuilt) return;
     const sys = ax.system();
+    const win = sys.platform === 'windows';
+    $('#onbInstRow').hidden = !sys.can_install;
     $('#onbInst').textContent = sys.installed ? 'Готово: Axiom в профиле и в меню «Пуск»' : 'Скопирует Axiom в профиль и добавит в меню «Пуск»';
     const btn = $('#onbInstBtn');
     btn.classList.remove('busy');
     btn.innerHTML = sys.installed ? `${icon('check')} Установлен` : 'Установить';
     btn.disabled = !!sys.installed;
-    if (sys.default_browser) $('#onbDef').textContent = 'Axiom уже браузер по умолчанию';
+    $('#onbDef').textContent = sys.default_browser
+      ? 'Axiom уже браузер по умолчанию'
+      : win ? 'Windows откроет параметры — выберите там Axiom' : 'Одна кнопка — и ссылки откроются в Axiom';
+    $('#onbDefBtn').textContent = win ? 'Выбрать' : 'Сделать основным';
   }
   function syncOnbImport() {
     if (!onbBuilt) return;

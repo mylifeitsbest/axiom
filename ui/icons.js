@@ -31,17 +31,13 @@ const ICONS = {
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
 };
 
-/// Логотип: «Λ» без перекладины и точка вместо неё. `id` — суффикс для градиентов.
-function logoSvg(size, id = 'l', animated = false) {
+/// Логотип: плоская тёмная плитка, белая «Λ» без перекладины и акцентная точка.
+function logoSvg(size, _id = 'l', animated = false) {
   const cls = animated ? ' class="logo-anim"' : '';
   return `<svg${cls} width="${size}" height="${size}" viewBox="0 0 256 256" aria-hidden="true">
-    <defs>
-      <linearGradient id="bg-${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d1d26"/><stop offset="1" stop-color="#0f0f13"/></linearGradient>
-      <linearGradient id="mk-${id}" x1="0" y1="66.6" x2="0" y2="189.4" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#c3cbff"/><stop offset="1" stop-color="#7d8cff"/></linearGradient>
-    </defs>
-    <rect class="lg-bg" width="256" height="256" rx="58" fill="url(#bg-${id})"/>
-    <path class="lg-mk" pathLength="1" d="M69.1 189.4 L128 66.6 L186.9 189.4" fill="none" stroke="url(#mk-${id})" stroke-width="23" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle class="lg-dot" cx="128" cy="153.6" r="14.1" fill="#fff"/>
+    <rect class="lg-bg" width="256" height="256" rx="58" fill="#0f0f13"/>
+    <path class="lg-mk" pathLength="1" d="M78.1 183 L128 73 L177.9 183" fill="none" stroke="#f4f5fa" stroke-width="19" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle class="lg-dot" cx="128" cy="154.9" r="12" fill="#8b9cff"/>
   </svg>`;
 }
 

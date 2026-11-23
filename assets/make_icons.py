@@ -1,4 +1,4 @@
-"""Рисует логотип Axiom во всех размерах и собирает axiom.ico.
+"""Рисует логотип Axiom во всех размерах: axiom.ico (Windows) и PNG для Linux.
 
 Только стандартная библиотека: фигуры заданы как SDF (signed distance field),
 сглаживание — суперсэмплингом. Запуск: python assets/make_icons.py
@@ -11,19 +11,16 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-BG_TOP, BG_BOTTOM = (0x1D, 0x1D, 0x26), (0x0F, 0x0F, 0x13)
-MARK_TOP, MARK_BOTTOM = (0xC3, 0xCB, 0xFF), (0x7D, 0x8C, 0xFF)
-DOT = (0xFF, 0xFF, 0xFF)
+# Плоский минимализм: тёмная плитка, белая «Λ», акцентная точка.
+TILE = (0x0F, 0x0F, 0x13)
+MARK = (0xF4, 0xF5, 0xFA)
+DOT = (0x8B, 0x9C, 0xFF)
 
-# Геометрия в долях стороны: «Λ» без перекладины и точка вместо неё.
-APEX, LEFT, RIGHT = (0.5, 0.26), (0.27, 0.74), (0.73, 0.74)
-STROKE = 0.09
-DOT_C, DOT_R = (0.5, 0.60), 0.055
+# Геометрия в долях стороны.
+APEX, LEFT, RIGHT = (0.5, 0.285), (0.305, 0.715), (0.695, 0.715)
+STROKE = 0.074
+DOT_C, DOT_R = (0.5, 0.605), 0.047
 CORNER = 0.226
-
-
-def lerp(a, b, t):
-    return tuple(x + (y - x) * t for x, y in zip(a, b))
 
 
 def sd_round_rect(x, y, half, radius):
@@ -39,32 +36,29 @@ def sd_segment(x, y, a, b):
     return math.hypot(px - bx * t, py - by * t)
 
 
+def color_at(x, y):
+    if sd_round_rect(x, y, 0.5, CORNER) > 0:
+        return None
+    if math.hypot(x - DOT_C[0], y - DOT_C[1]) < DOT_R:
+        return DOT
+    if min(sd_segment(x, y, APEX, LEFT), sd_segment(x, y, APEX, RIGHT)) < STROKE / 2:
+        return MARK
+    return TILE
+
+
 def render(size, ss=4):
     rows = []
     for j in range(size):
         row = bytearray()
         for i in range(size):
-            acc = [0.0, 0.0, 0.0, 0.0]
+            r = g = b = hits = 0
             for sj in range(ss):
                 for si in range(ss):
-                    x = (i + (si + 0.5) / ss) / size
-                    y = (j + (sj + 0.5) / ss) / size
-                    if sd_round_rect(x, y, 0.5, CORNER) > 0:
-                        continue
-                    color = lerp(BG_TOP, BG_BOTTOM, y)
-                    stroke = min(sd_segment(x, y, APEX, LEFT), sd_segment(x, y, APEX, RIGHT))
-                    if stroke < STROKE / 2:
-                        color = lerp(MARK_TOP, MARK_BOTTOM, (y - APEX[1]) / (LEFT[1] - APEX[1]))
-                    if math.hypot(x - DOT_C[0], y - DOT_C[1]) < DOT_R:
-                        color = DOT
-                    acc[0] += color[0]
-                    acc[1] += color[1]
-                    acc[2] += color[2]
-                    acc[3] += 1
-            n = ss * ss
-            alpha = acc[3] / n
-            if acc[3]:
-                row += bytes(round(c / acc[3]) for c in acc[:3]) + bytes([round(alpha * 255)])
+                    c = color_at((i + (si + 0.5) / ss) / size, (j + (sj + 0.5) / ss) / size)
+                    if c:
+                        r, g, b, hits = r + c[0], g + c[1], b + c[2], hits + 1
+            if hits:
+                row += bytes((round(r / hits), round(g / hits), round(b / hits), round(255 * hits / (ss * ss))))
             else:
                 row += b"\0\0\0\0"
         rows.append(bytes(row))
@@ -95,13 +89,20 @@ def ico(images):
 
 
 def main():
-    images = []
-    for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
-        data = png(size, render(size, 6 if size <= 32 else 4))
-        images.append((size, data))
-    (HERE / "axiom.ico").write_bytes(ico(images))
-    (HERE / "logo-512.png").write_bytes(png(512, render(512, 2)))
-    print("axiom.ico и logo-512.png готовы")
+    cache = {}
+
+    def get(size):
+        if size not in cache:
+            cache[size] = png(size, render(size, 6 if size <= 32 else 4 if size <= 256 else 2))
+        return cache[size]
+
+    (HERE / "axiom.ico").write_bytes(ico([(s, get(s)) for s in (16, 20, 24, 32, 40, 48, 64, 128, 256)]))
+    linux = HERE / "linux"
+    linux.mkdir(exist_ok=True)
+    for size in (16, 24, 32, 48, 64, 128, 256, 512):
+        (linux / f"axiom-{size}.png").write_bytes(get(size))
+    (HERE / "logo-512.png").write_bytes(get(512))
+    print("axiom.ico, logo-512.png и assets/linux/*.png готовы")
 
 
 if __name__ == "__main__":

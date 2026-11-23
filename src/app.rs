@@ -69,6 +69,8 @@ impl App {
         let bookmarks = Bookmarks::load(&paths);
         let events = event_loop.create_proxy();
         let window = build_window(event_loop)?;
+        #[cfg(target_os = "linux")]
+        crate::ui::hotkeys::install_window(&window, events.clone());
         let mut context = WebContext::new(Some(paths.webview_data()));
         let window_bg = ipc::parse_hex(&settings.colors.window).unwrap_or((20, 20, 24, 255));
         let ui = build_ui(&window, &mut context, &events, window_bg)?;
@@ -228,12 +230,21 @@ impl App {
                     status: system::status(),
                 });
             }
-            UiCmd::OpenDefaultApps => {
-                if let Err(err) = system::open_default_apps() {
+            UiCmd::OpenDefaultApps => match system::make_default() {
+                Ok(true) => {
+                    self.send(&ToUi::Toast {
+                        text: "Axiom — браузер по умолчанию",
+                    });
+                    self.send(&ToUi::System {
+                        status: system::status(),
+                    });
+                }
+                Ok(false) => {}
+                Err(err) => {
                     let text = format!("{err:#}");
                     self.send(&ToUi::Toast { text: &text });
                 }
-            }
+            },
             UiCmd::SaveSettings { settings } => self.save_settings(settings),
             UiCmd::ThemeColors { window, page } => {
                 if self.settings.colors.window != window || self.settings.colors.page != page {

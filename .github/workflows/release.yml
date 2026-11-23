@@ -57,10 +57,10 @@ jobs:
         run: |
           cargo deb --no-build
           mkdir -p dist stage/axiom
-          cp target/debian/axiom_*_amd64.deb dist/axiom_amd64.deb
-          install -Dm755 target/release/axiom stage/axiom/axiom
-          install -Dm644 packaging/linux/axiom.desktop stage/axiom/axiom.desktop
-          install -Dm644 assets/logo.svg stage/axiom/icons/axiom.svg
+          cp target/debian/axiom-browser_*_amd64.deb dist/axiom_amd64.deb
+          install -Dm755 target/release/axiom stage/axiom/axiom-browser
+          install -Dm644 packaging/linux/axiom-browser.desktop stage/axiom/axiom-browser.desktop
+          install -Dm644 assets/logo.svg stage/axiom/icons/axiom-browser.svg
           cp assets/linux/*.png stage/axiom/icons/
           cp README.md stage/axiom/
           tar -C stage -czf dist/axiom-linux-x86_64.tar.gz axiom
@@ -82,12 +82,12 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           sed -i "s/^pkgver=.*/pkgver=$VER/" packaging/arch/PKGBUILD
-          git archive --format=tar.gz --prefix="axiom-$VER/" -o "packaging/arch/axiom-$VER.tar.gz" HEAD
+          git archive --format=tar.gz --prefix="axiom-$VER/" -o "packaging/arch/axiom-browser-$VER.tar.gz" HEAD
           useradd -m builder
           chown -R builder "$GITHUB_WORKSPACE"
           sudo -u builder -H bash -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --noconfirm -f"
           mkdir -p dist
-          cp packaging/arch/axiom-"$VER"-*-x86_64.pkg.tar.zst dist/axiom-x86_64.pkg.tar.zst
+          cp packaging/arch/axiom-browser-"$VER"-*-x86_64.pkg.tar.zst dist/axiom-x86_64.pkg.tar.zst
           pacman -Qip dist/axiom-x86_64.pkg.tar.zst
       - uses: actions/upload-artifact@v4
         with:
@@ -118,21 +118,14 @@ jobs:
           irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
           ```
 
-          **Ubuntu, Debian, Kali** (apt):
-          ```sh
-          wget https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom_amd64.deb
-          sudo apt install ./axiom_amd64.deb
-          ```
-
-          **Arch и производные** (pacman):
-          ```sh
-          sudo pacman -U https://github.com/mylifeitsbest/axiom/releases/latest/download/axiom-x86_64.pkg.tar.zst
-          ```
-
-          **Любой Linux одной командой:**
+          **Linux одной командой** (Ubuntu, Debian, Kali, Arch): подключит подписанный репозиторий,
+          обновления придут через `apt upgrade` или `pacman -Syu`:
           ```sh
           curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh
           ```
+
+          Ручная настройка репозиториев: https://mylifeitsbest.github.io/axiom/
+          Пакет на Linux называется `axiom-browser`, команда запуска — `axiom-browser`.
 
           EOF
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then

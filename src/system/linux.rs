@@ -4,8 +4,8 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-/// Имя файла, который кладут пакеты: `/usr/share/applications/axiom.desktop`.
-const DESKTOP: &str = "axiom.desktop";
+/// Имя файла, который кладут пакеты: `/usr/share/applications/axiom-browser.desktop`.
+const DESKTOP: &str = "axiom-browser.desktop";
 
 pub fn is_default_browser() -> bool {
     Command::new("xdg-settings")

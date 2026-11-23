@@ -57,15 +57,17 @@ curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh
 
 Скрипт сам выберет apt или pacman, подключит подписанный репозиторий Axiom и установит браузер. После этого Axiom обновляется вместе с системой: `sudo apt upgrade` или `sudo pacman -Syu`. Установку этим скриптом CI проверяет в чистых Ubuntu 22.04, Ubuntu 24.04, Kali и Arch.
 
+На Linux пакет и команда запуска называются `axiom-browser`. В Debian, Ubuntu и Kali уже есть пакет `axiom` (это система компьютерной алгебры), и так их не перепутать.
+
 ### Ubuntu, Debian, Kali (apt) — вручную
 
 ```sh
 curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.gpg | sudo tee /usr/share/keyrings/axiom.gpg > /dev/null
 echo "deb [arch=amd64 signed-by=/usr/share/keyrings/axiom.gpg] https://mylifeitsbest.github.io/axiom/apt stable main" | sudo tee /etc/apt/sources.list.d/axiom.list
-sudo apt update && sudo apt install axiom
+sudo apt update && sudo apt install axiom-browser
 ```
 
-apt сам поставит зависимости (WebKitGTK 4.1). Подходит для Ubuntu 22.04 и новее, Debian 12 и новее, Kali Rolling. Удаление: `sudo apt remove axiom`.
+apt сам поставит зависимости (WebKitGTK 4.1). Подходит для Ubuntu 22.04 и новее, Debian 12 и новее, Kali Rolling. Удаление: `sudo apt remove axiom-browser`.
 
 ### Arch, Manjaro, EndeavourOS (pacman) — вручную
 
@@ -73,10 +75,10 @@ apt сам поставит зависимости (WebKitGTK 4.1). Подход
 curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.asc | sudo pacman-key --add -
 sudo pacman-key --lsign-key 643C6DE601D4BBB661D5322AF2F379CD75CF5C03
 printf '\n[axiom]\nSigLevel = Required\nServer = https://mylifeitsbest.github.io/axiom/arch/$arch\n' | sudo tee -a /etc/pacman.conf
-sudo pacman -Sy axiom
+sudo pacman -Syu axiom-browser
 ```
 
-Удаление: `sudo pacman -R axiom`. `PKGBUILD` лежит в [`packaging/arch`](packaging/arch/PKGBUILD), по нему можно собрать пакет самостоятельно (`makepkg -si`).
+Удаление: `sudo pacman -R axiom-browser`. `PKGBUILD` лежит в [`packaging/arch`](packaging/arch/PKGBUILD), по нему можно собрать пакет самостоятельно (`makepkg -si`).
 
 ### Без репозитория
 

@@ -369,9 +369,9 @@ impl App {
             && let Some(tab) = self.tabs.get_mut(prev)
         {
             tab.last_active = Instant::now();
+            // Заморозится на тике, если не вернуться за `SUSPEND_AFTER`.
             if let Some(webview) = &tab.webview {
                 let _ = webview.set_visible(false);
-                tab_webview::set_background(webview, true);
             }
         }
         self.tabs.active = Some(id);
@@ -387,7 +387,7 @@ impl App {
             tab.keep_alive = false;
             is_newtab = tab.is_newtab();
             if let Some(webview) = &tab.webview {
-                tab_webview::set_background(webview, false);
+                tab_webview::resume(webview);
                 if let Some(rect) = self.content {
                     let _ = webview.set_bounds(rect);
                 }
@@ -791,9 +791,11 @@ impl App {
 
     fn on_tick(&mut self) {
         self.drop_unanswered();
-        self.sleep_idle_tabs();
+        let idle = self.idle_limit();
+        self.sleep_idle_tabs(idle);
         self.limit_live_tabs();
-        self.ai.sleep_if_idle(self.settings.sleep_minutes);
+        self.ai.sleep_if_idle(idle);
+        self.suspend_hidden();
         if self.session_dirty {
             self.save_session();
         }
@@ -802,13 +804,27 @@ impl App {
         }
     }
 
-    /// Усыпляет вкладки, которые не открывали дольше `sleep_minutes`.
-    fn sleep_idle_tabs(&mut self) {
+    /// Через сколько бездействия усыплять фоновые вкладки и спрятанную панель ИИ:
+    /// `sleep_minutes`, а когда системе не хватает памяти — через минуту.
+    /// `None` — усыпление выключено.
+    fn idle_limit(&self) -> Option<Duration> {
         let minutes = self.settings.sleep_minutes;
         if minutes == 0 {
-            return;
+            return None;
         }
         let limit = Duration::from_secs(u64::from(minutes) * 60);
+        Some(if system::memory::is_low() {
+            limit.min(sleep::LOW_MEMORY_IDLE)
+        } else {
+            limit
+        })
+    }
+
+    /// Усыпляет вкладки, которые не открывали дольше `limit`.
+    fn sleep_idle_tabs(&mut self, limit: Option<Duration>) {
+        let Some(limit) = limit else {
+            return;
+        };
         let idle: Vec<TabId> = self
             .sleep_candidates()
             .into_iter()
@@ -830,6 +846,22 @@ impl App {
         for id in sleep::excess(self.sleep_candidates(), keep) {
             self.request_sleep(id);
         }
+    }
+
+    /// Замораживает фоновые вкладки, на которые не возвращались `SUSPEND_AFTER`,
+    /// и спрятанную панель ИИ. Вкладки, которые ещё грузятся, не трогаем.
+    fn suspend_hidden(&self) {
+        let active = self.tabs.active;
+        for tab in self.tabs.iter() {
+            let hidden = Some(tab.id) != active
+                && !tab.loading
+                && tab.sleep_requested.is_none()
+                && tab.last_active.elapsed() >= sleep::SUSPEND_AFTER;
+            if let Some(webview) = tab.webview.as_ref().filter(|_| hidden) {
+                tab_webview::suspend(webview);
+            }
+        }
+        self.ai.suspend_if_hidden(sleep::SUSPEND_AFTER);
     }
 
     /// Загруженные фоновые вкладки, которые можно усыпить: без звука,
@@ -857,6 +889,8 @@ impl App {
         let Some(webview) = &tab.webview else {
             return;
         };
+        // Замороженная страница не выполнит скрипт, пока её не разморозить.
+        tab_webview::resume(webview);
         let asked = webview.evaluate_script_with_callback(sleep::PROBE, move |raw| {
             let _ = events.send_event(UserEvent::SleepChecked(id, PageState::parse(&raw)));
         });

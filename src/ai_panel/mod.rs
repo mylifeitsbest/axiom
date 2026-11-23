@@ -5,7 +5,7 @@
 
 pub mod proxy;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tao::{event_loop::EventLoopProxy, window::Window};
@@ -16,7 +16,7 @@ use crate::{
     storage::Paths,
     tabs::{
         omnibox,
-        webview::{Look, styled},
+        webview::{self as tab_webview, Look, styled},
     },
     ui::hotkeys,
 };
@@ -93,6 +93,7 @@ impl AiPanel {
         let url = query.filter(|q| !q.trim().is_empty()).map(omnibox::ai_url);
         match &self.webview {
             Some(webview) => {
+                tab_webview::resume(webview);
                 if let Some(url) = url {
                     webview.load_url(&url)?;
                 }
@@ -138,6 +139,7 @@ impl AiPanel {
         let Some(webview) = &self.webview else { return };
         match bounds {
             Some(rect) if self.open && !overlay => {
+                tab_webview::resume(webview);
                 let _ = webview.set_bounds(rect);
                 let _ = webview.set_visible(true);
             }
@@ -151,16 +153,28 @@ impl AiPanel {
         self.webview.as_ref().and_then(|w| w.url().ok())
     }
 
-    /// Освобождает память, если панель скрыта дольше `minutes`.
-    pub fn sleep_if_idle(&mut self, minutes: u32) {
-        if minutes == 0 || self.open {
+    /// Освобождает память, если панель скрыта дольше `limit` (`None` — никогда).
+    pub fn sleep_if_idle(&mut self, limit: Option<Duration>) {
+        if self.open {
             return;
         }
-        let idle = self
-            .hidden_since
-            .is_some_and(|t| t.elapsed().as_secs() >= u64::from(minutes) * 60);
+        let idle = limit.is_some_and(|limit| self.hidden_for(limit));
         if idle {
             self.webview = None;
         }
+    }
+
+    /// Замораживает панель, спрятанную дольше `after`, как фоновую вкладку.
+    pub fn suspend_if_hidden(&self, after: Duration) {
+        if let Some(webview) = &self.webview
+            && !self.open
+            && self.hidden_for(after)
+        {
+            tab_webview::suspend(webview);
+        }
+    }
+
+    fn hidden_for(&self, limit: Duration) -> bool {
+        self.hidden_since.is_some_and(|t| t.elapsed() >= limit)
     }
 }

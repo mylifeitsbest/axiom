@@ -77,6 +77,7 @@ pub struct SettingsIn {
     pub double_search: bool,
     pub ai_proxy: String,
     pub sleep_minutes: u32,
+    pub live_tabs: u32,
     #[serde(default)]
     pub onboarded: bool,
     #[serde(default)]

@@ -8,6 +8,7 @@ use crate::{ipc::SettingsIn, storage};
 
 pub const FILE: &str = "settings.json";
 const MAX_SLEEP_MINUTES: u32 = 24 * 60;
+const MAX_LIVE_TABS: u32 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -49,6 +50,9 @@ pub struct Settings {
     pub ai_proxy: String,
     /// Через сколько минут неактивности усыплять вкладку (0 — никогда).
     pub sleep_minutes: u32,
+    /// Сколько фоновых вкладок держать загруженными (0 — без ограничения).
+    /// Лишние, самые давние, засыпают сразу.
+    pub live_tabs: u32,
     /// Цвета темы, чтобы новые webview не мигали белым.
     pub colors: ThemeColors,
     /// Пройдено ли приветствие первого запуска.
@@ -64,6 +68,7 @@ impl Default for Settings {
             double_search: true,
             ai_proxy: String::new(),
             sleep_minutes: 10,
+            live_tabs: 3,
             colors: ThemeColors::default(),
             onboarded: false,
             force_dark: false,
@@ -88,12 +93,14 @@ impl Settings {
         self.double_search = incoming.double_search;
         self.ai_proxy = incoming.ai_proxy.trim().to_string();
         self.sleep_minutes = incoming.sleep_minutes.min(MAX_SLEEP_MINUTES);
+        self.live_tabs = incoming.live_tabs.min(MAX_LIVE_TABS);
         self.onboarded |= incoming.onboarded;
         self.force_dark = incoming.force_dark;
     }
 
     fn sanitized(mut self) -> Self {
         self.sleep_minutes = self.sleep_minutes.min(MAX_SLEEP_MINUTES);
+        self.live_tabs = self.live_tabs.min(MAX_LIVE_TABS);
         if crate::ai_panel::proxy::parse(&self.ai_proxy).is_err() {
             self.ai_proxy.clear();
         }

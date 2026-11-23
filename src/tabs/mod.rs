@@ -1,6 +1,7 @@
 //! Модель вкладок. Вкладка без webview — «спящая» или новая: память не занимает.
 
 pub mod omnibox;
+pub mod sleep;
 pub mod webview;
 
 use std::time::Instant;
@@ -22,8 +23,10 @@ pub struct Tab {
     pub last_active: Instant,
     /// Позиция прокрутки, сохранённая при усыплении.
     pub scroll: Option<f64>,
-    /// Запрошено усыпление, ждём позицию прокрутки.
-    pub sleep_requested: bool,
+    /// Когда запрошено усыпление: ждём от страницы позицию прокрутки.
+    pub sleep_requested: Option<Instant>,
+    /// В странице недописанный текст: не усыпляем, пока вкладку снова не откроют.
+    pub keep_alive: bool,
 }
 
 impl Tab {
@@ -100,7 +103,8 @@ impl TabStore {
                 webview: None,
                 last_active: Instant::now(),
                 scroll: None,
-                sleep_requested: false,
+                sleep_requested: None,
+                keep_alive: false,
             },
         );
         id

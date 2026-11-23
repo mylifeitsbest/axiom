@@ -13,7 +13,7 @@ use wry::{NewWindowResponse, RGBA, Rect, WebContext, WebView, WebViewBuilder};
 
 use crate::{
     ai_panel::{AiPanel, proxy},
-    events::UserEvent,
+    events::{TICK, UserEvent},
     ipc::{self, Edge, TabView, ToUi, UiCmd, WindowAction},
     settings::Settings,
     storage::{
@@ -27,6 +27,7 @@ use crate::{
     tabs::{
         TabId, TabStore,
         omnibox::{self, NEWTAB},
+        sleep::{self, PageState},
         webview::{self as tab_webview, Look, TabSpec},
     },
     ui::{self, hotkeys::Hotkey},
@@ -135,7 +136,7 @@ impl App {
                     self.activate(id);
                 }
             }
-            UserEvent::ScrollCaptured(id, y) => self.finish_sleep(id, y),
+            UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
             UserEvent::External(urls) => {
                 self.open_external(&urls);
@@ -382,7 +383,8 @@ impl App {
         let mut is_newtab = false;
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.last_active = Instant::now();
-            tab.sleep_requested = false;
+            tab.sleep_requested = None;
+            tab.keep_alive = false;
             is_newtab = tab.is_newtab();
             if let Some(webview) = &tab.webview {
                 tab_webview::set_background(webview, false);
@@ -395,6 +397,7 @@ impl App {
         if is_newtab {
             let _ = self.ui.focus();
         }
+        self.limit_live_tabs();
         self.session_dirty = true;
         self.push_state();
     }
@@ -701,6 +704,7 @@ impl App {
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }
+        self.limit_live_tabs();
         self.persist_settings();
     }
 
@@ -786,7 +790,9 @@ impl App {
     // ---------- память: усыпление ----------
 
     fn on_tick(&mut self) {
+        self.drop_unanswered();
         self.sleep_idle_tabs();
+        self.limit_live_tabs();
         self.ai.sleep_if_idle(self.settings.sleep_minutes);
         if self.session_dirty {
             self.save_session();
@@ -796,39 +802,79 @@ impl App {
         }
     }
 
+    /// Усыпляет вкладки, которые не открывали дольше `sleep_minutes`.
     fn sleep_idle_tabs(&mut self) {
         let minutes = self.settings.sleep_minutes;
         if minutes == 0 {
             return;
         }
         let limit = Duration::from_secs(u64::from(minutes) * 60);
+        let idle: Vec<TabId> = self
+            .sleep_candidates()
+            .into_iter()
+            .filter(|(seen, _)| seen.elapsed() >= limit)
+            .map(|(_, id)| id)
+            .collect();
+        for id in idle {
+            self.request_sleep(id);
+        }
+    }
+
+    /// Держит загруженными не больше `live_tabs` фоновых вкладок:
+    /// лишние, которые открывали давнее всего, засыпают сразу.
+    fn limit_live_tabs(&mut self) {
+        let keep = self.settings.live_tabs as usize;
+        if keep == 0 {
+            return;
+        }
+        for id in sleep::excess(self.sleep_candidates(), keep) {
+            self.request_sleep(id);
+        }
+    }
+
+    /// Загруженные фоновые вкладки, которые можно усыпить: без звука,
+    /// без недописанного текста и без уже отправленного запроса.
+    fn sleep_candidates(&self) -> Vec<(Instant, TabId)> {
         let active = self.tabs.active;
+        self.tabs
+            .iter()
+            .filter(|t| Some(t.id) != active && t.sleep_requested.is_none() && !t.keep_alive)
+            .filter(|t| {
+                t.webview
+                    .as_ref()
+                    .is_some_and(|w| !tab_webview::is_playing_audio(w))
+            })
+            .map(|t| (t.last_active, t.id))
+            .collect()
+    }
+
+    /// Спрашивает страницу о прокрутке и недописанном тексте; ответ придёт в `finish_sleep`.
+    fn request_sleep(&mut self, id: TabId) {
+        let events = self.events.clone();
+        let Some(tab) = self.tabs.get_mut(id) else {
+            return;
+        };
+        let Some(webview) = &tab.webview else {
+            return;
+        };
+        let asked = webview.evaluate_script_with_callback(sleep::PROBE, move |raw| {
+            let _ = events.send_event(UserEvent::SleepChecked(id, PageState::parse(&raw)));
+        });
+        if asked.is_ok() {
+            tab.sleep_requested = Some(Instant::now());
+        } else {
+            tab.webview = None;
+            self.push_state();
+        }
+    }
+
+    /// Страница не ответила за целый тик (зависла) — усыпляем без позиции прокрутки.
+    fn drop_unanswered(&mut self) {
         let mut changed = false;
         for tab in self.tabs.iter_mut() {
-            if Some(tab.id) == active || tab.last_active.elapsed() < limit {
-                continue;
-            }
-            let Some(webview) = &tab.webview else {
-                continue;
-            };
-            if tab_webview::is_playing_audio(webview) {
-                continue;
-            }
-            if tab.sleep_requested {
-                // Страница не ответила за целый тик — усыпляем без позиции прокрутки.
+            if tab.sleep_requested.is_some_and(|at| at.elapsed() >= TICK) {
                 tab.webview = None;
-                tab.sleep_requested = false;
-                changed = true;
-                continue;
-            }
-            tab.sleep_requested = true;
-            let (events, id) = (self.events.clone(), tab.id);
-            let asked = webview.evaluate_script_with_callback("window.scrollY", move |y| {
-                let y = y.trim().parse::<f64>().unwrap_or(0.0);
-                let _ = events.send_event(UserEvent::ScrollCaptured(id, y));
-            });
-            if asked.is_err() {
-                tab.webview = None;
+                tab.sleep_requested = None;
                 changed = true;
             }
         }
@@ -837,17 +883,23 @@ impl App {
         }
     }
 
-    fn finish_sleep(&mut self, id: TabId, scroll: f64) {
+    fn finish_sleep(&mut self, id: TabId, page: PageState) {
         let active = self.tabs.active;
         let Some(tab) = self.tabs.get_mut(id) else {
             return;
         };
-        if Some(id) == active || !tab.sleep_requested {
+        if Some(id) == active || tab.sleep_requested.is_none() {
+            return;
+        }
+        tab.sleep_requested = None;
+        if page.keep {
+            // Недописанный текст: вкладка остаётся, вместо неё усыпим следующую по давности.
+            tab.keep_alive = true;
+            self.limit_live_tabs();
             return;
         }
         tab.webview = None;
-        tab.sleep_requested = false;
-        tab.scroll = (scroll.is_finite() && scroll > 0.0).then_some(scroll);
+        tab.scroll = (page.y.is_finite() && page.y > 0.0).then_some(page.y);
         self.push_state();
     }
 

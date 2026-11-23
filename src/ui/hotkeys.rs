@@ -169,9 +169,54 @@ pub fn install(webview: &WebView, events: EventLoopProxy<UserEvent>) {
     }
 }
 
-/// На других платформах клавиши в странице пока ловит только меню приложения (TODO).
+/// На других платформах клавиши ловятся на уровне окна (см. `install_window`).
 #[cfg(not(windows))]
 pub fn install(_webview: &WebView, _events: EventLoopProxy<UserEvent>) {}
+
+/// Linux: обработчик `key-press-event` окна GTK срабатывает раньше, чем клавиша
+/// доходит до WebKitGTK, поэтому сочетания работают и внутри страниц.
+#[cfg(target_os = "linux")]
+pub fn install_window(window: &tao::window::Window, events: EventLoopProxy<UserEvent>) {
+    use gtk::{gdk, glib, prelude::*};
+    use tao::platform::unix::WindowExtUnix;
+
+    let gtk_window = window.gtk_window();
+    let keymap = gdk::Keymap::for_display(&gtk_window.display());
+    gtk_window.connect_key_press_event(move |_, event| {
+        let state = event.state();
+        let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
+        let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+        let alt = state.contains(gdk::ModifierType::MOD1_MASK);
+        // Клавиша в первой (латинской) раскладке: Ctrl+T работает и на русской.
+        let keyval = keymap
+            .as_ref()
+            .and_then(|k| k.translate_keyboard_state(u32::from(event.hardware_keycode()), state, 0))
+            .map(|(keyval, ..)| keyval)
+            .unwrap_or_else(|| *event.keyval());
+        match vk_from_keyval(keyval).and_then(|vk| Hotkey::from_vk(vk, ctrl, shift, alt)) {
+            Some(hotkey) => {
+                let _ = events.send_event(UserEvent::Hotkey(hotkey));
+                glib::Propagation::Stop
+            }
+            None => glib::Propagation::Proceed,
+        }
+    });
+}
+
+/// Код клавиши GDK (keysym) → виртуальный код в стиле Windows для [`Hotkey::from_vk`].
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn vk_from_keyval(keyval: u32) -> Option<u32> {
+    Some(match keyval {
+        0x61..=0x7a => keyval - 0x20,
+        0x41..=0x5a | 0x30..=0x39 => keyval,
+        0xff09 | 0xfe20 => 0x09,
+        0xff51 => 0x25,
+        0xff53 => 0x27,
+        0xffc2 => 0x74,
+        0x2c => 0xBC,
+        _ => return None,
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -206,5 +251,18 @@ mod tests {
             Some(Hotkey::SelectTab(4))
         );
         assert_eq!(Hotkey::from_vk(u32::from(b'C'), true, false, false), None);
+    }
+
+    #[test]
+    fn gdk_keyvals() {
+        let hk = |kv, ctrl, shift, alt| {
+            vk_from_keyval(kv).and_then(|vk| Hotkey::from_vk(vk, ctrl, shift, alt))
+        };
+        assert_eq!(hk(0x74, true, false, false), Some(Hotkey::NewTab));
+        assert_eq!(hk(0x54, true, true, false), Some(Hotkey::RestoreTab));
+        assert_eq!(hk(0xfe20, true, true, false), Some(Hotkey::PrevTab));
+        assert_eq!(hk(0xffc2, false, false, false), Some(Hotkey::Reload));
+        assert_eq!(hk(0x2c, true, false, false), Some(Hotkey::Settings));
+        assert_eq!(hk(0x6c1, true, false, false), None);
     }
 }

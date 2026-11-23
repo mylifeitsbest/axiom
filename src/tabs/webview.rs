@@ -87,8 +87,41 @@ pub fn enable_autofill(webview: &WebView) {
 pub fn enable_autofill(_webview: &WebView) {}
 
 /// Дочерний webview поверх окна. На Windows и macOS — нативный child.
+#[cfg(not(target_os = "linux"))]
 pub fn build_child(builder: WebViewBuilder<'_>, window: &Window) -> wry::Result<WebView> {
     builder.build_as_child(window)
+}
+
+/// На Linux все webview живут в одном `gtk::Fixed`: так работают и X11, и Wayland.
+/// Порядок добавления задаёт порядок слоёв: интерфейс снизу, вкладки и ИИ поверх.
+#[cfg(target_os = "linux")]
+pub fn build_child(builder: WebViewBuilder<'_>, window: &Window) -> wry::Result<WebView> {
+    use wry::WebViewBuilderExtUnix;
+    let fixed = gtk_container(window);
+    builder.build_gtk(&fixed)
+}
+
+#[cfg(target_os = "linux")]
+fn gtk_container(window: &Window) -> gtk::Fixed {
+    use gtk::prelude::*;
+    use std::cell::RefCell;
+    use tao::platform::unix::WindowExtUnix;
+
+    thread_local! {
+        static FIXED: RefCell<Option<gtk::Fixed>> = const { RefCell::new(None) };
+    }
+    FIXED.with(|cell| {
+        cell.borrow_mut()
+            .get_or_insert_with(|| {
+                let fixed = gtk::Fixed::new();
+                if let Some(vbox) = window.default_vbox() {
+                    vbox.pack_start(&fixed, true, true, 0);
+                }
+                fixed.show_all();
+                fixed
+            })
+            .clone()
+    })
 }
 
 /// Фоновые вкладки просим WebView2 держать в «экономном» режиме памяти.

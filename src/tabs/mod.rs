@@ -110,11 +110,12 @@ impl TabStore {
         id
     }
 
-    /// Удаляет вкладку (webview уничтожается вместе с ней) и запоминает для восстановления.
-    pub fn remove(&mut self, id: TabId) -> Option<Tab> {
+    /// Удаляет вкладку (webview уничтожается вместе с ней). `remember` — запомнить
+    /// для Ctrl+Shift+T (вкладку, открытую ради загрузки, возвращать незачем).
+    pub fn remove(&mut self, id: TabId, remember: bool) -> Option<Tab> {
         let index = self.index_of(id)?;
         let tab = self.tabs.remove(index);
-        if !tab.is_newtab() {
+        if remember && !tab.is_newtab() {
             self.closed.push(ClosedTab {
                 url: tab.url.clone(),
                 title: tab.title.clone(),
@@ -210,7 +211,7 @@ mod tests {
     fn close_and_restore() {
         let mut s = store(2);
         let first = s.iter().next().map(|t| t.id).unwrap_or_default();
-        assert!(s.remove(first).is_some());
+        assert!(s.remove(first, true).is_some());
         assert_eq!(s.len(), 1);
         let closed = s.pop_closed();
         assert_eq!(closed.map(|c| c.index), Some(0));

@@ -11,7 +11,7 @@ use wry::{
 };
 
 use super::{TabId, omnibox};
-use crate::{events::UserEvent, ui::hotkeys};
+use crate::{downloads, events::UserEvent, ui::hotkeys};
 
 /// Внешний вид webview: фон до загрузки страницы и тема для сайтов.
 #[derive(Debug, Clone, Copy)]
@@ -138,9 +138,11 @@ pub fn build_tab(
             NewWindowResponse::Deny
         });
     let builder = styled(builder, spec.look, spec.proxy.as_ref());
+    let builder = downloads::attach(builder, events);
 
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
     hotkeys::install(&webview, events.clone());
+    downloads::install(&webview, Some(id), events.clone());
     enable_autofill(&webview);
     Ok(webview)
 }
@@ -242,6 +244,17 @@ fn core3(webview: &WebView) -> Option<Core3> {
     use wry::WebViewExtWindows;
     webview.webview().cast().ok()
 }
+
+/// Webview, который держим только ради идущей загрузки: память в экономный
+/// режим, но без заморозки — события загрузки должны приходить.
+#[cfg(windows)]
+pub fn set_low_memory(webview: &WebView) {
+    use wry::{MemoryUsageLevel, WebViewExtWindows};
+    let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
+}
+
+#[cfg(not(windows))]
+pub fn set_low_memory(_webview: &WebView) {}
 
 #[cfg(not(windows))]
 pub fn suspend(_webview: &WebView) {}

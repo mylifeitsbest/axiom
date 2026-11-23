@@ -64,6 +64,9 @@
     if (before !== after) send({ cmd: 'overlay', open: after });
   }
 
+  // ---------- загрузки (ui/downloads.js) ----------
+  const dl = createDownloads({ esc, send, ms, speed, setOverlay });
+
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
 
@@ -176,6 +179,7 @@
     $('#userCss').textContent = typeof A.customCss === 'string' ? A.customCss : '';
     $('#dsBtn').classList.toggle('on', !!B.double_search);
     place();
+    dl.reposition();
     renderOmni();
     panels.sync();
     sendThemeColors();
@@ -642,6 +646,7 @@
     if (mod && c === 'KeyK') return 'toggle_ai';
     if (mod && c === 'KeyF') return 'find';
     if (mod && c === 'KeyD') return 'bookmark';
+    if (mod && c === 'KeyJ') return 'downloads';
     if ((mod && c === 'KeyR') || c === 'F5') return 'reload';
     if (mod && c === 'Comma') return 'settings';
     if (e.altKey && c === 'ArrowLeft') return 'back';
@@ -658,19 +663,22 @@
       hotkey(a);
       return;
     }
+    if (e.key === 'Escape' && dl.isOpen()) { e.preventDefault(); dl.close(); return; }
     if (e.key === 'Escape' && panels.isOpen() && document.activeElement !== inp) { e.preventDefault(); panels.close(); }
   }, true);
   function hotkey(a) {
     if (a !== 'settings' && panels.isOpen()) panels.close();
+    if (a !== 'downloads' && dl.isOpen()) dl.close();
     switch (a) {
       case 'focus_omnibox': if (mode === 'find') exitFind(); inp.focus(); inp.select(); break;
       case 'toggle_ai': toggleAi(); break;
       case 'find': startFind(); break;
       case 'settings': panels.toggle(); break;
+      case 'downloads': if (!overlayReasons.has('onb')) dl.toggle(); break;
       default: send({ cmd: 'hotkey', action: a });
     }
   }
-  $('#setBtn').addEventListener('click', () => panels.toggle());
+  $('#setBtn').addEventListener('click', () => { dl.close(); panels.toggle(); });
 
   // ---------- настройки и приветствие (ui/settings.js) ----------
   const panels = createPanels({
@@ -701,10 +709,11 @@
       B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 10, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark };
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел или #onb:шаг — только для разработки (debug-сборка).
+        // #settings:раздел, #onb:шаг или #downloads — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') panels.open(arg);
         else if (screen === 'onb') panels.openOnboarding(+arg || 0);
+        else if (screen === 'downloads') dl.open();
         else if (!B.onboarded) panels.openOnboarding();
       }
       firstSettings = false;
@@ -734,6 +743,8 @@
     system(m) { SYS = { ...SYS, ...(m.status || {}) }; panels.onSystem(); },
     imported(m) { panels.onImported(m); },
     installed(m) { panels.onInstalled(m); },
+    downloads(m) { dl.onList(m); },
+    download_progress(m) { dl.onProgress(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

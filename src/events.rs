@@ -5,6 +5,7 @@ use std::{thread, time::Duration};
 use tao::event_loop::EventLoopProxy;
 
 use crate::{
+    downloads::DownloadEvent,
     tabs::{TabId, sleep::PageState},
     ui::hotkeys::Hotkey,
 };
@@ -32,6 +33,8 @@ pub enum UserEvent {
     /// Страница ответила перед усыплением: позиция прокрутки и нет ли недописанного текста.
     SleepChecked(TabId, PageState),
     FindResult(bool),
+    /// Загрузка файла началась, продвинулась или закончилась.
+    Download(DownloadEvent),
     /// Адреса от второго запуска `axiom.exe <url>` (клик по ссылке в другой программе).
     External(Vec<String>),
     /// Импорт из Chrome завершился (выполняется в фоновом потоке).

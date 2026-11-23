@@ -155,6 +155,21 @@ pub enum UiCmd {
     Install,
     /// Открыть «Приложения по умолчанию» в параметрах Windows.
     OpenDefaultApps,
+    /// Загрузки: интерфейс знает только номер, путь к файлу хранит Rust.
+    DownloadOpen {
+        id: u64,
+    },
+    DownloadShow {
+        id: u64,
+    },
+    DownloadCancel {
+        id: u64,
+    },
+    DownloadRemove {
+        id: u64,
+    },
+    DownloadsClear,
+    DownloadsFolder,
 }
 
 /// Разбирает и проверяет сообщение интерфейса.
@@ -248,6 +263,20 @@ pub struct Suggestion {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DownloadView {
+    pub id: u64,
+    pub name: String,
+    pub url: String,
+    pub received: u64,
+    pub total: Option<u64>,
+    pub status: crate::downloads::Status,
+    pub error: String,
+    pub at: u64,
+    /// Файл ещё на месте (его могли удалить или перенести).
+    pub exists: bool,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToUi<'a> {
     State {
@@ -291,6 +320,15 @@ pub enum ToUi<'a> {
         ok: bool,
         error: &'a str,
     },
+    Downloads {
+        items: Vec<DownloadView>,
+        can_cancel: bool,
+    },
+    DownloadProgress {
+        id: u64,
+        received: u64,
+        total: Option<u64>,
+    },
 }
 
 #[cfg(test)]
@@ -306,6 +344,12 @@ mod tests {
     #[test]
     fn rejects_unknown_and_bad_values() {
         assert!(parse(r#"{"cmd":"rm_rf"}"#).is_err());
+        // Путь к файлу интерфейс передать не может — только номер загрузки.
+        assert!(parse(r#"{"cmd":"download_open","path":"C:\Windows"}"#).is_err());
+        assert!(matches!(
+            parse(r#"{"cmd":"download_open","id":3}"#),
+            Ok(UiCmd::DownloadOpen { id: 3 })
+        ));
         assert!(
             parse(r#"{"cmd":"layout","content":{"x":0,"y":0,"w":-5,"h":10},"ai":null}"#).is_err()
         );

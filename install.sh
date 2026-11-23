@@ -49,7 +49,9 @@ if command -v pacman >/dev/null 2>&1; then
   say "Устанавливаю…"
   # В Arch нельзя делать -Sy без -u (частичное обновление ломает систему).
   # Если есть терминал, pacman спросит подтверждение там; иначе ставим без вопросов.
-  if { : </dev/tty; } 2>/dev/null; then
+  # Проверка в подоболочке: ошибка перенаправления у встроенных команд
+  # иначе завершила бы весь скрипт.
+  if (exec </dev/tty) 2>/dev/null; then
     $SUDO pacman -Syu --needed axiom-browser </dev/tty
   else
     $SUDO pacman -Syu --needed --noconfirm axiom-browser

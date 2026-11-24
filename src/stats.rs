@@ -1,8 +1,9 @@
 //! Тихий счётчик: раз в час Axiom шлёт на наш сервер всего несколько байт —
-//! версию, систему и флаги «первый запуск за день/неделю/месяц» и «новая
-//! установка». Ни идентификатора, ни истории, ни адресов; IP на сервере не
-//! сохраняется. Этого хватает, чтобы видеть DAU/WAU/MAU и число установок, но
-//! по данным нельзя узнать конкретного человека.
+//! версию, систему и флаги «первый запуск за день/неделю/месяц», «новая
+//! установка» и «только что обновился». Ни идентификатора, ни истории, ни
+//! адресов; IP на сервере не сохраняется. Этого хватает, чтобы видеть
+//! DAU/WAU/MAU, установки и обновления, но по данным нельзя узнать конкретного
+//! человека.
 //!
 //! Сеть — через системный `curl`, как и проверка обновлений: своего HTTP-клиента
 //! в браузере нет. Любая ошибка просто глотается: статистика не должна мешать.
@@ -41,6 +42,50 @@ struct State {
     /// Новая установка, о которой сервер ещё не узнал.
     #[serde(default)]
     new: bool,
+    /// Версия, с которой отметились в последний раз. Пусто — файл записала
+    /// версия до 0.3.4, где этого поля ещё не было.
+    #[serde(default)]
+    ver: String,
+}
+
+/// Метка в `ver` для профиля, который был до счётчика (0.3.0 и раньше):
+/// это тоже обновление, хотя прошлой отметки нет.
+const VER_BEFORE_STATS: &str = "old";
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Что сообщить серверу при этой отметке.
+#[derive(Debug, PartialEq)]
+struct Flags {
+    /// Новая установка.
+    new: bool,
+    /// Первая отметка за день / неделю / месяц.
+    d: bool,
+    w: bool,
+    m: bool,
+    /// Первая отметка на этой версии — значит, только что обновились.
+    up: bool,
+    /// Первая отметка за день на этой версии: по ней сервер считает, сколько
+    /// людей сегодня на каждой версии (после обновления `d` уже false).
+    vd: bool,
+}
+
+fn flags(prev: &State, day: &str, week: &str, month: &str) -> Flags {
+    let up = match prev.ver.as_str() {
+        // Старый формат файла: если в нём уже есть отметка — его писала
+        // предыдущая версия, то есть сейчас первая отметка после обновления.
+        "" => !prev.day.is_empty(),
+        v => v != VERSION,
+    };
+    let d = prev.day != day;
+    Flags {
+        new: prev.new,
+        d,
+        w: prev.week != week,
+        m: prev.month != month,
+        up,
+        vd: d || up,
+    }
 }
 
 /// Файлы, которые есть у любого, кто уже пользовался браузером.
@@ -64,6 +109,11 @@ pub fn start(profile_root: &Path) {
         let used = USED_PROFILE.iter().any(|f| profile_root.join(f).exists());
         let state = State {
             new: !used,
+            ver: if used {
+                VER_BEFORE_STATS.into()
+            } else {
+                String::new()
+            },
             ..State::default()
         };
         let _ = crate::storage::write_json(&file, &state);
@@ -92,20 +142,18 @@ fn tick(file: &Path) {
     let (day, week, month) = buckets(now);
 
     let prev = crate::storage::read_json::<State>(file).unwrap_or_default();
-    let new_install = prev.new;
-
-    let d = prev.day != day;
-    let w = prev.week != week;
-    let m = prev.month != month;
+    let f = flags(&prev, &day, &week, &month);
 
     let body = format!(
-        "{{\"v\":\"{}\",\"os\":\"{}\",\"new\":{},\"d\":{},\"w\":{},\"m\":{}}}",
-        env!("CARGO_PKG_VERSION"),
+        "{{\"v\":\"{}\",\"os\":\"{}\",\"new\":{},\"d\":{},\"w\":{},\"m\":{},\"up\":{},\"vd\":{}}}",
+        VERSION,
         os_name(),
-        new_install,
-        d,
-        w,
-        m,
+        f.new,
+        f.d,
+        f.w,
+        f.m,
+        f.up,
+        f.vd,
     );
 
     if send(&body).is_ok() {
@@ -116,6 +164,7 @@ fn tick(file: &Path) {
             week,
             month,
             new: false,
+            ver: VERSION.into(),
         };
         let _ = crate::storage::write_json(file, &state);
     }
@@ -231,4 +280,69 @@ fn curl() -> Command {
         cmd.args(["--proto", "=https", "--proto-redir", "=https"]);
     }
     cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(day: &str, ver: &str) -> State {
+        State {
+            day: day.into(),
+            week: "w1".into(),
+            month: "2026-11".into(),
+            new: false,
+            ver: ver.into(),
+        }
+    }
+
+    #[test]
+    fn fresh_install_is_new_not_update() {
+        let prev = State {
+            new: true,
+            ..State::default()
+        };
+        let f = flags(&prev, "2026-11-24", "w1", "2026-11");
+        assert!(f.new && f.d && f.w && f.m && f.vd);
+        assert!(!f.up);
+    }
+
+    #[test]
+    fn same_version_later_today_sends_nothing_new() {
+        let f = flags(&state("2026-11-24", VERSION), "2026-11-24", "w1", "2026-11");
+        assert_eq!(
+            f,
+            Flags {
+                new: false,
+                d: false,
+                w: false,
+                m: false,
+                up: false,
+                vd: false
+            }
+        );
+    }
+
+    #[test]
+    fn update_on_the_same_day_counts_for_the_new_version() {
+        let f = flags(&state("2026-11-24", "0.0.1"), "2026-11-24", "w1", "2026-11");
+        assert!(f.up && f.vd);
+        assert!(!f.d, "человек уже отметился сегодня на старой версии");
+    }
+
+    #[test]
+    fn file_from_before_the_ver_field_means_update() {
+        let f = flags(&state("2026-11-23", ""), "2026-11-24", "w1", "2026-11");
+        assert!(f.up && f.d && f.vd);
+    }
+
+    #[test]
+    fn profile_from_before_stats_means_update() {
+        let prev = State {
+            ver: VER_BEFORE_STATS.into(),
+            ..State::default()
+        };
+        let f = flags(&prev, "2026-11-24", "w1", "2026-11");
+        assert!(f.up && !f.new);
+    }
 }

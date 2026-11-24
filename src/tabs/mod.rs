@@ -3,6 +3,7 @@
 pub mod omnibox;
 pub mod popups;
 pub mod sleep;
+pub mod snapshot;
 pub mod webview;
 
 use std::time::Instant;

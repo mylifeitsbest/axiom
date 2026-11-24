@@ -47,6 +47,8 @@ pub enum UserEvent {
     Imported(Result<crate::storage::chrome::Imported, String>),
     /// Окно так и не получило `ready` от интерфейса — показываем его принудительно.
     ShowFallback,
+    /// Снимок страницы под окном интерфейса готов или не успел.
+    Snapshot(crate::tabs::snapshot::Event),
     Tick,
 }
 

@@ -507,5 +507,11 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .edge.sw{bottom:0;left:0;width:8px;height:8px;cursor:sw-resize}
 .app.max .edge{display:none}
 
+/* ---------- снимок страницы под окнами (ui/snapshot.js) ---------- */
+/* На месте спрятанного webview: выше контента, ниже окон (у них z-index от 15). */
+.snap{position:fixed;z-index:10;overflow:hidden;pointer-events:none}
+.snap img{position:absolute;left:0;top:0;max-width:none;user-select:none}
+.snap-covered .snap{visibility:hidden}
+
 ::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
 @media (prefers-reduced-motion:reduce){:root{--k:0}}

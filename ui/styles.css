@@ -397,6 +397,34 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .star.on .i{fill:currentColor}
 .omni.focus .star,.omni.find .star{display:none}
 
+/* ---------- перевод страницы ---------- */
+.tr{position:relative;color:var(--t3)}
+.tr .i{transition:transform var(--d2) var(--e)}
+.tr.on,.tr.busy{color:var(--acc)}
+.tr.on{background:color-mix(in oklab,var(--acc) 14%,transparent)}
+.tr.busy .i{transform:scale(.7)}
+.tr.busy::after{content:'';position:absolute;inset:2px;border-radius:50%;border:1.5px solid transparent;border-top-color:var(--acc);border-right-color:var(--acc);animation:spin calc(800ms*max(var(--k),.3)) linear infinite;pointer-events:none}
+.tr.in{animation:pop var(--d3) var(--sp) both}
+.omni.focus .tr,.omni.find .tr{display:none}
+.trp{padding:12px 6px 8px;transform-origin:top center}
+.trp-head{display:flex;align-items:center;gap:10px;padding:0 8px}
+.trp-ic{width:32px;height:32px;display:grid;place-items:center;flex:none;border-radius:calc(var(--r)*.75);background:color-mix(in oklab,var(--acc) 16%,transparent);color:var(--acc)}
+.trp-ic .i{width:18px;height:18px}
+.trp-t{display:flex;flex-direction:column;gap:1px;min-width:0}
+.trp-t b{font-weight:650;color:var(--t1);font-size:calc(var(--fs) + 1px)}
+.trp-t small{color:var(--t3)}
+.trp-bar{display:block;margin:10px 8px 0}
+.trp-list{display:flex;flex-direction:column;gap:1px;margin-top:10px}
+.trp-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:36px;padding:4px 8px;border-radius:calc(var(--r)*.7);color:var(--t1);text-align:left;transition:background-color var(--d1)}
+.trp-row:hover{background:var(--s2)}
+button.trp-row{justify-content:flex-start}
+button.trp-row .i{width:15px;height:15px;color:var(--t2)}
+.trp-row select{background:var(--bg);border:0;border-radius:calc(var(--r)*.6);padding:5px 8px;outline:0;box-shadow:inset 0 0 0 1px var(--line);max-width:150px}
+.trp-row select:focus{box-shadow:inset 0 0 0 1.5px var(--acc)}
+.trp-foot{margin:6px 8px 0;color:var(--t3);font-size:calc(var(--fs) - 1.5px)}
+.trp.on>*{animation:rise var(--d2) var(--e) both}
+.trp.on>:nth-child(n+2){animation-delay:calc(30ms*var(--k))}
+
 /* ---------- загрузки ---------- */
 .dl{position:relative}
 .dl[hidden]{display:none}

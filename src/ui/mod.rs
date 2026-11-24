@@ -76,6 +76,11 @@ const ASSETS: &[Asset] = &[
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/update.js"),
     },
+    Asset {
+        path: "/translate.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/translate.js"),
+    },
 ];
 
 pub fn serve(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {

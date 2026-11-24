@@ -70,6 +70,9 @@
   // ---------- обновления (ui/update.js) ----------
   const upd = createUpdate({ esc, send, ms, speed, setOverlay, copyText: (t) => copyText(t), toast: (t) => toast(t), onChange: () => panels.sync() });
 
+  // ---------- перевод страниц (ui/translate.js) ----------
+  const tr = createTranslate({ esc, send, speed, setOverlay, toast: (t) => toast(t) });
+
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
 
@@ -394,6 +397,7 @@
     star.hidden = !pageOpen;
     star.classList.toggle('on', !!t?.bookmarked);
     star.title = t?.bookmarked ? 'Убрать из закладок (Ctrl+D)' : 'В закладки (Ctrl+D)';
+    tr.render(t, S.tabs);
     if (document.activeElement === inp || mode === 'find') return;
     if (!pageOpen) {
       omni.classList.add('empty');
@@ -706,6 +710,7 @@
     esc, send, toast, swap, ms, speed, setOverlay, copyText, setA, mergeAppearance,
     system: () => SYS,
     update: () => upd.state(),
+    translate: tr,
     openUpdate() { panels.close(); dl.close(); upd.open(); },
     applyAppearance,
     saveSettings,
@@ -727,14 +732,16 @@
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
       B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false };
+      tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел, #onb:шаг, #downloads или #update[:install] — только для разработки (debug-сборка).
+        // #settings:раздел, #onb:шаг, #downloads, #update[:install] или #translate[:menu|:revert] — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') panels.open(arg);
         else if (screen === 'onb') panels.openOnboarding(+arg || 0);
         else if (screen === 'downloads') dl.open();
         else if (screen === 'update') upd.openSoon(arg === 'install');
+        else if (screen === 'translate') tr.debug(arg);
         else if (!B.onboarded) panels.openOnboarding();
       }
       firstSettings = false;
@@ -767,6 +774,7 @@
     downloads(m) { dl.onList(m); },
     download_progress(m) { dl.onProgress(m); },
     update(m) { upd.onState(m); },
+    translate(m) { tr.onState(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

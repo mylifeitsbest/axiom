@@ -102,9 +102,7 @@ fn run() -> Result<()> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let mut app = App::new(&event_loop, paths, &urls, updated)?;
     events::spawn_ticker(event_loop.create_proxy());
-    if let Some(server) = server {
-        server.spawn(event_loop.create_proxy());
-    }
+    let registration = server.map(|server| server.spawn(event_loop.create_proxy()));
 
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -125,6 +123,11 @@ fn run() -> Result<()> {
         };
         if flow == app::Flow::Exit {
             app.shutdown();
+            // Порт и токен на диске больше ни к чему: следующий запуск не будет
+            // стучаться в закрытый порт.
+            if let Some(registration) = &registration {
+                registration.release();
+            }
             *control_flow = ControlFlow::Exit;
         }
     });

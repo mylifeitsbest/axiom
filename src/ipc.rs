@@ -190,6 +190,10 @@ pub enum UiCmd {
     DownloadCancel {
         id: u64,
     },
+    /// «Сохранить всё равно» для файла опасного типа («Удалить» — это DownloadCancel).
+    DownloadKeep {
+        id: u64,
+    },
     DownloadRemove {
         id: u64,
     },
@@ -304,6 +308,8 @@ pub struct DownloadView {
     pub at: u64,
     /// Файл ещё на месте (его могли удалить или перенести).
     pub exists: bool,
+    /// Файл опасного типа ждёт решения: сохранить или удалить.
+    pub ask: bool,
 }
 
 #[derive(Debug, Serialize)]

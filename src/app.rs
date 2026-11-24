@@ -1,6 +1,7 @@
 //! Состояние браузера и обработка событий главного цикла.
 
 mod ai_tabs;
+mod app_links;
 mod tab_actions;
 mod translation;
 mod waking;
@@ -101,6 +102,8 @@ pub struct App {
     /// Активную вкладку настроек закрыли, и интерфейс ещё плавно убирает их лист:
     /// webview под ним ждут, иначе нативная страница сразу перекрыла бы анимацию.
     settings_leaving: Option<Instant>,
+    /// Ссылки на приложения: окошко «Открыть?» и запомненные разрешения.
+    app_links: app_links::State,
 }
 
 impl App {
@@ -160,7 +163,9 @@ impl App {
             translate: crate::translate::Translator::default(),
             fullscreen: fullscreen::State::default(),
             settings_leaving: None,
+            app_links: app_links::State::default(),
         };
+        app.sync_tracking();
         app.restore_session(open);
         Ok(app)
     }
@@ -190,13 +195,19 @@ impl App {
             UserEvent::Hotkey(hotkey) => self.on_hotkey(hotkey)?,
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
             UserEvent::TabLoad { id, started, url } => self.on_load(id, started, url),
-            UserEvent::OpenTab { url, ai, from } => self.open_from_page(url, ai, from),
+            UserEvent::OpenTab { url, ai, from } => {
+                let url = self.untracked(url);
+                self.open_from_page(url, ai, from);
+            }
             UserEvent::PageTab {
                 url,
                 ai,
                 from,
                 background,
-            } => self.add_page_tab(url, ai, from, background),
+            } => {
+                let url = self.untracked(url);
+                self.add_page_tab(url, ai, from, background);
+            }
             UserEvent::TabAudio { id, playing } => self.on_tab_audio(id, playing),
             UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
@@ -236,6 +247,8 @@ impl App {
                 }
             }
             UserEvent::Waking(id, event) => self.on_waking(id, event),
+            UserEvent::AppLink(event) => self.on_app_link(event),
+            UserEvent::Untracked { id, url } => self.load_untracked(id, url),
             UserEvent::Tick => self.on_tick(),
         }
         Ok(Flow::Continue)
@@ -454,6 +467,7 @@ impl App {
             UiCmd::Translate => self.translate_active(),
             UiCmd::TranslateOriginal => self.translate_original(),
             UiCmd::TranslatePrefs { prefs } => self.translate_prefs(prefs),
+            UiCmd::AppLink { id, open, always } => self.answer_app_link(id, open, always),
         }
         Ok(Flow::Continue)
     }
@@ -558,6 +572,7 @@ impl App {
             }
         }
         self.tabs.active = Some(id);
+        self.close_app_link_unless(id);
         if self.tabs.get(id).is_some_and(|t| t.is_sleeping())
             && let Err(err) = self.wake(id)
         {
@@ -641,6 +656,9 @@ impl App {
     }
 
     fn navigate(&mut self, input: &str) -> Result<()> {
+        if self.open_typed_app(input) {
+            return Ok(());
+        }
         let Some(target) = omnibox::resolve(input) else {
             return Ok(());
         };
@@ -648,7 +666,8 @@ impl App {
             return Ok(());
         };
         let prev = self.tabs.get(id).map(|t| t.url.clone()).unwrap_or_default();
-        self.load_in_tab(id, target.into_url(self.settings.search()))?;
+        let url = self.untracked(target.into_url(self.settings.search()));
+        self.load_in_tab(id, url)?;
         self.mirror_search(id, &prev);
         Ok(())
     }
@@ -697,9 +716,12 @@ impl App {
     }
 
     fn new_tab(&mut self, input: Option<&str>) {
+        if input.is_some_and(|i| self.open_typed_app(i)) {
+            return;
+        }
         let url = input
             .and_then(omnibox::resolve)
-            .map(|t| t.into_url(self.settings.search()))
+            .map(|t| self.untracked(t.into_url(self.settings.search())))
             .unwrap_or_else(|| NEWTAB.to_string());
         let title = if url == NEWTAB {
             String::new()
@@ -1121,7 +1143,7 @@ impl App {
             let url = if path.is_absolute() && path.exists() {
                 Url::from_file_path(path).ok().map(String::from)
             } else {
-                omnibox::resolve(arg).map(|t| t.into_url(self.settings.search()))
+                omnibox::resolve(arg).map(|t| self.untracked(t.into_url(self.settings.search())))
             };
             if let Some(url) = url.filter(|u| u != NEWTAB) {
                 let id = self.tabs.add(url.clone(), display_title(&url), false, None);
@@ -1151,6 +1173,7 @@ impl App {
             (self.settings.search_engine != engine)
                 .then(|| "Свой адрес поиска не подошёл: нужен http(s) и %s".to_string())
         });
+        self.sync_tracking();
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }

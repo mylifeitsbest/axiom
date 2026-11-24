@@ -75,6 +75,13 @@ pub enum UserEvent {
     SettingsLeft,
     /// Просыпающаяся вкладка: пора спросить страницу, нарисовалась ли она, или ответ.
     Waking(TabId, crate::tabs::waking::Event),
+    /// Ссылка на приложение (`mailto:`, `tg:`…): запрос страницы или итог запуска.
+    AppLink(crate::tabs::external::Event),
+    /// Переход по ссылке с метками слежки отменён: загрузить чистый адрес.
+    Untracked {
+        id: TabId,
+        url: String,
+    },
     Tick,
 }
 

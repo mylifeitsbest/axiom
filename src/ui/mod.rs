@@ -96,6 +96,11 @@ const ASSETS: &[Asset] = &[
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/tabmenu.js"),
     },
+    Asset {
+        path: "/applink.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/applink.js"),
+    },
 ];
 
 pub fn serve(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {

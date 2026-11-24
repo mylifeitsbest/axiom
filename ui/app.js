@@ -93,6 +93,8 @@
 
   // ---------- меню вкладки (ui/tabmenu.js) ----------
   const tm = createTabMenu({ send, ms, setOverlay, NEWTAB, tabs: () => S.tabs, canRestore: () => S.canRestore });
+  // ---------- ссылки на приложения (ui/applink.js) ----------
+  const xap = createAppLink({ esc, send, setOverlay });
 
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
@@ -955,6 +957,7 @@
     snapshot(m) { snap.onMessage(m); },
     // Закрыли активную вкладку настроек: лист уходит плавно, потом Rust покажет страницу.
     settings_leave() { panels.leave(() => send({ cmd: 'settings_left' })); },
+    app_link(m) { xap.onRequest(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

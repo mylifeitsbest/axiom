@@ -281,6 +281,7 @@ impl App {
                 self.send(&ToUi::Suggestions { q: &q, items });
             }
             UiCmd::ToggleBookmark => self.toggle_bookmark(),
+            UiCmd::ToggleNoSleep { id } => self.toggle_no_sleep(id),
             UiCmd::ImportChrome => self.start_import(),
             UiCmd::Install => {
                 let events = self.events.clone();
@@ -451,6 +452,9 @@ impl App {
                 let id = self
                     .tabs
                     .add(saved.url.clone(), saved.title.clone(), saved.ai, Some(i));
+                if let Some(tab) = self.tabs.get_mut(id) {
+                    tab.no_sleep = saved.no_sleep;
+                }
                 if i == session.active {
                     restored = Some(id);
                 }
@@ -637,6 +641,9 @@ impl App {
                 let id = self
                     .tabs
                     .add(closed.url, closed.title, closed.ai, Some(closed.index));
+                if let Some(tab) = self.tabs.get_mut(id) {
+                    tab.no_sleep = closed.no_sleep;
+                }
                 self.activate(id);
             }
             None => self.send(&ToUi::Toast {
@@ -971,13 +978,14 @@ impl App {
         let was_open = self.ai.open;
         self.ai.set_proxy(&self.settings.ai_proxy);
         // Вкладки «из ИИ» пересоздадутся с новым прокси при следующем открытии.
-        // Вкладки с недописанным текстом не трогаем (сменят прокси, когда уснут),
-        // а идущую загрузку не обрываем — webview паркуется до её конца.
+        // Вкладки с недописанным текстом и «не усыплять» не трогаем (сменят прокси,
+        // когда уснут), а идущую загрузку не обрываем — webview паркуется до её конца.
         let active = self.tabs.active;
         let ids: Vec<TabId> = self
             .tabs
             .iter()
             .filter(|t| t.ai && Some(t.id) != active && t.webview.is_some() && !t.keep_alive)
+            .filter(|t| !t.no_sleep)
             .map(|t| t.id)
             .collect();
         for id in ids {
@@ -1123,27 +1131,27 @@ impl App {
             return;
         }
         let candidates = self.sleep_candidates();
-        // Вкладки, которые усыплять нельзя (черновик, звук, загрузка), всё равно
-        // живые и занимают место в лимите: вместо них засыпают следующие по давности.
+        // Вкладки, которые усыплять нельзя (черновик, звук, загрузка, «не усыплять»), всё
+        // равно живые и занимают место в лимите: вместо них засыпают следующие по давности.
         let active = self.tabs.active;
         let live = self
             .tabs
             .iter()
             .filter(|t| Some(t.id) != active && t.webview.is_some() && t.sleep_requested.is_none())
             .count();
-        let keep = keep.saturating_sub(live.saturating_sub(candidates.len()));
+        let keep = sleep::room(keep, live, candidates.len());
         for id in sleep::excess(candidates, keep) {
             self.request_sleep(id);
         }
     }
 
-    /// Загруженные фоновые вкладки, которые можно усыпить: без звука,
-    /// без недописанного текста, без идущих загрузок и без уже отправленного запроса.
+    /// Загруженные фоновые вкладки, которые можно усыпить: без звука, без недописанного
+    /// текста, без идущих загрузок, без «не усыплять» и без уже отправленного запроса.
     fn sleep_candidates(&self) -> Vec<(Instant, TabId)> {
         let active = self.tabs.active;
         self.tabs
             .iter()
-            .filter(|t| Some(t.id) != active && t.sleep_requested.is_none() && !t.keep_alive)
+            .filter(|t| Some(t.id) != active && t.may_sleep())
             .filter(|t| !self.downloads.is_busy(t.id))
             .filter(|t| {
                 t.webview
@@ -1218,6 +1226,26 @@ impl App {
         self.push_state();
     }
 
+    /// «Не усыплять»: вкладку не усыпят ни таймер, ни нехватка памяти, ни лимит живых вкладок.
+    fn toggle_no_sleep(&mut self, id: TabId) {
+        let Some(tab) = self.tabs.get_mut(id).filter(|t| !t.is_newtab()) else {
+            return;
+        };
+        tab.no_sleep = !tab.no_sleep;
+        // Запрос на усыпление мог уже уйти: без него ответ страницы ничего не сделает.
+        if tab.no_sleep {
+            tab.sleep_requested = None;
+        }
+        let text = if tab.no_sleep {
+            "Вкладка не будет засыпать"
+        } else {
+            "Вкладка снова может засыпать"
+        };
+        self.session_dirty = true;
+        self.send(&ToUi::Toast { text });
+        self.push_state();
+    }
+
     // ---------- сохранение ----------
 
     fn save_session(&mut self) {
@@ -1234,6 +1262,7 @@ impl App {
                     url: t.url.clone(),
                     title: t.title.clone(),
                     ai: t.ai,
+                    no_sleep: t.no_sleep,
                 })
                 .collect(),
             active,
@@ -1298,6 +1327,7 @@ impl App {
                 sleeping: t.is_sleeping(),
                 ai: t.ai,
                 bookmarked: self.bookmarks.contains(&t.url),
+                no_sleep: t.no_sleep,
             })
             .collect();
         let on_newtab = self.tabs.active_tab().is_some_and(|t| t.is_newtab());

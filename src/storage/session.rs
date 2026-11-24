@@ -13,6 +13,9 @@ pub struct SavedTab {
     pub title: String,
     #[serde(default)]
     pub ai: bool,
+    /// «Не усыплять»: после запуска вкладка всё равно спит до первого клика.
+    #[serde(default)]
+    pub no_sleep: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -60,7 +63,24 @@ mod tests {
             url: url.into(),
             title: String::new(),
             ai: false,
+            no_sleep: false,
         }
+    }
+
+    #[test]
+    fn no_sleep_is_optional_and_kept() {
+        // Сессия старых версий без поля по-прежнему читается.
+        let old: Result<SavedTab, _> =
+            serde_json::from_str(r#"{"url":"https://a.example/","title":"a"}"#);
+        assert!(old.is_ok_and(|t| !t.no_sleep));
+        let saved = SavedTab {
+            no_sleep: true,
+            ..tab("https://a.example/")
+        };
+        let back = serde_json::to_string(&saved)
+            .ok()
+            .and_then(|json| serde_json::from_str::<SavedTab>(&json).ok());
+        assert!(back.is_some_and(|t| t.no_sleep));
     }
 
     #[test]

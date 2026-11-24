@@ -380,6 +380,8 @@ pub struct DownloadView {
     pub exists: bool,
     /// Файл опасного типа ждёт решения: сохранить или удалить.
     pub ask: bool,
+    /// Ждёт решения программа под видом обычного файла (она уже скачана).
+    pub disguised: bool,
 }
 
 #[derive(Debug, Serialize)]

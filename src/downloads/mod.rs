@@ -67,6 +67,14 @@ pub enum DownloadEvent {
     /// или пользователь уже решил сохранить.
     #[cfg_attr(not(windows), allow(dead_code))]
     Decision { id: DownloadId, waiting: bool },
+    /// Скачан файл с безобидным расширением, а внутри программа (см. [`looks_like_program`]):
+    /// он уже на диске и ждёт решения, оставить его или удалить.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Disguised {
+        id: DownloadId,
+        path: PathBuf,
+        received: u64,
+    },
     Finished {
         id: DownloadId,
         outcome: Outcome,
@@ -117,6 +125,9 @@ pub struct Download {
     /// Ждёт решения: сохранить файл опасного типа или удалить.
     #[serde(skip)]
     pub ask: bool,
+    /// Программа под видом обычного файла: уже скачана, ждёт решения.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disguised: bool,
 }
 
 impl Download {
@@ -141,6 +152,11 @@ impl Downloads {
         items.truncate(MAX_ITEMS);
         for item in &mut items {
             item.id = next_id();
+            // Программу под видом обычного файла не удалили до выхода: файл скачан целиком.
+            if item.status == Status::Active && item.disguised {
+                item.status = Status::Done;
+                item.disguised = false;
+            }
             // Браузер закрыли посреди загрузки: WebView2 её уже не продолжит.
             if item.status == Status::Active {
                 item.status = Status::Failed;
@@ -194,6 +210,7 @@ impl Downloads {
                         at: now_secs(),
                         tab,
                         ask: false,
+                        disguised: false,
                     },
                 );
                 self.trim();
@@ -218,6 +235,20 @@ impl Downloads {
                 // О том, что нужно решение, стоит сказать; о самом решении — нет.
                 if waiting { Some(&*item) } else { None }
             }
+            DownloadEvent::Disguised { id, path, received } => {
+                let item = self.active_mut(id)?;
+                if !path.as_os_str().is_empty() {
+                    item.path = path;
+                }
+                item.received = received;
+                if item.total.is_none_or(|t| t < received) {
+                    item.total = Some(received);
+                }
+                item.ask = true;
+                item.disguised = true;
+                self.dirty = true;
+                self.get(id)
+            }
             DownloadEvent::Finished {
                 id,
                 outcome,
@@ -232,6 +263,7 @@ impl Downloads {
                     item.received = received;
                 }
                 item.ask = false;
+                item.disguised = false;
                 match outcome {
                     Outcome::Done => {
                         item.status = Status::Done;
@@ -255,6 +287,29 @@ impl Downloads {
                 self.get(id)
             }
         }
+    }
+
+    /// «Сохранить всё равно» или «Удалить» для программы под видом обычного файла.
+    /// Файл уже скачан, поэтому решаем сами, без WebView2. `None` — эта загрузка
+    /// такого решения не ждёт.
+    pub fn answer_disguised(&self, id: DownloadId, keep: bool) -> Option<DownloadEvent> {
+        let item = self
+            .items
+            .iter()
+            .find(|d| d.id == id && d.status == Status::Active && d.disguised)?;
+        let outcome = if keep {
+            Outcome::Done
+        } else if std::fs::remove_file(&item.path).is_ok() || !item.path.exists() {
+            Outcome::Discarded
+        } else {
+            Outcome::Failed("Не удалось удалить файл".into())
+        };
+        Some(DownloadEvent::Finished {
+            id,
+            outcome,
+            path: None,
+            received: None,
+        })
     }
 
     fn active_mut(&mut self, id: DownloadId) -> Option<&mut Download> {
@@ -318,6 +373,48 @@ fn short_url(url: &str) -> String {
         end -= 1;
     }
     url[..end].to_string()
+}
+
+/// Начало файла — программа: exe или dll Windows (`MZ` и заголовок `PE`),
+/// программа Linux (ELF) или скрипт со строкой `#!/…`. Так видно `setup.exe`,
+/// переименованный в `setup.txt` или `photo.jpg`, — по имени его не узнать.
+pub fn looks_like_program(head: &[u8]) -> bool {
+    if head.starts_with(b"\x7fELF") {
+        return true;
+    }
+    if let Some(rest) = head.strip_prefix(b"#!") {
+        return rest
+            .iter()
+            .find(|b| !matches!(b, b' ' | b'\t'))
+            .is_some_and(|&b| b == b'/');
+    }
+    if !head.starts_with(b"MZ") {
+        return false;
+    }
+    // Смещение заголовка PE — в поле e_lfanew старого заголовка DOS.
+    let Some(offset) = head.get(0x3C..0x40) else {
+        return false;
+    };
+    let offset = u32::from_le_bytes([offset[0], offset[1], offset[2], offset[3]]) as usize;
+    offset
+        .checked_add(4)
+        .and_then(|end| head.get(offset..end))
+        .is_some_and(|sig| sig == b"PE\0\0")
+}
+
+/// Сколько байт начала файла читать для [`looks_like_program`]: заголовок PE
+/// у настоящих программ — в первых сотнях байт.
+#[cfg_attr(not(windows), allow(dead_code))]
+const HEAD: u64 = 4096;
+
+/// Скачанный файл — программа (см. [`looks_like_program`]).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn program_inside(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|f| f.take(HEAD).read_to_end(&mut head))
+        .is_ok_and(|_| looks_like_program(&head))
 }
 
 /// `файл.zip` → `файл (1).zip`, если такой файл уже есть.
@@ -560,6 +657,74 @@ mod tests {
         assert!(
             gone.is_some_and(|d| d.status == Status::Cancelled && !d.ask && d.error == "Удалено")
         );
+    }
+
+    #[test]
+    fn recognizes_programs() {
+        // Настоящая программа Windows: MZ, e_lfanew = 0x80, там PE\0\0.
+        let mut pe = vec![0u8; 0x100];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[0x3C] = 0x80;
+        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        assert!(looks_like_program(&pe));
+        // Сам exe тестов — тоже программа.
+        let me = std::env::current_exe().unwrap_or_default();
+        assert!(program_inside(&me));
+        assert!(looks_like_program(b"\x7fELF\x02\x01\x01"));
+        assert!(looks_like_program(b"#!/bin/sh\necho hi"));
+        assert!(looks_like_program(b"#! /usr/bin/env python3\n"));
+
+        // Текст, который начинается с MZ, и битые заголовки — нет.
+        assert!(!looks_like_program(b"MZ - inventory notes"));
+        let mut far = pe.clone();
+        far[0x3C] = 0xFF;
+        far[0x3D] = 0xFF;
+        far[0x3E] = 0xFF;
+        far[0x3F] = 0xFF;
+        assert!(!looks_like_program(&far));
+        assert!(!looks_like_program(b"#!important"));
+        assert!(!looks_like_program(b"%PDF-1.7"));
+        assert!(!looks_like_program(b"PK\x03\x04"));
+        assert!(!looks_like_program(b""));
+        assert!(!program_inside(Path::new("нет такого файла")));
+    }
+
+    #[test]
+    fn disguised_file_waits_for_answer() {
+        let dir = std::env::temp_dir().join(format!("axiom-dl-disguised-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let mut store = Downloads::default();
+        let kept = started(&mut store, Some(5));
+        let dropped = started(&mut store, Some(5));
+        for id in [kept, dropped] {
+            let file = dir.join(format!("{id}.txt"));
+            let _ = std::fs::write(&file, b"MZ");
+            let asked = store.apply(DownloadEvent::Disguised {
+                id,
+                path: file,
+                received: 2,
+            });
+            assert!(asked.is_some_and(|d| d.ask && d.disguised && d.total == Some(2)));
+        }
+        // Пока ждёт решения, вкладку не усыпить.
+        assert!(store.is_busy(5));
+        // Обычная загрузка такого решения не ждёт.
+        let plain = started(&mut store, None);
+        assert!(store.answer_disguised(plain, true).is_none());
+
+        let keep = store.answer_disguised(kept, true);
+        let kept_item = keep.and_then(|e| store.apply(e).cloned());
+        let drop = store.answer_disguised(dropped, false);
+        let dropped_item = drop.and_then(|e| store.apply(e).cloned());
+        let file_left = dir.join(format!("{dropped}.txt")).exists();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(kept_item.is_some_and(|d| d.status == Status::Done && !d.ask && !d.disguised));
+        assert!(
+            dropped_item.is_some_and(|d| d.status == Status::Cancelled && d.error == "Удалено")
+        );
+        assert!(!file_left, "файл не удалён");
+        assert!(!store.is_busy(5));
     }
 
     #[test]

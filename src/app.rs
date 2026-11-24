@@ -428,13 +428,19 @@ impl App {
             }
             UiCmd::DownloadShow { id } => self.download_action(id, downloads::reveal),
             UiCmd::DownloadCancel { id } => {
-                if !downloads::cancel(id) {
+                // Программа под видом обычного файла уже скачана: «Удалить» удаляет её.
+                if let Some(event) = self.downloads.answer_disguised(id, false) {
+                    self.on_download(event);
+                } else if !downloads::cancel(id) {
                     self.send(&ToUi::Toast {
                         text: "Эту загрузку нельзя отменить",
                     });
                 }
             }
-            UiCmd::DownloadKeep { id } => downloads::keep(id),
+            UiCmd::DownloadKeep { id } => match self.downloads.answer_disguised(id, true) {
+                Some(event) => self.on_download(event),
+                None => downloads::keep(id),
+            },
             UiCmd::DownloadRemove { id } => {
                 if self.downloads.remove(id) {
                     self.push_downloads();
@@ -1058,6 +1064,7 @@ impl App {
                 at: d.at,
                 exists: d.status != Status::Done || d.path.exists(),
                 ask: d.ask,
+                disguised: d.disguised,
             })
             .collect();
         self.send(&ToUi::Downloads {

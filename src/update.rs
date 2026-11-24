@@ -60,6 +60,11 @@ impl Version {
     pub fn current() -> Self {
         Self::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Self(0, 0, 0))
     }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn new(major: u32, minor: u32, patch: u32) -> Self {
+        Self(major, minor, patch)
+    }
 }
 
 impl std::fmt::Display for Version {
@@ -537,7 +542,7 @@ fn verify(path: &Path, expected: &str) -> Result<()> {
 
 /// Старый exe на время, пока он ещё работает.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn old_path(exe: &Path) -> PathBuf {
+pub(crate) fn old_path(exe: &Path) -> PathBuf {
     let mut name = exe.file_name().unwrap_or_default().to_os_string();
     name.push(".old");
     exe.with_file_name(name)
@@ -545,7 +550,7 @@ fn old_path(exe: &Path) -> PathBuf {
 
 /// Антивирус может ненадолго держать свежий файл — пробуем несколько раз.
 #[cfg(windows)]
-fn rename_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_retry(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut tries = 0;
     loop {
         match std::fs::rename(from, to) {

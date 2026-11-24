@@ -622,7 +622,7 @@ impl App {
         let Some(id) = self.tabs.active else {
             return Ok(());
         };
-        self.load_in_tab(id, target.into_url())
+        self.load_in_tab(id, target.into_url(self.settings.search()))
     }
 
     fn load_in_tab(&mut self, id: TabId, url: String) -> Result<()> {
@@ -668,7 +668,7 @@ impl App {
     fn new_tab(&mut self, input: Option<&str>) {
         let url = input
             .and_then(omnibox::resolve)
-            .map(omnibox::Target::into_url)
+            .map(|t| t.into_url(self.settings.search()))
             .unwrap_or_else(|| NEWTAB.to_string());
         let title = if url == NEWTAB {
             String::new()
@@ -833,7 +833,7 @@ impl App {
         if !self.settings.double_search || self.tabs.active != Some(id) {
             return;
         }
-        let Some(query) = self.tabs.get(id).and_then(|t| ddg_query(&t.url)) else {
+        let Some(query) = self.tabs.get(id).and_then(|t| self.settings.query(&t.url)) else {
             return;
         };
         if query == self.last_ai_query {
@@ -1077,7 +1077,7 @@ impl App {
             let url = if path.is_absolute() && path.exists() {
                 Url::from_file_path(path).ok().map(String::from)
             } else {
-                omnibox::resolve(arg).map(omnibox::Target::into_url)
+                omnibox::resolve(arg).map(|t| t.into_url(self.settings.search()))
             };
             if let Some(url) = url.filter(|u| u != NEWTAB) {
                 let id = self.tabs.add(url.clone(), display_title(&url), false, None);
@@ -1100,7 +1100,13 @@ impl App {
                 Some(format!("Прокси не применён: {err}"))
             }
         };
+        let engine = incoming.search_engine;
         self.settings.apply(incoming);
+        // Свой адрес поиска без %s или не http(s) настройки заменили на DuckDuckGo.
+        let rejected = rejected.or_else(|| {
+            (self.settings.search_engine != engine)
+                .then(|| "Свой адрес поиска не подошёл: нужен http(s) и %s".to_string())
+        });
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }
@@ -1737,19 +1743,6 @@ fn build_window(event_loop: &EventLoop<UserEvent>) -> Result<Window> {
             .with_taskbar_icon(icon())
     };
     builder.build(event_loop).context("не удалось создать окно")
-}
-
-/// Запрос из адреса результатов DuckDuckGo.
-fn ddg_query(url: &str) -> Option<String> {
-    let u = Url::parse(url).ok()?;
-    let host = u.host_str()?;
-    if host != "duckduckgo.com" && !host.ends_with(".duckduckgo.com") {
-        return None;
-    }
-    u.query_pairs()
-        .find(|(k, _)| k == "q")
-        .map(|(_, v)| v.trim().to_string())
-        .filter(|q| !q.is_empty())
 }
 
 fn build_ui(

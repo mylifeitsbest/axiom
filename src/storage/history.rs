@@ -228,6 +228,7 @@ fn is_search_page(url: &str) -> bool {
     url.starts_with("https://duckduckgo.com/?")
         || url.starts_with("https://www.google.com/search")
         || url.starts_with("https://google.com/search")
+        || crate::tabs::omnibox::search_query(url, "").is_some()
 }
 
 #[cfg(test)]
@@ -242,6 +243,7 @@ mod tests {
         h.record("https://github.com/tauri-apps/wry", "tauri-apps/wry");
         h.record("axiom://newtab", "skip me");
         h.record("https://duckduckgo.com/?q=wry", "wry at DuckDuckGo");
+        h.record("https://yandex.ru/search/?text=wry", "wry — Яндекс");
 
         let hits = h.search("wry", 10);
         assert_eq!(hits.len(), 2);

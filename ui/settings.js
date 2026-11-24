@@ -2,6 +2,70 @@
 // Меню настроек (полноэкранный лист) и экран первого запуска.
 // Вся логика темы живёт в app.js: сюда передаётся объект `ax` с доступом к ней.
 
+// ---------- поисковые системы (те же, что в src/tabs/omnibox.rs) ----------
+const SEARCH_ENGINES = [
+  { id: 'duckduckgo', name: 'DuckDuckGo', note: 'Без слежки и персональной выдачи' },
+  { id: 'google', name: 'Google', note: 'Самая полная выдача, но с персональной подборкой' },
+  { id: 'yandex', name: 'Яндекс', note: 'Лучше всех ищет по рунету' },
+  { id: 'bing', name: 'Bing', note: 'Поиск Microsoft' },
+  { id: 'brave', name: 'Brave Search', note: 'Собственный индекс, без слежки' },
+  { id: 'startpage', name: 'Startpage', note: 'Выдача Google без слежки' },
+  { id: 'ecosia', name: 'Ecosia', note: 'На доход от рекламы сажают деревья' },
+  { id: 'custom', name: 'Свой адрес', note: 'Адрес страницы результатов, %s — место запроса' },
+];
+
+// Свой адрес: http(s), с %s, и запрос не может поменять сайт (как valid_template в Rust).
+function searchTemplateOk(t) {
+  t = String(t || '').trim();
+  if (!t.includes('%s') || t.length > 1024) return false;
+  const host = (fill) => {
+    try { const u = new URL(t.replaceAll('%s', fill)); return /^https?:$/.test(u.protocol) ? u.hostname : null; } catch { return null; }
+  };
+  const a = host('a');
+  return !!a && a === host('b');
+}
+
+// Как называть выбранную систему в подписях: «Запрос уходит в …».
+function searchEngineName(b) {
+  if (b?.search_engine === 'custom' && searchTemplateOk(b.search_custom)) {
+    return new URL(b.search_custom.trim().replaceAll('%s', 'q')).hostname.replace(/^www\./, '');
+  }
+  return (SEARCH_ENGINES.find((e) => e.id === b?.search_engine) || SEARCH_ENGINES[0]).name;
+}
+
+// Запрос со страницы результатов любой системы или своего адреса (как search_query в Rust).
+function searchQueryOf(href, custom) {
+  let u;
+  try { u = new URL(href); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  const host = u.hostname.replace(/^www\./, '');
+  const search = u.pathname.replace(/\/+$/, '') === '/search';
+  const p = (k) => u.searchParams.get(k);
+  const clean = (q) => (q && q.trim()) || null;
+  const domain = (d) => host === d || host.endsWith('.' + d);
+  const brand = (b) => new RegExp(`^${b}\\.[a-z]+(\\.[a-z]+)?$`).test(host) && host.length - b.length <= 7;
+  if (domain('duckduckgo.com')) return clean(p('q'));
+  if (search && brand('google')) return p('udm') === '50' ? null : clean(p('q'));
+  if (search && (brand('yandex') || host === 'ya.ru')) return clean(p('text'));
+  if (search && (domain('bing.com') || domain('ecosia.org') || host === 'search.brave.com')) return clean(p('q'));
+  if (domain('startpage.com') && (search || /^\/(sp\/search|do\/d?search)$/.test(u.pathname))) return clean(p('query') || p('q'));
+  if (!searchTemplateOk(custom)) return null;
+  const MARK = 'axiomquerymark';
+  const t = new URL(String(custom).trim().replaceAll('%s', MARK));
+  if (t.hostname !== u.hostname) return null;
+  const cut = (s, tpl) => {
+    const i = tpl.indexOf(MARK);
+    const pre = tpl.slice(0, i), post = tpl.slice(i + MARK.length);
+    return s.length >= pre.length + post.length && s.startsWith(pre) && s.endsWith(post) ? s.slice(pre.length, s.length - post.length) : null;
+  };
+  for (const [k, v] of t.searchParams) {
+    if (v.includes(MARK)) return t.pathname === u.pathname && p(k) != null ? clean(cut(p(k), v)) : null;
+  }
+  if (!t.pathname.includes(MARK)) return null;
+  const mid = cut(u.pathname, t.pathname);
+  try { return mid == null ? null : clean(decodeURIComponent(mid)); } catch { return null; }
+}
+
 function createPanels(ax) {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -10,7 +74,7 @@ function createPanels(ax) {
   const SECTIONS = [
     { id: 'look', icon: 'palette', title: 'Внешний вид', desc: 'Тема, цвета и шрифт. Всё меняется сразу.' },
     { id: 'layout', icon: 'layout', title: 'Раскладка', desc: 'Где живут вкладки и сколько воздуха вокруг.' },
-    { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'DuckDuckGo, Google AI Mode и прокси только для ИИ.' },
+    { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'Поисковая система, Google AI Mode и прокси только для ИИ.' },
     { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов, как в Chrome.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
     { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome, Edge, Firefox и других браузеров.' },
@@ -44,6 +108,24 @@ function createPanels(ax) {
   const toggle = (attr, key) => `<input type="checkbox" class="tg" ${attr}="${key}">`;
   const row = (title, note, control, extra = '') =>
     `<div class="srow" ${extra}><span class="sl"><b>${title}</b>${note ? `<small>${note}</small>` : ''}</span><span class="sc">${control}</span></div>`;
+  // Ползунок с пузырьком значения над бегунком: виден, пока тянешь, при наведении и фокусе.
+  const range = (attrs) => `<span class="rng"><input type="range" ${attrs}><output class="bub" aria-hidden="true"></output></span>`;
+  const engineChips = () => `<span class="chips" role="radiogroup" aria-label="Поисковая система">${SEARCH_ENGINES.map((e) =>
+    `<button class="chip" role="radio" data-engine="${e.id}">${icon('check')}<span>${e.name}</span></button>`).join('')}</span>`;
+  // Что показывает пузырёк над ползунком.
+  const BUBBLE = {
+    hue: (v) => `${v}°`,
+    tint: (v) => `${Math.round((v / 0.06) * 100)}%`,
+    fontSize: (v) => `${v} px`,
+    radius: (v) => `${v} px`,
+    gap: (v) => `${v} px`,
+    speed: (v) => (v ? `×${v}` : 'выкл'),
+    aiWidth: (v) => `${v} px`,
+    live_tabs: (v) => (v ? `${v} ${plural(v, 'вкладка', 'вкладки', 'вкладок')}` : 'без лимита'),
+    sleep_minutes: (v) => (v ? `${v} мин` : 'никогда'),
+  };
+  // «Свой адрес» нажат, но годного шаблона ещё нет: поле открыто, система прежняя.
+  let customOpen = false;
   const presetCards = (big) => Object.entries(ax.PRESETS).map(([k, p]) =>
     `<button class="preset${big ? ' big' : ''}" data-preset="${k}" data-mode="${p.mode}" data-oled="${p.oled}" style="--h:${p.hue};--c:${p.tint};--acc:${p.accent}">
       <span class="pv"><i class="a"><b></b><b></b><b></b></i><i class="b"><b></b><b></b></i><i class="c"></i></span>
@@ -52,7 +134,7 @@ function createPanels(ax) {
     `<button class="lcard" data-layout-pick="${l.v}"><span class="lmini" data-l="${l.v}"><i class="t"></i><i class="s"></i><i class="p"></i></span>
       <span class="ln"><b>${l.name}</b><small>${l.note}</small></span></button>`).join('');
   const swatches = () => ax.ACCENTS.map((c) => `<button class="sw" data-accent="${c}" style="--sw:${c}" title="${c}"></button>`).join('') +
-    '<label class="sw pick" title="Свой цвет"><input type="color" data-key="accent"></label>';
+    '<label class="sw own" title="Свой цвет"><input type="color" data-key="accent"></label>';
   const preview = () => `<div class="pvw" id="pvw"><div class="pvw-bar"><i class="pvw-nav"></i><span class="pvw-tabs"><i class="on"></i><i></i><i></i></span><i class="pvw-omni"></i><i class="pvw-dot"></i></div>
     <div class="pvw-main"><i class="pvw-side"><b></b><b></b><b></b></i><i class="pvw-page"><b></b><b></b><b></b><b></b></i><i class="pvw-ai"><b></b><b></b></i></div></div>`;
 
@@ -65,8 +147,8 @@ function createPanels(ax) {
         <h4>Цвет</h4><div class="card">
           ${row('Режим', 'Авто — как в Windows', '<span class="seg" data-key="mode"><button data-v="dark">Тёмный</button><button data-v="light">Светлый</button><button data-v="system">Авто</button></span>')}
           ${row('Акцент', 'Кнопки, ссылки, выделение', `<span class="swatches">${swatches()}</span>`)}
-          ${row('Оттенок фона', '', '<input type="range" class="hue" min="0" max="360" step="1" data-key="hue">')}
-          ${row('Насыщенность фона', '0 — чистый серый', '<input type="range" min="0" max="0.06" step="0.002" data-key="tint">')}
+          ${row('Оттенок фона', '', range('class="hue" min="0" max="360" step="1" data-key="hue"'))}
+          ${row('Насыщенность фона', '0 — чистый серый', range('min="0" max="0.06" step="0.002" data-key="tint"'))}
           ${row('Чистый чёрный', 'Для OLED-экранов', toggle('data-key', 'oled'))}
         </div>
         <h4>Сайты</h4><div class="card">
@@ -76,7 +158,7 @@ function createPanels(ax) {
         <h4>Текст</h4><div class="card">
           ${row('Шрифт', '', '<select data-key="font"><option value="system">Системный</option><option value="rounded">Округлый</option><option value="mono">Моноширинный</option><option value="serif">С засечками</option><option value="custom">Свой…</option></select>')}
           ${row('Название шрифта', 'Любой установленный', '<input type="text" data-key="customFont" placeholder="Inter">', 'data-show="font=custom"')}
-          ${row('Размер текста', '', '<input type="range" min="11" max="15" step="0.5" data-key="fontSize"><output data-out="fontSize"></output>')}
+          ${row('Размер текста', '', `${range('min="11" max="15" step="0.5" data-key="fontSize"')}<output data-out="fontSize"></output>`)}
         </div>
         <h4>Свой CSS</h4>
         <div class="card pad"><textarea data-key="customCss" spellcheck="false" placeholder=".tab.on { box-shadow: inset 0 -2px var(--acc) }"></textarea>
@@ -86,8 +168,8 @@ function createPanels(ax) {
       layout: `
         <div class="lcards">${layoutCards()}</div>
         <h4>Форма</h4><div class="card">
-          ${row('Скругления', '', '<input type="range" min="0" max="18" step="1" data-key="radius"><output data-out="radius"></output>')}
-          ${row('Отступы', '0 — страница во всё окно', '<input type="range" min="0" max="14" step="1" data-key="gap"><output data-out="gap"></output>')}
+          ${row('Скругления', '', `${range('min="0" max="18" step="1" data-key="radius"')}<output data-out="radius"></output>`)}
+          ${row('Отступы', '0 — страница во всё окно', `${range('min="0" max="14" step="1" data-key="gap"')}<output data-out="gap"></output>`)}
         </div>
         <h4>Элементы</h4><div class="card">
           ${row('Кнопки навигации', 'Назад, вперёд, обновить', toggle('data-key', 'showNav'))}
@@ -95,23 +177,24 @@ function createPanels(ax) {
           ${row('Полный адрес', 'Иначе — только домен', toggle('data-key', 'fullUrl'))}
         </div>
         <h4>Движение</h4><div class="card">
-          ${row('Скорость анимаций', '0 — выключены', '<input type="range" min="0" max="2" step="0.25" data-key="speed"><output data-out="speed"></output>')}
+          ${row('Скорость анимаций', '0 — выключены', `${range('min="0" max="2" step="0.25" data-key="speed"')}<output data-out="speed"></output>`)}
         </div>`,
       search: `
         <div class="card">
-          ${row('Поисковая система', 'Без слежки и персональной выдачи', '<span class="pill-v">DuckDuckGo</span>')}
-          ${row('Двойной поиск', 'Запрос уходит в DuckDuckGo и сразу в AI Mode — и из адресной строки, и из поиска на странице', toggle('data-bkey', 'double_search'))}
+          <div class="srow col" data-kw="поисковик поисковая система поиск по умолчанию google yandex brave"><span class="sl"><b>Поисковая система</b><small id="seNote"></small></span>${engineChips()}</div>
+          <div class="srow" id="seCustomRow" data-kw="свой адрес поиска шаблон %s"><span class="inline"><input type="text" id="seCustomIn" placeholder="https://example.com/search?q=%s" spellcheck="false"><button class="btn primary" data-act="search-custom">Применить</button></span></div>
+          ${row('Двойной поиск', 'Запрос уходит в <span class="se-name">DuckDuckGo</span> и сразу в AI Mode — и из адресной строки, и из поиска на странице', toggle('data-bkey', 'double_search'))}
         </div>
         <h4>Панель ИИ</h4><div class="card">
           ${row('Прокси только для AI Mode', 'Вкладки ходят напрямую. Пусто — без прокси.', '')}
           <div class="srow"><span class="inline"><input type="text" id="proxyIn" placeholder="socks5://127.0.0.1:1080" spellcheck="false"><button class="btn primary" data-act="proxy">Применить</button></span></div>
-          ${row('Ширина панели', 'Или потяните за край панели', '<input type="range" min="280" max="900" step="10" data-key="aiWidth"><output data-out="aiWidth"></output>')}
+          ${row('Ширина панели', 'Или потяните за край панели', `${range('min="280" max="900" step="10" data-key="aiWidth"')}<output data-out="aiWidth"></output>`)}
         </div>`,
       translate: ax.translate.sectionHtml(),
       memory: `
         <div class="card">
-          ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', '<input type="range" min="0" max="10" step="1" data-bkey="live_tabs">')}
-          ${row('Усыплять вкладки', '<span id="sleepOut"></span>', '<input type="range" min="0" max="120" step="5" data-bkey="sleep_minutes">')}
+          ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', range('min="0" max="10" step="1" data-bkey="live_tabs"'), 'data-kw="живые вкладки лимит"')}
+          ${row('Усыплять вкладки', '<span id="sleepOut"></span>', range('min="0" max="120" step="5" data-bkey="sleep_minutes"'), 'data-kw="сон спящие таймер минуты"')}
         </div>
         <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Не засыпают вкладки, где играет звук или остался недописанный текст, и те, что вы отметили кружкой в адресной строке. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
       data: `
@@ -173,9 +256,11 @@ function createPanels(ax) {
     $('#secTitle').textContent = 'Поиск';
     $('#secDesc').textContent = `«${q}»`;
     let any = false;
+    // В data-kw — слова, которых нет в тексте строки, но которыми её ищут.
+    const text = (r) => `${r.textContent} ${r.dataset.kw || ''}`.toLowerCase();
     $$('.ssec', sheet).forEach((sec) => {
       let hit = false;
-      $$('.srow,.krow', sec).forEach((r) => { const m = r.textContent.toLowerCase().includes(q); r.classList.toggle('miss', !m); hit ||= m; });
+      $$('.srow,.krow', sec).forEach((r) => { const m = text(r).includes(q); r.classList.toggle('miss', !m); hit ||= m && !r.hidden; });
       $$('.card', sec).forEach((c) => c.classList.toggle('miss', !$$('.srow:not(.miss),.krow:not(.miss)', c).length && !c.textContent.toLowerCase().includes(q)));
       $$('h4,.lcards,.presets,.pvw,.note', sec).forEach((e) => e.classList.add('miss'));
       if (!hit && sec.querySelector('.hero-card')?.textContent.toLowerCase().includes(q)) { hit = true; sec.querySelector('.hero-card').classList.remove('miss'); }
@@ -188,6 +273,8 @@ function createPanels(ax) {
   function sync() {
     if (built) syncScope(sheet);
     if (onb.classList.contains('on')) syncScope(onb);
+    const ds = document.getElementById('dsBtn');
+    if (ds) ds.title = `Двойной поиск: ${searchEngineName(ax.B)} + ИИ`;
     if (built) {
       const sys = ax.system();
       const win = sys.platform === 'windows';
@@ -240,7 +327,7 @@ function createPanels(ax) {
       else if (document.activeElement !== el) el.value = v ?? '';
     });
     $$('[data-bkey]', box).forEach((el) => { const v = B[el.dataset.bkey]; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; });
-    $$('input[type=range]', box).forEach((r) => r.style.setProperty('--fill', `${((r.value - r.min) / (r.max - r.min)) * 100}%`));
+    $$('input[type=range]', box).forEach(syncRange);
     $$('[data-out]', box).forEach((el) => {
       const k = el.dataset.out;
       el.textContent = k === 'speed' ? (ax.speed() ? `×${ax.speed()}` : 'выкл') : k === 'fontSize' ? `${A[k]}px` : String(A[k]);
@@ -255,6 +342,73 @@ function createPanels(ax) {
     if (so) { const m = +B.sleep_minutes; so.textContent = m ? `Через ${m} мин без активности` : 'Никогда'; }
     const lo = $('#liveOut', box);
     if (lo) { const n = +B.live_tabs; lo.textContent = n ? `Не больше ${n}, лишние засыпают сразу` : 'Без ограничения'; }
+    syncSearch(box);
+  }
+
+  // Заливка до бегунка и пузырёк над ним.
+  function syncRange(r) {
+    const p = (r.value - r.min) / (r.max - r.min) || 0;
+    r.style.setProperty('--fill', `${p * 100}%`);
+    const wrap = r.parentElement;
+    if (!wrap?.classList.contains('rng')) return;
+    wrap.style.setProperty('--p', p);
+    const fmt = BUBBLE[r.dataset.key || r.dataset.bkey];
+    wrap.querySelector('.bub').textContent = fmt ? fmt(+r.value) : r.value;
+  }
+
+  // Выбранная поисковая система: пилюли, поле своего адреса и подписи с её именем.
+  function syncSearch(box) {
+    const B = ax.B;
+    const id = SEARCH_ENGINES.some((e) => e.id === B.search_engine) ? B.search_engine : 'duckduckgo';
+    const custom = id === 'custom' || customOpen;
+    // Пока свой адрес не применён, выбранной остаётся прежняя система, а «Свой адрес» лишь обведён.
+    $$('[data-engine]', box).forEach((b) => {
+      const on = b.dataset.engine === id;
+      b.classList.toggle('on', on);
+      b.classList.toggle('open', !on && custom && b.dataset.engine === 'custom');
+      b.setAttribute('aria-checked', String(on));
+    });
+    const name = searchEngineName(B);
+    $$('.se-name', box).forEach((el) => { el.textContent = name; });
+    const note = $('#seNote', box);
+    if (note) note.textContent = SEARCH_ENGINES.find((e) => e.id === (custom ? 'custom' : id)).note;
+    const rowC = $('#seCustomRow', box);
+    if (rowC) rowC.hidden = !custom;
+    const input = $('#seCustomIn', box);
+    if (input && document.activeElement !== input && !input.classList.contains('bad')) input.value = B.search_custom || '';
+  }
+
+  function pickEngine(id) {
+    if (id === 'custom') {
+      customOpen = true;
+      if (searchTemplateOk(ax.B.search_custom)) { setEngine('custom'); return; }
+      sync();
+      $('#seCustomIn')?.focus();
+      return;
+    }
+    customOpen = false;
+    setEngine(id);
+  }
+  function setEngine(id) {
+    ax.B.search_engine = id;
+    ax.saveSettings(true);
+    ax.refresh();
+  }
+  function applyCustomSearch() {
+    const input = $('#seCustomIn');
+    const v = input.value.trim();
+    const ok = searchTemplateOk(v);
+    input.classList.toggle('bad', !ok);
+    if (!ok) {
+      ax.toast(!v.includes('%s') ? 'Поставьте %s на место запроса' : 'Нужен адрес сайта, начиная с https://');
+      input.focus();
+      return;
+    }
+    ax.B.search_custom = v;
+    customOpen = true;
+    setEngine('custom');
+    input.blur();
+    ax.toast(`Поиск: ${searchEngineName(ax.B)}`);
   }
 
   // ---------- общие обработчики для листа и приветствия ----------
@@ -263,6 +417,7 @@ function createPanels(ax) {
   function onInput(e) {
     const el = e.target;
     if (el.id === 'setFind') { filter(el.value); return; }
+    if (el.id === 'seCustomIn') { el.classList.remove('bad'); return; }
     if (el.dataset.key) ax.setA(el.dataset.key, readVal(el));
     else if (el.dataset.bkey) {
       ax.B[el.dataset.bkey] = readVal(el);
@@ -291,8 +446,10 @@ function createPanels(ax) {
       return;
     }
     if (b.dataset.accent) { ax.setA('accent', b.dataset.accent); return; }
+    if (b.dataset.engine) { pickEngine(b.dataset.engine); return; }
     switch (b.dataset.act) {
       case 'close': close(); break;
+      case 'search-custom': applyCustomSearch(); break;
       case 'proxy': applyProxy(b.closest('.card, .step') || sheet); break;
       case 'copy': ax.copyText(JSON.stringify(ax.A, null, 2)); ax.toast('Тема скопирована'); break;
       case 'import-toggle': { const box = $('.import-box', sheet); box.hidden = !box.hidden; break; }
@@ -361,6 +518,20 @@ function createPanels(ax) {
     sheet.addEventListener('click', onClick);
     sheet.addEventListener('keydown', (e) => {
       if (e.target.id === 'proxyIn' && e.key === 'Enter') applyProxy(sheet);
+      if (e.target.id === 'seCustomIn' && e.key === 'Enter') applyCustomSearch();
+    });
+    // Пузырёк над ползунком держится, пока бегунок тянут, даже если мышь ушла с ползунка.
+    sheet.addEventListener('pointerdown', (e) => {
+      const wrap = e.target.closest?.('.rng');
+      if (!wrap) return;
+      wrap.classList.add('drag');
+      const up = () => {
+        wrap.classList.remove('drag');
+        removeEventListener('pointerup', up, true);
+        removeEventListener('pointercancel', up, true);
+      };
+      addEventListener('pointerup', up, true);
+      addEventListener('pointercancel', up, true);
     });
   }
 
@@ -457,7 +628,7 @@ function createPanels(ax) {
         <section class="step" data-step="ai">
           <div class="step-ic">${icon('sparkles')}</div>
           <h2>Поиск и ИИ</h2>
-          <p class="lead">Запрос из адресной строки уходит в DuckDuckGo, а рядом сразу отвечает Google AI Mode.</p>
+          <p class="lead">Запрос из адресной строки уходит в <span class="se-name">DuckDuckGo</span>, а рядом сразу отвечает Google AI Mode. Поисковую систему можно сменить в настройках.</p>
           <div class="card onb-cardw">
             ${row('Двойной поиск', 'Можно переключать кнопкой ✦ в адресной строке', toggle('data-bkey', 'double_search'))}
             ${row('Прокси для AI Mode', 'Необязательно. Только для панели ИИ.', '<span class="inline"><input type="text" id="proxyIn" placeholder="socks5://127.0.0.1:1080" spellcheck="false"><button class="btn" data-act="proxy">OK</button></span>')}

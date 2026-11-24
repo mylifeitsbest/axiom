@@ -1,10 +1,10 @@
 //! Какую панель ИИ видно на какой вкладке.
 //!
 //! Двойной поиск открывает панель для своей вкладки, и вкладка запоминает запрос.
-//! Такая панель видна только на вкладках со своим запросом: на новой вкладке или
-//! на обычном сайте она прячется, а при возврате показывает тот же ответ, ничего
-//! не перезагружая. Панель, которую человек открыл сам (Ctrl+K, кнопка,
-//! «Спросить ИИ»), общая: переключение вкладок её не трогает.
+//! На вкладке со своим запросом открытая панель всегда показывает его ответ, ничего
+//! не перезагружая, если он уже на экране. Панель двойного поиска на новой вкладке
+//! или на обычном сайте прячется. Панель, которую человек открыл сам (Ctrl+K,
+//! кнопка, «Спросить ИИ»), на вкладках без запроса остаётся как была.
 
 /// Кто открыл панель.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -34,17 +34,20 @@ pub enum Step {
 /// обычный сайт). `shown` — запрос, который сейчас загружен в панели.
 pub fn on_activate(mode: Mode, query: Option<&str>, shown: Option<&str>) -> Step {
     match (mode, query) {
-        (Mode::Search, Some(q)) => Step::Show(load(q, shown)),
+        (Mode::Closed, _) => Step::Keep,
+        // У вкладки свой поиск — в панели его ответ, кто бы панель ни открыл.
+        (_, Some(q)) => Step::Show(load(q, shown)),
         (Mode::Search, None) => Step::Hide,
-        _ => Step::Keep,
+        (Mode::Manual, None) => Step::Keep,
     }
 }
 
-/// Закрыли вкладку с запросом `query`: если панель двойного поиска показывала
-/// именно его, она закрывается, а не переходит к соседней вкладке.
+/// Закрыли вкладку с запросом `query`: если панель показывала именно его, она
+/// закрывается вместе с вкладкой, а не переходит к соседней.
 pub fn on_close(mode: Mode, query: Option<&str>, shown: Option<&str>) -> Step {
     match (mode, query) {
-        (Mode::Search, Some(q)) if shown == Some(q) => Step::Close,
+        (Mode::Closed, _) => Step::Keep,
+        (_, Some(q)) if shown == Some(q) => Step::Close,
         _ => Step::Keep,
     }
 }
@@ -98,13 +101,27 @@ mod tests {
     }
 
     #[test]
-    fn manual_and_closed_panels_ignore_tabs() {
+    fn closed_panel_ignores_tabs() {
         for query in [None, Some("a"), Some("b")] {
-            assert_eq!(on_activate(Mode::Manual, query, Some("a")), Step::Keep);
             assert_eq!(on_activate(Mode::Closed, query, Some("a")), Step::Keep);
-            assert_eq!(on_close(Mode::Manual, query, Some("a")), Step::Keep);
             assert_eq!(on_close(Mode::Closed, query, Some("a")), Step::Keep);
         }
+    }
+
+    #[test]
+    fn manual_panel_still_shows_the_tab_search() {
+        // Видео 25.11: панель открыли кнопкой, и вкладки с поиском её больше не меняли.
+        assert_eq!(on_activate(Mode::Manual, Some("b"), Some("a")), show("b"));
+        assert_eq!(
+            on_activate(Mode::Manual, Some("a"), Some("a")),
+            Step::Show(None)
+        );
+        // Без своего поиска ручная панель остаётся как была.
+        assert_eq!(on_activate(Mode::Manual, None, Some("a")), Step::Keep);
+        // Закрыли вкладку, чей ответ в панели, — панель закрывается и здесь.
+        assert_eq!(on_close(Mode::Manual, Some("a"), Some("a")), Step::Close);
+        assert_eq!(on_close(Mode::Manual, Some("b"), Some("a")), Step::Keep);
+        assert_eq!(on_close(Mode::Manual, None, Some("a")), Step::Keep);
     }
 
     #[test]

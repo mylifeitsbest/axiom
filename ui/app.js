@@ -279,9 +279,10 @@
       el.classList.toggle('on', t.id === S.active);
       el.classList.toggle('zz', !!t.sleeping);
       el.classList.toggle('ld', !!t.loading && !t.sleeping);
+      el.classList.toggle('nosleep', !!t.no_sleep);
       const title = t.title || (t.url === NEWTAB ? 'Новая вкладка' : t.url);
       el.querySelector('.tt').textContent = title;
-      el.title = t.sleeping ? `${title} — спит` : title;
+      el.title = t.sleeping ? `${title} — спит` : t.no_sleep ? `${title} — не засыпает` : title;
       const key = parseUrl(t.url)?.origin || t.url;
       const slot = el.querySelector('.favslot');
       if (slot.dataset.key !== key) { slot.dataset.key = key; slot.innerHTML = favHtml(t.url); }
@@ -559,6 +560,18 @@
   });
   $('#starBtn').addEventListener('click', () => send({ cmd: 'toggle_bookmark' }));
 
+  // «Не усыплять»: вкладку не усыпят ни таймер, ни нехватка памяти, ни лимит живых вкладок.
+  function renderAwake() {
+    const t = activeTab();
+    const b = $('#awakeBtn');
+    const on = !!t?.no_sleep;
+    b.hidden = !t || t.url === NEWTAB;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Разрешить вкладке засыпать' : 'Не усыплять вкладку';
+  }
+  $('#awakeBtn').addEventListener('click', () => { if (S.active != null) send({ cmd: 'toggle_no_sleep', id: S.active }); });
+
   // ---------- поиск на странице ----------
   function startFind() {
     mode = 'find';
@@ -718,6 +731,7 @@
     renderTabs();
     renderContent();
     renderOmni();
+    renderAwake();
     renderAi();
   }
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);

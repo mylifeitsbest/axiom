@@ -107,7 +107,7 @@ function createPanels(ax) {
           ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', '<input type="range" min="0" max="10" step="1" data-bkey="live_tabs">')}
           ${row('Усыплять вкладки', '<span id="sleepOut"></span>', '<input type="range" min="0" max="120" step="5" data-bkey="sleep_minutes">')}
         </div>
-        <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Не засыпают вкладки, где играет звук или остался недописанный текст. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
+        <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Не засыпают вкладки, где играет звук или остался недописанный текст, и те, что вы отметили кружкой в адресной строке. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
       data: `
         <div class="card hero-card"><div class="hero-ic">${icon('download')}</div>
           <div class="hero-t"><b>Перенести из Google Chrome</b><small>Закладки и история последнего профиля. Chrome можно не закрывать.</small><small class="imp-res" id="impRes"></small></div>

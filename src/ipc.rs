@@ -171,6 +171,10 @@ pub enum UiCmd {
     },
     /// Звёздочка в адресной строке: добавить или убрать закладку активной вкладки.
     ToggleBookmark,
+    /// Кнопка «не усыплять» в адресной строке.
+    ToggleNoSleep {
+        id: u64,
+    },
     ImportChrome,
     /// Установить в систему и зарегистрировать как браузер.
     Install,
@@ -272,6 +276,7 @@ pub struct TabView<'a> {
     pub sleeping: bool,
     pub ai: bool,
     pub bookmarked: bool,
+    pub no_sleep: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -390,6 +395,15 @@ mod tests {
             "a".repeat(MAX_INPUT + 1)
         );
         assert!(parse(&huge).is_err());
+    }
+
+    #[test]
+    fn parses_toggle_no_sleep() {
+        assert!(matches!(
+            parse(r#"{"cmd":"toggle_no_sleep","id":7}"#),
+            Ok(UiCmd::ToggleNoSleep { id: 7 })
+        ));
+        assert!(parse(r#"{"cmd":"toggle_no_sleep"}"#).is_err());
     }
 
     #[test]

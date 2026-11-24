@@ -28,6 +28,8 @@ pub struct Tab {
     pub sleep_requested: Option<Instant>,
     /// В странице недописанный текст: не усыпляем, пока вкладку снова не откроют.
     pub keep_alive: bool,
+    /// Человек попросил эту вкладку не усыплять (кнопка в адресной строке).
+    pub no_sleep: bool,
     /// Вкладка, с которой сайт открыл эту (`target=_blank`, `window.open`).
     pub opener: Option<TabId>,
 }
@@ -40,6 +42,12 @@ impl Tab {
     pub fn is_sleeping(&self) -> bool {
         self.webview.is_none() && !self.is_newtab()
     }
+
+    /// Флаги самой вкладки не мешают её усыпить. Активность, звук и загрузки
+    /// проверяет `App::sleep_candidates`: им нужен webview.
+    pub fn may_sleep(&self) -> bool {
+        !self.no_sleep && !self.keep_alive && self.sleep_requested.is_none()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +55,8 @@ pub struct ClosedTab {
     pub url: String,
     pub title: String,
     pub ai: bool,
+    /// Ctrl+Shift+T возвращает вкладку вместе с «не усыплять».
+    pub no_sleep: bool,
     pub index: usize,
 }
 
@@ -108,6 +118,7 @@ impl TabStore {
                 scroll: None,
                 sleep_requested: None,
                 keep_alive: false,
+                no_sleep: false,
                 opener: None,
             },
         );
@@ -124,6 +135,7 @@ impl TabStore {
                 url: tab.url.clone(),
                 title: tab.title.clone(),
                 ai: tab.ai,
+                no_sleep: tab.no_sleep,
                 index,
             });
             if self.closed.len() > MAX_CLOSED {
@@ -220,5 +232,16 @@ mod tests {
         let closed = s.pop_closed();
         assert_eq!(closed.map(|c| c.index), Some(0));
         assert!(!s.can_restore());
+    }
+
+    #[test]
+    fn closed_tab_remembers_no_sleep() {
+        let mut s = store(2);
+        let first = s.iter().next().map(|t| t.id).unwrap_or_default();
+        if let Some(tab) = s.get_mut(first) {
+            tab.no_sleep = true;
+        }
+        assert!(s.remove(first, true).is_some());
+        assert_eq!(s.pop_closed().map(|c| c.no_sleep), Some(true));
     }
 }

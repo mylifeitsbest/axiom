@@ -109,7 +109,8 @@ input,textarea,select{font:inherit;color:inherit}
 .omni-ic .i{width:14px;height:14px}
 #omniInput{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:var(--t1);user-select:text;padding:0}
 #omniInput::placeholder{color:var(--t3)}
-.omni-view{position:absolute;left:30px;right:32px;top:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:1px;pointer-events:none;white-space:nowrap;overflow:hidden;color:var(--t1)}
+/* Справа три кнопки по 24px (не усыплять, закладка, двойной поиск): адрес не заходит под них. */
+.omni-view{position:absolute;left:30px;right:calc(3px + 3*24px + 2*6px);top:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:1px;pointer-events:none;white-space:nowrap;overflow:hidden;color:var(--t1)}
 .omni-view .p{color:var(--t3);overflow:hidden;text-overflow:ellipsis;min-width:0}
 .omni.focus .omni-view,.omni.empty .omni-view,.omni.find .omni-view{display:none}
 .omni:not(.focus):not(.empty):not(.find) #omniInput{color:transparent}
@@ -396,6 +397,16 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .star.on{color:var(--acc)}
 .star.on .i{fill:currentColor}
 .omni.focus .star,.omni.find .star{display:none}
+
+/* ---------- «не усыплять» ---------- */
+.awake{color:var(--t3)}
+.awake.on{color:var(--acc)}
+.omni.focus .awake,.omni.find .awake{display:none}
+/* Метка на вкладке — точка в углу значка. Обводка цвета фона вкладки отделяет её от значка. */
+.tab.nosleep::after{content:'';position:absolute;left:20px;top:calc(50% + 3px);width:6px;height:6px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 1.5px var(--bg);pointer-events:none;animation:pop var(--d2) var(--sp) both;transition:box-shadow var(--d2)}
+.tab.nosleep:hover::after{box-shadow:0 0 0 1.5px color-mix(in oklab,var(--s1) 55%,var(--bg))}
+.tab.nosleep.on::after{box-shadow:0 0 0 1.5px var(--s1)}
+.tab.nosleep.drag::after{box-shadow:0 0 0 1.5px var(--s2)}
 
 /* ---------- загрузки ---------- */
 .dl{position:relative}

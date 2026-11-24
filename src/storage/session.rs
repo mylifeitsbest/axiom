@@ -17,6 +17,17 @@ pub struct SavedTab {
     /// «Не усыплять»: после запуска вкладка всё равно спит до первого клика.
     #[serde(default)]
     pub no_sleep: bool,
+    /// Громкость вкладки, 0–100. Полная в файл не пишется: так её и читают старые версии.
+    #[serde(default = "full_volume", skip_serializing_if = "is_full_volume")]
+    pub volume: u8,
+}
+
+fn full_volume() -> u8 {
+    crate::tabs::volume::FULL
+}
+
+fn is_full_volume(volume: &u8) -> bool {
+    *volume >= crate::tabs::volume::FULL
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -77,6 +88,7 @@ mod tests {
             title: String::new(),
             ai: false,
             no_sleep: false,
+            volume: crate::tabs::volume::FULL,
         }
     }
 
@@ -94,6 +106,25 @@ mod tests {
             .ok()
             .and_then(|json| serde_json::from_str::<SavedTab>(&json).ok());
         assert!(back.is_some_and(|t| t.no_sleep));
+    }
+
+    #[test]
+    fn volume_is_optional_and_kept() {
+        let full = crate::tabs::volume::FULL;
+        let old: Result<SavedTab, _> =
+            serde_json::from_str(r#"{"url":"https://a.example/","title":"a"}"#);
+        assert!(old.is_ok_and(|t| t.volume == full));
+        // Полная громкость в файл не пишется, своя — пишется и читается обратно.
+        let json = serde_json::to_string(&tab("https://a.example/")).unwrap_or_default();
+        assert!(!json.contains("volume"));
+        let saved = SavedTab {
+            volume: 30,
+            ..tab("https://a.example/")
+        };
+        let back = serde_json::to_string(&saved)
+            .ok()
+            .and_then(|json| serde_json::from_str::<SavedTab>(&json).ok());
+        assert!(back.is_some_and(|t| t.volume == 30));
     }
 
     #[test]

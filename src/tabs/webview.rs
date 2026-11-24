@@ -115,7 +115,7 @@ pub struct TabSpec<'a> {
     /// Для вкладок, открытых из панели ИИ: тот же прокси, что у панели.
     pub proxy: Option<ProxyConfig>,
     pub ai: bool,
-    /// Звук вкладки выключен (после пробуждения — снова).
+    /// Звук вкладки выключен (после пробуждения — снова): кнопкой или громкостью 0 %.
     pub muted: bool,
 }
 
@@ -142,6 +142,9 @@ pub fn build_tab(
         .with_hotkeys_zoom(true)
         .with_initialization_script(super::sleep::DRAFT_TRACKER)
         .with_initialization_script(super::links::TRACKER)
+        // Громкость вкладки — во всех фреймах: звук часто играет во встроенном плеере.
+        // (WebView2 и так ставит скрипты во фреймы; WebKitGTK — только с `false`.)
+        .with_initialization_script_for_main_only(super::volume::SCRIPT, false)
         .with_navigation_handler(move |url| {
             // Не веб-адрес — ссылка на приложение (`mailto:`, `tg:`…): решает external.
             omnibox::is_navigable(&url)

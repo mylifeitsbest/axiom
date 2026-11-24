@@ -206,6 +206,11 @@ pub enum UiCmd {
     ToggleMute {
         id: u64,
     },
+    /// Ползунок в меню вкладки и колесо над значком динамика: громкость 0–100.
+    SetVolume {
+        id: u64,
+        volume: u8,
+    },
     CloseOtherTabs {
         id: u64,
     },
@@ -318,6 +323,9 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::TranslatePrefs { prefs } if !prefs.is_valid() => {
             return Err(IpcError::Invalid("translate"));
         }
+        UiCmd::SetVolume { volume, .. } if *volume > crate::tabs::volume::FULL => {
+            return Err(IpcError::Invalid("volume"));
+        }
         _ => {}
     }
     Ok(())
@@ -351,6 +359,8 @@ pub struct TabView<'a> {
     pub audible: bool,
     /// Звук вкладки выключен (перечёркнутый динамик).
     pub muted: bool,
+    /// Громкость вкладки, 0–100.
+    pub volume: u8,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -541,6 +551,30 @@ mod tests {
             Ok(UiCmd::ToggleNoSleep { id: 7 })
         ));
         assert!(parse(r#"{"cmd":"toggle_no_sleep"}"#).is_err());
+    }
+
+    #[test]
+    fn parses_set_volume() {
+        assert!(matches!(
+            parse(r#"{"cmd":"set_volume","id":4,"volume":35}"#),
+            Ok(UiCmd::SetVolume { id: 4, volume: 35 })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"set_volume","id":4,"volume":0}"#),
+            Ok(UiCmd::SetVolume { volume: 0, .. })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"set_volume","id":4,"volume":100}"#),
+            Ok(UiCmd::SetVolume { volume: 100, .. })
+        ));
+        // Громче 100 % не бывает; дробь, минус, строка и пропуск — ошибка.
+        assert!(parse(r#"{"cmd":"set_volume","id":4,"volume":101}"#).is_err());
+        assert!(parse(r#"{"cmd":"set_volume","id":4,"volume":300}"#).is_err());
+        assert!(parse(r#"{"cmd":"set_volume","id":4,"volume":50.5}"#).is_err());
+        assert!(parse(r#"{"cmd":"set_volume","id":4,"volume":-5}"#).is_err());
+        assert!(parse(r#"{"cmd":"set_volume","id":4,"volume":"50"}"#).is_err());
+        assert!(parse(r#"{"cmd":"set_volume","id":4}"#).is_err());
+        assert!(parse(r#"{"cmd":"set_volume","volume":50}"#).is_err());
     }
 
     #[test]

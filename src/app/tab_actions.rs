@@ -1,4 +1,4 @@
-//! Действия с вкладкой: меню вкладки, звук, исходный код, печать, масштаб,
+//! Действия с вкладкой: меню вкладки, звук и громкость, исходный код, печать, масштаб,
 //! инструменты разработчика и ссылки, открытые в фоне.
 
 use super::{App, display_title};
@@ -6,8 +6,9 @@ use crate::{
     events::UserEvent,
     ipc::ToUi,
     tabs::{
-        TabId, links, omnibox, script,
+        Tab, TabId, links, omnibox, script,
         tools::{self, Zoom},
+        volume,
     },
     ui::hotkeys::Hotkey,
 };
@@ -78,9 +79,13 @@ impl App {
         let Some(tab) = self.tabs.get(id) else {
             return;
         };
-        let (url, title, ai) = (tab.url.clone(), tab.title.clone(), tab.ai);
+        let (url, title, ai, volume) = (tab.url.clone(), tab.title.clone(), tab.ai, tab.volume);
         let at = self.tabs.index_of(id).map(|i| i + 1);
         let copy = self.tabs.add(url, title, ai, at);
+        // Копия той же страницы звучит так же.
+        if let Some(tab) = self.tabs.get_mut(copy) {
+            tab.volume = volume;
+        }
         self.activate(copy);
     }
 
@@ -91,9 +96,43 @@ impl App {
         };
         tab.muted = !tab.muted;
         if let Some(webview) = &tab.webview {
-            tools::set_muted(webview, tab.muted);
+            tools::set_muted(webview, tab.engine_muted());
         }
         self.push_state();
+    }
+
+    /// Ползунок в меню вкладки и колесо над значком динамика. Звук не включает и не
+    /// выключает: это по-прежнему клик по значку и Ctrl+M.
+    pub(super) fn set_volume(&mut self, id: TabId, volume: u8) {
+        let Some(tab) = self.tabs.get_mut(id).filter(|t| !t.is_internal()) else {
+            return;
+        };
+        let volume = volume::clamp(volume);
+        if tab.volume == volume {
+            return;
+        }
+        let was_muted = tab.engine_muted();
+        tab.volume = volume;
+        if let Some(webview) = &tab.webview {
+            script::run(webview, &volume::apply(volume));
+            // Через ноль: сначала скрипт, потом звук движка (см. `volume::ZERO_IS_MUTE`).
+            if tab.engine_muted() != was_muted {
+                tools::set_muted(webview, tab.engine_muted());
+            }
+        }
+        self.session_dirty = true;
+        self.push_state();
+    }
+
+    /// Громкость вкладки — её странице. Новая страница начинает с полной, поэтому
+    /// полную не шлём. Без жеста пользователя (см. `tabs::script`).
+    pub(super) fn apply_volume(tab: &Tab) {
+        if volume::page_volume(tab.volume) == volume::FULL {
+            return;
+        }
+        if let Some(webview) = &tab.webview {
+            script::run(webview, &volume::apply(tab.volume));
+        }
     }
 
     /// Закрывает все вкладки, кроме этой; она становится активной.

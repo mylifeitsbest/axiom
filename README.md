@@ -65,9 +65,9 @@ irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
 curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh
 ```
 
-Скрипт сам выберет apt или pacman, подключит подписанный репозиторий Axiom и установит браузер. После этого Axiom обновляется вместе с системой: `sudo apt upgrade` или `sudo pacman -Syu`. Установку этим скриптом CI проверяет в чистых Ubuntu 22.04, Ubuntu 24.04, Kali и Arch.
+На Ubuntu, Debian и Kali скрипт подключит подписанный репозиторий Axiom, и браузер будет обновляться вместе с системой (`sudo apt upgrade`). На Arch он поставит пакет `axiom-browser-bin` из AUR (через `yay` или `paru`, а без них — `makepkg -si`) и систему не обновляет. Установку этим скриптом CI проверяет в чистых Ubuntu 22.04, Ubuntu 24.04, Kali и Arch.
 
-На Linux пакет и команда запуска называются `axiom-browser`. В Debian, Ubuntu и Kali уже есть пакет `axiom` (это система компьютерной алгебры), и так их не перепутать.
+На Linux пакет и команда запуска называются `axiom-browser` (в AUR пакет — `axiom-browser-bin`). В Debian, Ubuntu и Kali уже есть пакет `axiom` (это система компьютерной алгебры), и так их не перепутать.
 
 ### Ubuntu, Debian, Kali (apt) — вручную
 
@@ -79,7 +79,27 @@ sudo apt update && sudo apt install axiom-browser
 
 apt сам поставит зависимости (WebKitGTK 4.1). Подходит для Ubuntu 22.04 и новее, Debian 12 и новее, Kali Rolling. Удаление: `sudo apt remove axiom-browser`.
 
-### Arch, Manjaro, EndeavourOS (pacman) — вручную
+### Arch, Manjaro, EndeavourOS — из AUR
+
+Пакет [`axiom-browser-bin`](https://aur.archlinux.org/packages/axiom-browser-bin): готовая сборка из релиза, проверка по SHA-256, файлы раскладывает pacman.
+
+```sh
+yay -S axiom-browser-bin        # или paru -S axiom-browser-bin
+```
+
+Без помощника AUR — тот же `PKGBUILD` через `makepkg`, от обычного пользователя, не root:
+
+```sh
+mkdir axiom-browser-bin && cd axiom-browser-bin
+curl -fsSLO https://raw.githubusercontent.com/mylifeitsbest/axiom/main/packaging/aur/axiom-browser-bin/PKGBUILD
+makepkg -si
+```
+
+Зависимости (WebKitGTK 4.1, GTK 3, libsoup 3) ставятся через `pacman -S --needed`, остальная система не обновляется. Обновление: `yay -Syu` вместе с остальными пакетами, без помощника — снова `makepkg -si` со свежим `PKGBUILD` или скрипт выше. Удаление: `sudo pacman -R axiom-browser-bin`. Как пакет попадает в AUR, описано в [`packaging/aur`](packaging/aur/README.md).
+
+### Arch — репозиторий pacman
+
+> **Внимание:** установка из репозитория — это `sudo pacman -Syu`, то есть полное обновление системы, а не только Axiom. Если у вас есть пакеты из AUR или сторонних репозиториев, pacman может предложить заменить или удалить их. Подключайте репозиторий, только если и так регулярно обновляетесь через `pacman -Syu` и хотите получать Axiom вместе с системой.
 
 ```sh
 curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.asc | sudo pacman-key --add -
@@ -88,7 +108,7 @@ printf '\n[axiom]\nSigLevel = Required\nServer = https://mylifeitsbest.github.io
 sudo pacman -Syu axiom-browser
 ```
 
-Удаление: `sudo pacman -R axiom-browser`. `PKGBUILD` лежит в [`packaging/arch`](packaging/arch/PKGBUILD), по нему можно собрать пакет самостоятельно (`makepkg -si`).
+То же скриптом: `curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh -s -- --arch-repo`. Пакет называется `axiom-browser` и не ставится вместе с `axiom-browser-bin`. Удаление: `sudo pacman -R axiom-browser`. Сборка из исходников: `makepkg -si` по [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
 
 ### Без репозитория
 

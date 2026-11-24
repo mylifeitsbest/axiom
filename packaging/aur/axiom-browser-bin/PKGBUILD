@@ -1,0 +1,34 @@
+# Maintainer: Axiom contributors <192708983+mylifeitsbest@users.noreply.github.com>
+# Готовый бинарник из релиза на GitHub (архив axiom-linux-x86_64.tar.gz).
+# Сборка из исходников — packaging/arch/PKGBUILD (пакет axiom-browser).
+# После правки: makepkg --printsrcinfo > .SRCINFO (CI сверяет их).
+pkgname=axiom-browser-bin
+_pkgname=axiom-browser
+pkgver=0.4.0
+pkgrel=1
+pkgdesc='Lightweight Rust browser with DuckDuckGo and a Google AI Mode side panel (prebuilt binary)'
+arch=('x86_64')
+url='https://github.com/mylifeitsbest/axiom'
+license=('custom')
+# Библиотеки — по DT_NEEDED бинарника (libdbus-1 тянет tao); xdg-utils и curl — внешние команды.
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'glib2' 'cairo' 'gdk-pixbuf2' 'dbus' 'gcc-libs' 'glibc'
+         'xdg-utils' 'hicolor-icon-theme' 'curl')
+provides=("$_pkgname=$pkgver")
+conflicts=("$_pkgname")
+# Бинарник в архиве уже без отладочных символов.
+options=('!strip' '!debug')
+source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/axiom-linux-x86_64.tar.gz")
+sha256sums=('e4ee8d177eb1e7a09947e77717f02c9e32da3d070e219799cd362307dfab90de')
+
+package() {
+  cd axiom
+  install -Dm755 axiom-browser "$pkgdir/usr/bin/axiom-browser"
+  install -Dm644 axiom-browser.desktop "$pkgdir/usr/share/applications/axiom-browser.desktop"
+  install -Dm644 icons/axiom-browser.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/axiom-browser.svg"
+  local size
+  for size in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "icons/axiom-$size.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/axiom-browser.png"
+  done
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+}

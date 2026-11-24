@@ -34,7 +34,7 @@
 
   <h2>Linux одной командой</h2>
   <div class="card">
-    <p>Сам выберет apt или pacman, подключит подписанный репозиторий и установит Axiom. Обновления придут вместе с системой.</p>
+    <p>На Ubuntu, Debian и Kali подключит подписанный репозиторий, обновления придут вместе с системой. На Arch поставит <code>axiom-browser-bin</code> из AUR и систему не обновляет.</p>
     <pre>curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh</pre>
   </div>
 
@@ -45,8 +45,19 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/axiom.gpg] https://mylifeits
 sudo apt update &amp;&amp; sudo apt install axiom-browser</pre>
   </div>
 
-  <h2>Arch, Manjaro, EndeavourOS — вручную</h2>
+  <h2>Arch, Manjaro, EndeavourOS — из AUR</h2>
   <div class="card">
+    <p>Пакет <a href="https://aur.archlinux.org/packages/axiom-browser-bin">axiom-browser-bin</a>, систему не обновляет:</p>
+    <pre>yay -S axiom-browser-bin</pre>
+    <p>Без yay и paru, от обычного пользователя:</p>
+<pre>mkdir axiom-browser-bin &amp;&amp; cd axiom-browser-bin
+curl -fsSLO https://raw.githubusercontent.com/mylifeitsbest/axiom/main/packaging/aur/axiom-browser-bin/PKGBUILD
+makepkg -si</pre>
+  </div>
+
+  <h2>Arch — репозиторий pacman</h2>
+  <div class="card">
+    <p>Это <code>sudo pacman -Syu</code>: обновится вся система, а не только Axiom, и pacman может предложить заменить или удалить пакеты из AUR и сторонних репозиториев.</p>
 <pre>curl -fsSL https://mylifeitsbest.github.io/axiom/axiom.asc | sudo pacman-key --add -
 sudo pacman-key --lsign-key 643C6DE601D4BBB661D5322AF2F379CD75CF5C03
 printf '\n[axiom]\nSigLevel = Required\nServer = https://mylifeitsbest.github.io/axiom/arch/$arch\n' | sudo tee -a /etc/pacman.conf

@@ -5,11 +5,14 @@ use std::{cell::RefCell, collections::HashMap};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::{Paths, now_secs, read_json, write_json_compact};
+use super::{Paths, now_secs, read_json, write_json, write_json_compact};
 use crate::ipc::{Site, Suggestion};
 
 const FILE: &str = "history.json";
 const MAX_ENTRIES: usize = 5000;
+/// Сайты, убранные с плиток новой вкладки.
+const HIDDEN_FILE: &str = "hidden_sites.json";
+const MAX_HIDDEN: usize = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
@@ -30,14 +33,45 @@ pub struct History {
     /// Плитки новой вкладки: пересчёт идёт по всей истории, а просят их
     /// при каждом обновлении полосы вкладок.
     top_cache: RefCell<Option<(usize, Vec<Site>)>>,
+    /// Домены, убранные с плиток крестиком. История и подсказки их по-прежнему знают.
+    hidden: Vec<String>,
 }
 
 impl History {
     pub fn load(paths: &Paths) -> Self {
         Self {
             entries: read_json(&paths.root.join(FILE)).unwrap_or_default(),
+            hidden: read_json(&paths.root.join(HIDDEN_FILE)).unwrap_or_default(),
             ..Self::default()
         }
+    }
+
+    /// Убирает сайт с плиток новой вкладки или возвращает его («Вернуть»).
+    /// `url` — адрес плитки; важен только домен. Возвращает, изменилось ли что-то.
+    pub fn set_hidden(&mut self, url: &str, hidden: bool) -> bool {
+        let Some(host) = host_of(url) else {
+            return false;
+        };
+        let at = self.hidden.iter().position(|h| *h == host);
+        match (hidden, at) {
+            (true, None) => {
+                self.hidden.push(host);
+                if self.hidden.len() > MAX_HIDDEN {
+                    self.hidden.remove(0);
+                }
+            }
+            (false, Some(i)) => {
+                self.hidden.remove(i);
+            }
+            _ => return false,
+        }
+        self.top_cache.get_mut().take();
+        true
+    }
+
+    /// Список убранных сайтов маленький и меняется по клику: пишем сразу.
+    pub fn save_hidden(&self, paths: &Paths) -> anyhow::Result<()> {
+        write_json(&paths.root.join(HIDDEN_FILE), &self.hidden)
     }
 
     /// Сохраняет новые посещения (по таймеру).
@@ -199,6 +233,9 @@ impl History {
             let Some(host) = url.host_str().map(str::to_lowercase) else {
                 continue;
             };
+            if self.hidden.contains(&host) {
+                continue;
+            }
             let slot = by_host
                 .entry(host)
                 .or_insert_with(|| (0, url.origin().ascii_serialization()));
@@ -253,5 +290,27 @@ mod tests {
 
         let top = h.top_sites(5);
         assert_eq!(top[0].url, "https://github.com");
+    }
+
+    #[test]
+    fn hidden_sites_leave_tiles_but_not_history() {
+        let mut h = History::default();
+        h.record("https://github.com/a", "a");
+        h.record("https://github.com/b", "b");
+        h.record("https://docs.rs/", "docs");
+        assert_eq!(h.top_sites(8)[0].url, "https://github.com");
+
+        // Крестик на плитке: домен пропадает с плиток, следующий сайт встаёт на его место.
+        assert!(h.set_hidden("https://GitHub.com", true));
+        assert!(!h.set_hidden("https://github.com/", true));
+        let top = h.top_sites(8);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].url, "https://docs.rs");
+        assert_eq!(h.search("github", 10).len(), 2);
+
+        // «Вернуть».
+        assert!(h.set_hidden("https://github.com", false));
+        assert_eq!(h.top_sites(8)[0].url, "https://github.com");
+        assert!(!h.set_hidden("not a url", true));
     }
 }

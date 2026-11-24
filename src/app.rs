@@ -333,6 +333,14 @@ impl App {
             }
             UiCmd::ToggleBookmark => self.toggle_bookmark(),
             UiCmd::ToggleNoSleep { id } => self.toggle_no_sleep(id),
+            UiCmd::HideSite { url, hidden } => {
+                if self.history.set_hidden(&url, hidden) {
+                    if let Err(err) = self.history.save_hidden(&self.paths) {
+                        eprintln!("плитки не сохранены: {err:#}");
+                    }
+                    self.push_state();
+                }
+            }
             UiCmd::Import { browser } => self.start_import(browser),
             UiCmd::Install => {
                 let events = self.events.clone();
@@ -1653,11 +1661,7 @@ impl App {
             ai_open: self.ai.open,
             ai_proxy: self.ai.has_proxy(),
             can_restore: self.tabs.can_restore(),
-            top_sites: if on_newtab {
-                self.history.top_sites(8)
-            } else {
-                Vec::new()
-            },
+            top_sites: on_newtab.then(|| self.history.top_sites(8)),
         });
     }
 

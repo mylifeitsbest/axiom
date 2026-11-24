@@ -10,7 +10,7 @@ use super::App;
 use crate::{
     events::UserEvent,
     tabs::{
-        TabId,
+        TabId, script,
         waking::{self, Event, LIMIT, STEP},
         webview as tab_webview,
     },
@@ -81,7 +81,9 @@ impl App {
                     return;
                 };
                 let events = self.events.clone();
-                let _ = webview.evaluate_script_with_callback(waking::PROBE, move |raw| {
+                // Каждые 250 мс: с жестом (`evaluate_script`) просыпающаяся страница
+                // всё это время считалась бы «кликнутой» (см. `tabs::script`).
+                script::ask(webview, waking::PROBE, move |raw| {
                     let ready = waking::parse(&raw);
                     let _ = events.send_event(UserEvent::Waking(id, Event::Probed(ready)));
                 });

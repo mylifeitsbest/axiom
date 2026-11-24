@@ -5,6 +5,7 @@ pub mod fullscreen;
 pub mod links;
 pub mod omnibox;
 pub mod popups;
+pub mod script;
 pub mod sleep;
 pub mod snapshot;
 pub mod tools;

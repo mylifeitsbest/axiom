@@ -13,7 +13,7 @@ use crate::{
     tabs::{
         TabId,
         external::{self, Event, Gesture, Request, Source},
-        tracking,
+        script, tracking,
     },
 };
 
@@ -134,12 +134,12 @@ impl App {
         let events = self.events.clone();
         let asked = {
             let request = request.clone();
-            webview.evaluate_script_with_callback(external::INPUT_PROBE, move |raw| {
+            script::ask(webview, external::INPUT_PROBE, move |raw| {
                 let request = request.clone();
                 let _ = events.send_event(UserEvent::AppLink(Event::Checked { request, raw }));
             })
         };
-        if asked.is_err() {
+        if !asked {
             self.decide_app_link(request, false);
         }
     }

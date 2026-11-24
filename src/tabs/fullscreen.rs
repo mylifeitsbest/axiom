@@ -65,7 +65,7 @@ if(d.fullscreenElement)d.exitFullscreen().catch(()=>{});\
 else if(d.webkitFullscreenElement)d.webkitExitFullscreen()})()";
 
 pub fn exit_page(webview: &WebView) {
-    let _ = webview.evaluate_script(EXIT);
+    super::script::run(webview, EXIT);
 }
 
 /// Сообщает в главный цикл, когда страница входит в полный экран и выходит из него.

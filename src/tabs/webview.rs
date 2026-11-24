@@ -142,7 +142,6 @@ pub fn build_tab(
         .with_hotkeys_zoom(true)
         .with_initialization_script(super::sleep::DRAFT_TRACKER)
         .with_initialization_script(super::links::TRACKER)
-        .with_initialization_script(super::external::INPUT_TRACKER)
         .with_navigation_handler(move |url| {
             // Не веб-адрес — ссылка на приложение (`mailto:`, `tg:`…): решает external.
             omnibox::is_navigable(&url)

@@ -6,7 +6,7 @@ use crate::{
     events::UserEvent,
     ipc::ToUi,
     tabs::{
-        TabId, links, omnibox,
+        TabId, links, omnibox, script,
         tools::{self, Zoom},
     },
     ui::hotkeys::Hotkey,
@@ -182,7 +182,9 @@ impl App {
         };
         let events = self.events.clone();
         let target = url.clone();
-        let asked = webview.evaluate_script_with_callback(&links::probe(&url), move |raw| {
+        // Без жеста (см. `tabs::script`): иначе этот вопрос сам давал бы странице
+        // «клик», и после одного настоящего клика она открывала бы окна цепочкой.
+        let asked = script::ask(webview, &links::probe(&url), move |raw| {
             let _ = events.send_event(UserEvent::PageTab {
                 url: target.clone(),
                 ai,
@@ -190,7 +192,7 @@ impl App {
                 background: links::answer(&raw),
             });
         });
-        if asked.is_err() {
+        if !asked {
             self.add_page_tab(url, ai, from, false);
         }
     }

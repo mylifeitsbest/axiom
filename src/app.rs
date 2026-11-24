@@ -38,6 +38,7 @@ use crate::{
         SETTINGS, SETTINGS_TITLE, TabId, TabStore,
         fullscreen::{self, Owner},
         omnibox::{self, NEWTAB},
+        script,
         sleep::{self, PageState},
         snapshot::{self, Part, Snapshots},
         webview::{self as tab_webview, Look, TabSpec},
@@ -877,7 +878,7 @@ impl App {
                 self.history.record(&tab.url, &tab.title);
             }
             if let (Some(y), Some(webview)) = (tab.scroll.take(), &tab.webview) {
-                let _ = webview.evaluate_script(&format!("window.scrollTo(0,{y})"));
+                script::run(webview, &format!("window.scrollTo(0,{y})"));
             }
         }
         self.session_dirty = true;
@@ -1434,7 +1435,7 @@ impl App {
             return;
         };
         if query.is_empty() {
-            let _ = webview.evaluate_script("window.getSelection()?.removeAllRanges()");
+            script::run(webview, "window.getSelection()?.removeAllRanges()");
             return;
         }
         let Ok(q) = serde_json::to_string(query) else {
@@ -1442,7 +1443,7 @@ impl App {
         };
         let js = format!("window.find({q}, false, {backwards}, true)");
         let events = self.events.clone();
-        let _ = webview.evaluate_script_with_callback(&js, move |result| {
+        script::ask(webview, &js, move |result| {
             let _ = events.send_event(UserEvent::FindResult(result.trim() == "true"));
         });
     }
@@ -1557,10 +1558,10 @@ impl App {
         let Some(webview) = &tab.webview else {
             return;
         };
-        let asked = webview.evaluate_script_with_callback(sleep::PROBE, move |raw| {
+        let asked = script::ask(webview, sleep::PROBE, move |raw| {
             let _ = events.send_event(UserEvent::SleepChecked(id, PageState::parse(&raw)));
         });
-        if asked.is_ok() {
+        if asked {
             tab.sleep_requested = Some(Instant::now());
         } else {
             tab.webview = None;

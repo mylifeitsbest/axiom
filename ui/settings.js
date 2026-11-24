@@ -364,22 +364,63 @@ function createPanels(ax) {
     });
   }
 
+  // Настройки — отдельная вкладка без своего webview (им нужен IPC, а у вкладок его нет).
+  // Пока она активна, app.js показывает лист (open), ушли на другую вкладку — прячет (hide).
+  // Закрыли саму вкладку — лист уходит плавно (leave), и только потом Rust показывает
+  // страницу под ним: нативный webview перекрыл бы анимацию.
+  let leaving = null;
+  let afterLeave = [];
   function open(id) {
     if (!built) build();
     if (id) show(id);
+    if (leaving) {
+      // Настройки открыли снова, пока прежний лист уходил: он возвращается с начала.
+      const a = leaving;
+      leaving = null;
+      a.cancel();
+      sheet.inert = false;
+      sheet.classList.remove('on');
+      void sheet.offsetWidth;
+    }
     if (sheet.classList.contains('on')) return;
     sheet.classList.add('on');
-    ax.setOverlay('sheet', true);
     $('#setBtn').classList.add('on');
     requestAnimationFrame(() => $('#setFind')?.focus({ preventScroll: true }));
   }
-  function close() {
-    if (!sheet.classList.contains('on')) return;
+  function drop() {
+    sheet.inert = false;
     sheet.classList.remove('on');
-    ax.setOverlay('sheet', false);
     $('#setBtn').classList.remove('on');
   }
-  const isOpen = () => sheet.classList.contains('on');
+  // Переключились на другую вкладку: настройки прячутся сразу, как любая вкладка.
+  function hide() {
+    if (!leaving) drop();
+  }
+  function leave(done) {
+    afterLeave.push(done);
+    if (leaving) return;
+    const flush = () => { const fns = afterLeave; afterLeave = []; fns.forEach((f) => f()); };
+    if (!sheet.classList.contains('on')) { flush(); return; }
+    $('#setBtn').classList.remove('on');
+    // Уходящий лист уже не принимает ни кликов, ни ввода.
+    sheet.inert = true;
+    const a = sheet.animate(
+      [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(10px) scale(.985)' }],
+      { duration: Math.min(ax.ms(300), 800), easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' },
+    );
+    leaving = a;
+    a.finished.then(() => {
+      if (leaving !== a) return;
+      leaving = null;
+      drop();
+      a.cancel();
+    }, () => {}).finally(flush);
+  }
+  // × в листе и Esc закрывают саму вкладку настроек.
+  function close() {
+    if (isOpen()) ax.closeSettings();
+  }
+  const isOpen = () => sheet.classList.contains('on') && !leaving;
 
   // ---------- первый запуск ----------
   const STEPS = ['hello', 'look', 'data', 'ai', 'system', 'done'];
@@ -561,5 +602,5 @@ function createPanels(ax) {
     return many;
   }
 
-  return { open, close, isOpen, toggle: () => (isOpen() ? close() : open()), sync, openOnboarding, onImported, onInstalled, onSystem, importSoon };
+  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon };
 }

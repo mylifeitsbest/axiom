@@ -7,6 +7,11 @@
   const root = document.documentElement;
   const app = $('#app');
   const NEWTAB = 'axiom://newtab';
+  // Вкладка настроек: своего webview нет, пока она активна, интерфейс показывает лист настроек.
+  const SETTINGS = 'axiom://settings';
+  const isSettings = (t) => !!t && t.url === SETTINGS;
+  // Во вкладке открыта страница сайта, а не служебный экран Axiom.
+  const isPage = (t) => !!t && t.url !== NEWTAB && t.url !== SETTINGS;
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const darkScheme = matchMedia('(prefers-color-scheme: dark)');
 
@@ -54,7 +59,7 @@
   const speed = () => (reduceMotion.matches ? 0 : clamp(A.speed, 0, 3, 1));
   const ms = (n) => Math.round(n * speed());
 
-  // Пока поверх контента что-то открыто (подсказки, настройки, приветствие),
+  // Пока поверх контента что-то открыто (подсказки, загрузки, приветствие),
   // нативные webview страниц прячутся — иначе они перекрыли бы интерфейс.
   // На их месте остаётся снимок страницы (ui/snapshot.js).
   const snap = createSnapshot({
@@ -62,7 +67,7 @@
     // Что сейчас закрыто нативными webview: id вкладки со страницей и панель ИИ.
     native() {
       const t = activeTab();
-      return { page: t && t.url !== NEWTAB && !t.sleeping ? t.id : null, ai: S.aiOpen && aiReady };
+      return { page: isPage(t) && !t.sleeping ? t.id : null, ai: S.aiOpen && aiReady && !isSettings(t) };
     },
   });
   const overlayReasons = new Set();
@@ -89,6 +94,7 @@
 
   function favHtml(url) {
     const u = parseUrl(url);
+    if (url === SETTINGS) return `<span class="fav set">${icon('sliders')}</span>`;
     if (!u || url === NEWTAB) return `<span class="fav" style="--f:var(--s3)">${icon('spark')}</span>`;
     const host = u.hostname.replace(/^www\./, '');
     let h = 0;
@@ -374,7 +380,7 @@
     if (nt) renderNewtab();
     if (S.active !== prevActive) {
       prevActive = S.active;
-      if (nt && mode === 'url' && !overlayReasons.has('onb') && !overlayReasons.has('sheet')) requestAnimationFrame(() => inp.focus());
+      if (nt && mode === 'url' && !overlayReasons.has('onb')) requestAnimationFrame(() => inp.focus());
     }
   }
 
@@ -405,7 +411,7 @@
   function renderOmni() {
     const t = activeTab();
     const star = $('#starBtn');
-    const pageOpen = !!t && t.url !== NEWTAB;
+    const pageOpen = isPage(t);
     star.hidden = !pageOpen;
     star.classList.toggle('on', !!t?.bookmarked);
     star.title = t?.bookmarked ? 'Убрать из закладок (Ctrl+D)' : 'В закладки (Ctrl+D)';
@@ -447,7 +453,7 @@
     omni.classList.add('focus');
     if (mode === 'url') {
       const t = activeTab();
-      inp.value = t && t.url !== NEWTAB ? t.url : '';
+      inp.value = isPage(t) ? t.url : '';
     }
     requestAnimationFrame(() => inp.select());
   });
@@ -580,7 +586,7 @@
     const t = activeTab();
     const b = $('#awakeBtn');
     const on = !!t?.no_sleep;
-    b.hidden = !t || t.url === NEWTAB;
+    b.hidden = !isPage(t);
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', String(on));
     b.title = on ? 'Разрешить вкладке засыпать' : 'Не усыплять вкладку';
@@ -713,19 +719,18 @@
     if (e.key === 'Escape' && panels.isOpen() && document.activeElement !== inp) { e.preventDefault(); panels.close(); }
   }, true);
   function hotkey(a) {
-    if (a !== 'settings' && panels.isOpen()) panels.close();
     if (a !== 'downloads' && dl.isOpen()) dl.close();
     if (upd.isOpen()) upd.close();
     switch (a) {
       case 'focus_omnibox': if (mode === 'find') exitFind(); inp.focus(); inp.select(); break;
       case 'toggle_ai': toggleAi(); break;
       case 'find': startFind(); break;
-      case 'settings': panels.toggle(); break;
+      case 'settings': openSettings(); break;
       case 'downloads': if (!overlayReasons.has('onb')) dl.toggle(); break;
       default: send({ cmd: 'hotkey', action: a });
     }
   }
-  $('#setBtn').addEventListener('click', () => { dl.close(); upd.close(); panels.toggle(); });
+  $('#setBtn').addEventListener('click', () => { dl.close(); upd.close(); openSettings(); });
 
   // ---------- настройки и приветствие (ui/settings.js) ----------
   const panels = createPanels({
@@ -736,12 +741,35 @@
     system: () => SYS,
     update: () => upd.state(),
     translate: tr,
-    openUpdate() { panels.close(); dl.close(); upd.open(); },
+    openUpdate() { dl.close(); upd.open(); },
+    closeSettings,
     applyAppearance,
     saveSettings,
     refresh() { $('#dsBtn').classList.toggle('on', !!B.double_search); panels.sync(); },
     resetAppearance() { A = { ...DEFAULTS, aiWidth: A.aiWidth }; applyAppearance(); },
   });
+
+  // ---------- вкладка настроек ----------
+  // Кнопка, Ctrl+, и #settings:раздел: вкладка настроек одна. Rust переходит на неё
+  // или открывает рядом с активной, а раздел покажем, когда она станет активной.
+  let wantSection = null;
+  function openSettings(section) {
+    if (isSettings(activeTab())) { panels.open(section); return; }
+    wantSection = section || null;
+    send({ cmd: 'open_settings' });
+  }
+  function closeSettings() {
+    const t = S.tabs.find(isSettings);
+    if (t) send({ cmd: 'close_tab', id: t.id });
+  }
+  function renderSettings() {
+    if (isSettings(activeTab())) {
+      panels.open(wantSection);
+      wantSection = null;
+    } else {
+      panels.hide();
+    }
+  }
 
   // ---------- приём сообщений из Rust ----------
   function render() {
@@ -750,6 +778,7 @@
     renderOmni();
     renderAwake();
     renderAi();
+    renderSettings();
     snap.sync();
   }
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
@@ -765,9 +794,9 @@
         // #settings:раздел, #onb:шаг, #downloads, #update[:install], #translate[:menu|:revert]
         // или #import:браузер (сразу начать перенос) — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
-        if (screen === 'settings') panels.open(arg);
+        if (screen === 'settings') openSettings(arg);
         else if (screen === 'onb') panels.openOnboarding(+arg || 0);
-        else if (screen === 'import') { panels.open('data'); panels.importSoon(arg); }
+        else if (screen === 'import') { openSettings('data'); panels.importSoon(arg); }
         else if (screen === 'downloads') dl.open();
         else if (screen === 'update') upd.openSoon(arg === 'install');
         else if (screen === 'translate') tr.debug(arg);
@@ -805,6 +834,8 @@
     update(m) { upd.onState(m); },
     translate(m) { tr.onState(m); },
     snapshot(m) { snap.onMessage(m); },
+    // Закрыли активную вкладку настроек: лист уходит плавно, потом Rust покажет страницу.
+    settings_leave() { panels.leave(() => send({ cmd: 'settings_left' })); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

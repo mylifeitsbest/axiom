@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Paths, read_json, write_json};
+use crate::tabs::SETTINGS;
 
 const FILE: &str = "session.json";
 const MAX_TABS: usize = 500;
@@ -28,13 +29,24 @@ impl Session {
     pub fn load(paths: &Paths) -> Option<Self> {
         let mut s: Session = read_json(&paths.root.join(FILE))?;
         s.tabs.truncate(MAX_TABS);
-        // Выброшенные вкладки левее активной сдвигают её номер.
-        let dropped_before = s.tabs[..s.active.min(s.tabs.len())]
+        // Вкладка настроек восстанавливается ею же, но только одна.
+        let mut settings = false;
+        let keep: Vec<bool> = s
+            .tabs
             .iter()
-            .filter(|t| !is_restorable(&t.url))
+            .map(|t| {
+                let extra = t.url == SETTINGS && std::mem::replace(&mut settings, true);
+                is_restorable(&t.url) && !extra
+            })
+            .collect();
+        // Выброшенные вкладки левее активной сдвигают её номер.
+        let dropped_before = keep[..s.active.min(keep.len())]
+            .iter()
+            .filter(|k| !**k)
             .count();
         s.active -= dropped_before;
-        s.tabs.retain(|t| is_restorable(&t.url));
+        let mut keep = keep.into_iter();
+        s.tabs.retain(|_| keep.next().unwrap_or(false));
         if s.tabs.is_empty() {
             return None;
         }
@@ -49,6 +61,7 @@ impl Session {
 
 fn is_restorable(url: &str) -> bool {
     url == crate::tabs::omnibox::NEWTAB
+        || url == SETTINGS
         || url.starts_with("https://")
         || url.starts_with("http://")
         || url.starts_with("file://")
@@ -81,6 +94,29 @@ mod tests {
             .ok()
             .and_then(|json| serde_json::from_str::<SavedTab>(&json).ok());
         assert!(back.is_some_and(|t| t.no_sleep));
+    }
+
+    #[test]
+    fn settings_tab_restores_once() {
+        let root = std::env::temp_dir().join(format!("axiom-session-set-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
+        let paths = Paths { root: root.clone() };
+        let saved = Session {
+            tabs: vec![
+                tab(SETTINGS),
+                tab("https://a.example/"),
+                tab(SETTINGS),
+                tab("https://b.example/"),
+            ],
+            active: 3,
+        };
+        assert!(saved.save(&paths).is_ok());
+        let loaded = Session::load(&paths);
+        let _ = std::fs::remove_dir_all(&root);
+        let loaded = loaded.unwrap_or_default();
+        let urls: Vec<&str> = loaded.tabs.iter().map(|t| t.url.as_str()).collect();
+        assert_eq!(urls, [SETTINGS, "https://a.example/", "https://b.example/"]);
+        assert_eq!(loaded.active, 2);
     }
 
     #[test]

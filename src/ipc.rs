@@ -199,6 +199,14 @@ pub enum UiCmd {
     UpdateCheck,
     /// «Обновить»: скачать новую версию и перезапуститься.
     UpdateInstall,
+    /// Кнопка перевода в адресной строке: перевести активную вкладку.
+    Translate,
+    /// «Показать оригинал» в окошке перевода.
+    TranslateOriginal,
+    /// Язык перевода, «Всегда переводить» и «Предлагать перевод».
+    TranslatePrefs {
+        prefs: crate::translate::Prefs,
+    },
 }
 
 /// Разбирает и проверяет сообщение интерфейса.
@@ -249,6 +257,9 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
                 return Err(IpcError::Invalid("appearance"));
             }
             short(&settings.ai_proxy, 512, "proxy")?;
+        }
+        UiCmd::TranslatePrefs { prefs } if !prefs.is_valid() => {
+            return Err(IpcError::Invalid("translate"));
         }
         _ => {}
     }
@@ -360,6 +371,7 @@ pub enum ToUi<'a> {
         total: Option<u64>,
     },
     Update(crate::update::View),
+    Translate(crate::translate::View<'a>),
 }
 
 #[cfg(test)]
@@ -404,6 +416,24 @@ mod tests {
             Ok(UiCmd::ToggleNoSleep { id: 7 })
         ));
         assert!(parse(r#"{"cmd":"toggle_no_sleep"}"#).is_err());
+    }
+
+    #[test]
+    fn translate_prefs_are_checked() {
+        let ok =
+            r#"{"cmd":"translate_prefs","prefs":{"to":"de","always":["en","fr"],"offer":false}}"#;
+        assert!(matches!(parse(ok), Ok(UiCmd::TranslatePrefs { prefs }) if prefs.to == "de"));
+        // Язык перевода — только из списка, коды — без мусора.
+        let bad_to = r#"{"cmd":"translate_prefs","prefs":{"to":"xx","always":[],"offer":true}}"#;
+        assert!(parse(bad_to).is_err());
+        let bad_code =
+            r#"{"cmd":"translate_prefs","prefs":{"to":"ru","always":["en\"><img>"],"offer":true}}"#;
+        assert!(parse(bad_code).is_err());
+        // Что и куда переводить, интерфейс не передаёт: только «переведи активную».
+        assert!(matches!(
+            parse(r#"{"cmd":"translate"}"#),
+            Ok(UiCmd::Translate)
+        ));
     }
 
     #[test]

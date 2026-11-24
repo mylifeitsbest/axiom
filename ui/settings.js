@@ -11,6 +11,7 @@ function createPanels(ax) {
     { id: 'look', icon: 'palette', title: 'Внешний вид', desc: 'Тема, цвета и шрифт. Всё меняется сразу.' },
     { id: 'layout', icon: 'layout', title: 'Раскладка', desc: 'Где живут вкладки и сколько воздуха вокруг.' },
     { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'DuckDuckGo, Google AI Mode и прокси только для ИИ.' },
+    { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов, как в Chrome.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
     { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome.' },
     { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка, обновления и браузер по умолчанию.' },
@@ -102,6 +103,7 @@ function createPanels(ax) {
           <div class="srow"><span class="inline"><input type="text" id="proxyIn" placeholder="socks5://127.0.0.1:1080" spellcheck="false"><button class="btn primary" data-act="proxy">Применить</button></span></div>
           ${row('Ширина панели', 'Или потяните за край панели', '<input type="range" min="280" max="900" step="10" data-key="aiWidth"><output data-out="aiWidth"></output>')}
         </div>`,
+      translate: ax.translate.sectionHtml(),
       memory: `
         <div class="card">
           ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', '<input type="range" min="0" max="10" step="1" data-bkey="live_tabs">')}
@@ -199,6 +201,7 @@ function createPanels(ax) {
       if (pv) pv.dataset.l = ax.A.layout;
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
       $('#forceDarkRow').hidden = sys.platform !== 'windows';
+      ax.translate.syncSheet();
     }
   }
 

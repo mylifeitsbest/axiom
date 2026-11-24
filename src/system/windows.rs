@@ -1,7 +1,12 @@
 //! Регистрация в Windows по схеме «Registered Applications»:
 //! <https://learn.microsoft.com/windows/win32/shell/default-programs>
 
-use std::{fs, os::windows::process::CommandExt, path::PathBuf, process::Command};
+use std::{
+    fs,
+    os::windows::process::CommandExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use anyhow::{Context, Result, anyhow};
 use windows_registry::CURRENT_USER;
@@ -26,9 +31,23 @@ pub fn install() -> Result<PathBuf> {
             "не удалось скопировать axiom.exe — закройте установленную копию и повторите",
         )?;
     }
-    register(&target)?;
-    shortcut(&target)?;
+    reregister(&target)?;
     Ok(target)
+}
+
+/// Регистрация и ярлык для установленного exe.
+pub fn reregister(exe: &Path) -> Result<()> {
+    register(exe)?;
+    shortcut(exe)
+}
+
+/// Ссылки открывает именно этот exe (после `--uninstall` регистрации нет).
+pub fn is_registered(exe: &Path) -> bool {
+    let quoted = format!("\"{}\"", exe.display()).to_lowercase();
+    CURRENT_USER
+        .open(format!(r"Software\Classes\{URL_PROGID}\shell\open\command"))
+        .and_then(|key| key.get_string(""))
+        .is_ok_and(|command| command.to_lowercase().starts_with(&quoted))
 }
 
 fn register(exe: &std::path::Path) -> Result<()> {

@@ -7,15 +7,26 @@
 //! Linux: Axiom ставится пакетом (.deb, pacman), а основным браузером
 //! становится через `xdg-settings`.
 
+pub mod handoff;
 #[cfg(target_os = "linux")]
 mod linux;
 pub mod memory;
+#[cfg(windows)]
+mod refresh;
 #[cfg(windows)]
 mod windows;
 
 use std::path::PathBuf;
 
 use serde::Serialize;
+
+/// Этот процесс стал главным окном профиля: отмечаем версию в профиле
+/// и в фоне подтягиваем устаревшую установленную копию (Windows).
+pub fn started(paths: &crate::storage::Paths) {
+    handoff::record(paths);
+    #[cfg(windows)]
+    refresh::spawn();
+}
 
 /// Что интерфейс показывает в разделе «Система» и на экране приветствия.
 #[derive(Debug, Clone, Serialize)]
@@ -66,7 +77,6 @@ pub fn is_installed() -> bool {
     std::env::current_exe().is_ok_and(|p| p.starts_with("/usr") || p.starts_with("/opt"))
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
 fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,

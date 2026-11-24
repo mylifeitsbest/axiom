@@ -221,6 +221,12 @@ impl App {
                     let text = format!("Axiom обновлён до версии {}", env!("CARGO_PKG_VERSION"));
                     self.send(&ToUi::Toast { text: &text });
                 }
+                // Ссылка на файл при запуске: загрузка могла начаться раньше, чем
+                // интерфейс загрузился, и её сообщение не дошло.
+                if let Some(d) = self.downloads.iter().find(|d| d.status == Status::Active) {
+                    let text = format!("Скачивается {}", d.name());
+                    self.send(&ToUi::Toast { text: &text });
+                }
                 if self.tabs.active_tab().is_some_and(|t| t.is_newtab()) {
                     let _ = self.ui.focus();
                 }
@@ -926,6 +932,9 @@ impl App {
 
     /// Адреса из командной строки: ссылки из других программ, файлы .html.
     fn open_external(&mut self, args: &[String]) {
+        // Ссылка может оказаться файлом: тогда её пустая вкладка закроется
+        // и вернёт туда, где был пользователь (при запуске — на вкладку из сессии).
+        let from = self.tabs.active;
         for arg in args {
             let path = std::path::Path::new(arg);
             let url = if path.is_absolute() && path.exists() {
@@ -935,6 +944,9 @@ impl App {
             };
             if let Some(url) = url.filter(|u| u != NEWTAB) {
                 let id = self.tabs.add(url.clone(), display_title(&url), false, None);
+                if let Some(tab) = self.tabs.get_mut(id) {
+                    tab.opener = from;
+                }
                 self.activate(id);
             }
         }

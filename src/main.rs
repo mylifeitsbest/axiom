@@ -65,6 +65,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
     let updated = command == Some(update::UPDATED_FLAG);
+    let handed_off = command == Some(system::handoff::FLAG);
     let urls: Vec<String> = args
         .into_iter()
         .filter(|a| !a.starts_with("--"))
@@ -72,6 +73,10 @@ fn run() -> Result<()> {
         .collect();
 
     let paths = storage::Paths::resolve()?;
+    // Профиль уже открывала более новая версия: адреса — ей, а профиль не трогаем.
+    if !updated && !handed_off && system::handoff::to_newer(&paths, &urls) {
+        return Ok(());
+    }
     // Новую версию запустила старая: ждём, пока та закроется, иначе адреса ушли бы ей.
     if updated {
         update::finish(&paths);
@@ -82,6 +87,7 @@ fn run() -> Result<()> {
     };
     update::cleanup();
     stats::start(&paths.root);
+    system::started(&paths);
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let mut app = App::new(&event_loop, paths, &urls, updated)?;

@@ -151,17 +151,94 @@ input,textarea,select{font:inherit;color:inherit}
 .sug.anim .si:nth-child(5){animation-delay:calc(100ms*var(--k))}
 .sug.anim .si:nth-child(n+6){animation-delay:calc(125ms*var(--k))}
 
-/* ---------- новая вкладка ---------- */
-.newtab{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding-bottom:6vh}
+/* ---------- новая вкладка (ui/newtab.js) ---------- */
+/* Подложка плиток контрастна теме: на тёмной она светлая, и тёмные значки (GitHub, X, Vercel) видны.
+   Размеры — от области новой вкладки (контейнер nt): она бывает узкой рядом с панелью ИИ и низкой в маленьком окне. */
+.newtab{
+  --nt-plate:oklch(.93 calc(var(--c)/2) var(--h));--nt-ring:0 1px 2px rgb(0 0 0/.3);--nt-lift:0 14px 24px -10px rgb(0 0 0/.65);
+  --nt-field:var(--s1);--nt-field-sh:0 0 0 1px var(--line);--nt-glow:17%;
+  position:absolute;inset:0;display:none;flex-direction:column;align-items:center;padding:20px 20px calc(20px + 6vh);overflow:hidden auto;container:nt/size}
+/* OLED: свечение меньше и слабее — края остаются чёрными. */
+[data-mode=dark][data-oled=true] .newtab{--nt-plate:oklch(.9 0 0);--nt-glow:10%;--nt-glow-w:min(760px,120%)}
+[data-mode=light] .newtab{
+  --nt-plate:#fff;--nt-ring:0 0 0 1px var(--line),0 2px 6px -2px rgb(0 0 0/.12);--nt-lift:0 0 0 1px var(--line),0 14px 22px -10px rgb(0 0 0/.25);
+  --nt-field:#fff;--nt-field-sh:0 0 0 1px var(--line),0 8px 22px -14px rgb(0 0 0/.22);--nt-glow:12%}
 .content.nt .newtab{display:flex;animation:fade var(--d3) var(--e) both}
-.clock{font-size:clamp(44px,7vw,76px);font-weight:300;letter-spacing:-.045em;font-variant-numeric:tabular-nums;line-height:1.1}
-.date{color:var(--t3)}
+.newtab::-webkit-scrollbar{width:10px}
+.newtab::-webkit-scrollbar-thumb{background:var(--s3);border-radius:5px;border:3px solid transparent;background-clip:padding-box}
+/* Свечение акцентом, как на экране приветствия. Проявляется один раз при открытии и
+   чуть разгорается, пока печатают: без бесконечной анимации, окно не перерисовывается зря. */
+.nt-bg{position:absolute;inset:0;overflow:hidden;pointer-events:none;animation:fade calc(1600ms*var(--k)) var(--e) both}
+@keyframes ntGlow{from{transform:scale(.8)}}
+.nt-glow{position:absolute;left:50%;top:34%;width:var(--nt-glow-w,min(1100px,170%));aspect-ratio:1;translate:-50% -50%;border-radius:50%;background:radial-gradient(closest-side,color-mix(in oklab,var(--acc) var(--nt-glow),transparent),transparent);opacity:.85;animation:ntGlow calc(1600ms*var(--k)) var(--e) both;transition:opacity var(--d3),scale calc(900ms*var(--k)) var(--e)}
+.newtab:has(#ntInput:focus) .nt-glow{opacity:1;scale:1.06}
+.nt-main{position:relative;display:flex;flex-direction:column;align-items:center;width:100%;margin:auto 0}
+.clock{font-size:clamp(40px,min(max(10cqw,50px),14cqh),88px);font-weight:300;letter-spacing:-.045em;font-variant-numeric:tabular-nums;line-height:1.08}
+.date{margin-top:2px;color:var(--t3)}
 .date::first-letter{text-transform:uppercase}
-.tiles{display:flex;gap:10px;margin-top:30px;flex-wrap:wrap;justify-content:center;max-width:560px}
-.tile{display:flex;flex-direction:column;align-items:center;gap:7px;width:72px;padding:8px 0;border-radius:var(--r);color:var(--t2);font-size:11.5px;transition:transform var(--d2) var(--sp),background-color var(--d1)}
-.tile:hover{transform:translateY(-2px);background:color-mix(in oklab,var(--s1) 60%,transparent)}
-.tile .fav{width:36px;height:36px;border-radius:11px;font-size:14px}
-.tile>span:last-child{max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-search{display:flex;align-items:center;gap:12px;width:min(600px,100%);height:50px;margin-top:clamp(16px,4.5cqh,32px);padding:0 18px 0 17px;border-radius:calc(var(--r) + 10px);background:var(--nt-field);box-shadow:var(--nt-field-sh);color:var(--t3);cursor:text;transition:box-shadow var(--d2),background-color var(--d3)}
+.nt-search:focus-within{box-shadow:0 0 0 1.5px color-mix(in oklab,var(--acc) 75%,transparent),0 14px 34px -18px color-mix(in oklab,var(--acc) 60%,transparent)}
+.nt-search .i{width:18px;height:18px;transition:color var(--d2)}
+.nt-search:focus-within .i{color:var(--acc)}
+#ntInput{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:var(--t1);font-size:calc(var(--fs) + 2.5px);padding:0;user-select:text}
+#ntInput::placeholder{color:var(--t3)}
+.tiles{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 8px;width:min(100%,calc(4*var(--tw) + 3*8px));margin-top:clamp(14px,4.5cqh,34px);--tw:88px;--pw:60px}
+.tiles:empty{display:none}
+.tile{position:relative;width:var(--tw)}
+.tile.in{animation:pop var(--d3) var(--sp) both}
+.tile.out{opacity:0;transform:scale(.8);pointer-events:none;transition:opacity var(--d2),transform var(--d2) var(--e)}
+.tile-go{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;padding:6px 0 5px;border-radius:var(--r);color:var(--t2);font-size:11.5px;outline:0}
+.plate{position:relative;display:grid;place-items:center;width:var(--pw);height:var(--pw);border-radius:calc(var(--r) + 8px);background:var(--nt-plate);box-shadow:var(--nt-ring);transition:transform var(--d2) var(--sp),box-shadow var(--d2)}
+.plate b{font-size:calc(var(--pw)*.4);font-weight:650;line-height:1;color:var(--f)}
+.plate img{position:absolute;width:calc(var(--pw)/2);height:calc(var(--pw)/2);object-fit:contain;opacity:0;transition:opacity var(--d2)}
+.plate.lo img{width:calc(var(--pw)*.4);height:calc(var(--pw)*.4)}
+.plate.ok b{visibility:hidden}
+.plate.ok img{opacity:1}
+.plate.now img{transition:none}
+.tl{max-width:calc(var(--tw) - 4px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color var(--d1)}
+.tile:hover .plate,.tile-go:focus-visible .plate{transform:translateY(-3px);box-shadow:var(--nt-lift)}
+.tile-go:focus-visible .plate{box-shadow:var(--nt-lift),0 0 0 2px var(--acc)}
+.tile:hover .tl,.tile-go:focus-visible .tl{color:var(--t1)}
+.tile-go:active .plate{transform:translateY(-1px) scale(.95);transition-duration:var(--d1)}
+.tile-x{position:absolute;top:-1px;right:calc((var(--tw) - var(--pw))/2 - 10px);width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:var(--s2);color:var(--t2);box-shadow:0 0 0 2px var(--pg),0 2px 6px rgb(0 0 0/.2);opacity:0;transform:scale(.5);pointer-events:none;transition:opacity var(--d1),transform var(--d2) var(--sp),background-color var(--d1),color var(--d1)}
+.tile-x .i{width:11px;height:11px;stroke-width:2.2}
+.tile:hover .tile-x,.tile-x:focus-visible{opacity:1;transform:translateY(-3px);pointer-events:auto}
+.tile-x:hover{background:var(--s3);color:var(--t1)}
+.nt-empty{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:clamp(18px,5cqh,38px);animation:rise var(--d3) var(--e) both}
+.nt-imp{display:inline-flex;align-items:center;gap:9px;height:38px;padding:0 17px 0 14px;border-radius:999px;background:color-mix(in oklab,var(--acc) 14%,transparent);color:var(--acc);font-weight:550;transition:background-color var(--d1),transform var(--d1) var(--e),opacity var(--d1)}
+.nt-imp:hover{background:color-mix(in oklab,var(--acc) 22%,transparent)}
+.nt-imp:active{transform:scale(.97)}
+.nt-imp .i{width:16px;height:16px}
+.nt-imp.busy{opacity:.75;pointer-events:none}
+.nt-imp.busy .i{animation:pulse calc(1000ms*max(var(--k),.5)) ease-in-out infinite}
+.nt-alt{margin-top:-8px;padding:2px 6px;border-radius:6px;color:var(--t3);font-size:11.5px;transition:color var(--d1)}
+.nt-alt:hover{color:var(--t1)}
+.nt-note{max-width:440px;color:var(--t2);text-align:center;font-size:12px;line-height:1.45}
+.nt-keys{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 22px;color:var(--t3);font-size:12px}
+.nt-keys span{display:inline-flex;align-items:center;gap:3px}
+.nt-keys kbd{margin:0;min-width:22px;height:20px;padding:0 5px;font-size:10.5px;color:var(--t2)}
+.nt-keys kbd+kbd{margin-right:5px}
+.nt-undo{position:absolute;left:50%;bottom:18px;display:flex;align-items:center;gap:8px;height:36px;padding:0 4px 0 14px;border-radius:999px;background:var(--s2);color:var(--t2);box-shadow:var(--shadow);white-space:nowrap;translate:-50% 0;opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity var(--d2),transform var(--d2) var(--e)}
+.nt-undo.on{opacity:1;transform:none;pointer-events:auto}
+.nt-undo button{height:28px;padding:0 12px;border-radius:999px;color:var(--acc);font-weight:600;transition:background-color var(--d1)}
+.nt-undo button:hover{background:color-mix(in oklab,var(--acc) 14%,transparent)}
+/* Низкое окно: плитки мельче, без подписей и в один ряд, если влезают. */
+@container nt (max-height:430px){
+  .tiles{--tw:64px;--pw:52px;gap:6px;width:min(100%,calc(8*var(--tw) + 7*6px))}
+  .tl{display:none}
+  .tile-go{padding:5px 0 3px}
+  .nt-search{height:44px}
+}
+/* Совсем низкое: один ряд плиток, что не влезло — не показываем. */
+@container nt (max-height:300px){
+  .tiles{max-height:72px;padding-top:6px;overflow:hidden;margin-top:4px}
+  .nt-search{margin-top:12px}
+}
+/* Узко (рядом открыта панель ИИ): плитки чуть меньше, всё ещё по четыре в ряд. */
+@container nt (max-width:440px){
+  .tiles{--tw:74px;--pw:54px}
+  .nt-search{height:46px;padding:0 14px}
+}
 .sleeping{position:absolute;inset:0;display:none;align-items:center;justify-content:center;gap:8px;color:var(--t3)}
 .content.zz .sleeping{display:flex;animation:fade var(--d3) both}
 

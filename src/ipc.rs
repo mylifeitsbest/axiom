@@ -179,6 +179,11 @@ pub enum UiCmd {
     ToggleNoSleep {
         id: u64,
     },
+    /// Крестик на плитке новой вкладки (`hidden: true`) и «Вернуть» (`false`).
+    HideSite {
+        url: String,
+        hidden: bool,
+    },
     /// Перенести закладки и историю из другого браузера.
     Import {
         browser: crate::storage::import::Browser,
@@ -249,6 +254,7 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::NewTab { input: Some(input) } => short(input, MAX_INPUT, "input")?,
         UiCmd::Ai { query: Some(q), .. } => short(q, MAX_INPUT, "query")?,
         UiCmd::Suggest { q } | UiCmd::Find { q, .. } => short(q, 2048, "query")?,
+        UiCmd::HideSite { url, .. } => short(url, 2048, "site")?,
         UiCmd::Hotkey { action } => short(action, 32, "hotkey")?,
         UiCmd::ThemeColors {
             window,
@@ -339,7 +345,8 @@ pub enum ToUi<'a> {
         ai_open: bool,
         ai_proxy: bool,
         can_restore: bool,
-        top_sites: Vec<Site>,
+        /// Плитки новой вкладки; `None`, пока активна обычная страница.
+        top_sites: Option<Vec<Site>>,
     },
     Settings {
         settings: &'a crate::settings::Settings,
@@ -437,6 +444,20 @@ mod tests {
             "a".repeat(MAX_INPUT + 1)
         );
         assert!(parse(&huge).is_err());
+    }
+
+    #[test]
+    fn parses_hide_site() {
+        assert!(matches!(
+            parse(r#"{"cmd":"hide_site","url":"https://github.com","hidden":true}"#),
+            Ok(UiCmd::HideSite { url, hidden: true }) if url == "https://github.com"
+        ));
+        assert!(parse(r#"{"cmd":"hide_site","url":"https://github.com"}"#).is_err());
+        let long = format!(
+            r#"{{"cmd":"hide_site","url":"{}","hidden":true}}"#,
+            "a".repeat(3000)
+        );
+        assert!(parse(&long).is_err());
     }
 
     #[test]

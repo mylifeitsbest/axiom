@@ -21,9 +21,18 @@
 
     <section class="content nt" id="content">
       <div class="newtab" id="newtab">
-        <div class="clock" id="clock"></div>
-        <div class="date" id="date"></div>
-        <div class="tiles" id="tiles"></div>
+        <div class="nt-bg"><i class="nt-glow"></i></div>
+        <div class="nt-main">
+          <div class="clock" id="clock"></div>
+          <div class="date" id="date"></div>
+          <div class="nt-search" id="ntSearch">
+            <span data-i="search"></span>
+            <input id="ntInput" type="text" spellcheck="false" autocomplete="off" placeholder="Поиск или адрес" aria-label="Поиск или адрес">
+          </div>
+          <div class="tiles" id="tiles"></div>
+          <div class="nt-empty" id="ntEmpty" hidden></div>
+        </div>
+        <div class="nt-undo" id="ntUndo" role="status"></div>
       </div>
       <div class="sleeping" id="sleeping"><span data-i="moon"></span>Просыпается…</div>
     </section>
@@ -114,6 +123,7 @@
 <script src="update.js"></script>
 <script src="translate.js"></script>
 <script src="snapshot.js"></script>
+<script src="newtab.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

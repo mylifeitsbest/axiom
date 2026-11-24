@@ -43,7 +43,7 @@
   const FAV_COLORS = ['#7F77DD', '#1D9E75', '#D85A30', '#378ADD', '#D4537E', '#BA7517', '#639922', '#534AB7'];
 
   // ---------- состояние ----------
-  const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: [], maximized: false };
+  const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: null, maximized: false };
   let A = { ...DEFAULTS };
   let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
@@ -364,35 +364,29 @@
   $('#tablist').addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
   $('#newTabBtn').addEventListener('click', () => send({ cmd: 'new_tab' }));
 
-  // ---------- контент и новая вкладка ----------
+  // ---------- контент и новая вкладка (ui/newtab.js) ----------
+  const newtab = createNewtab({
+    esc, send, ms, speed,
+    colors: FAV_COLORS,
+    system: () => SYS,
+    // Поверх открыто окно (настройки, загрузки…): ввод с клавиатуры не перехватываем.
+    blocked: () => overlayReasons.size > 0,
+    // Поиск новой вкладки работает через подсказки адресной строки.
+    sug: { input: (el) => updateSug(el), key: (e) => onOmniKey(e), hide: () => hideSug() },
+    openSettings(section) { dl.close(); upd.close(); panels.open(section); },
+  });
   function renderContent() {
     const t = activeTab();
     const nt = !t || t.url === NEWTAB;
     const c = $('#content');
     c.classList.toggle('nt', nt);
     c.classList.toggle('zz', !!t && !nt && !!t.sleeping);
-    if (nt) renderNewtab();
+    newtab.render(nt, S.topSites);
     if (S.active !== prevActive) {
       prevActive = S.active;
-      if (nt && mode === 'url' && !overlayReasons.has('onb') && !overlayReasons.has('sheet')) requestAnimationFrame(() => inp.focus());
+      if (nt && mode === 'url' && !overlayReasons.has('onb') && !overlayReasons.has('sheet')) requestAnimationFrame(() => newtab.focus());
     }
   }
-
-  function renderNewtab() {
-    tickClock();
-    $('#tiles').innerHTML = S.topSites.slice(0, 8).map((s) =>
-      `<button class="tile" data-url="${esc(s.url)}" title="${esc(s.url)}">${favHtml(s.url)}<span>${esc(s.title)}</span></button>`).join('');
-  }
-  function tickClock() {
-    const now = new Date();
-    $('#clock').textContent = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    $('#date').textContent = now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
-  }
-  setInterval(() => { if ($('#content').classList.contains('nt')) tickClock(); }, 10000);
-  $('#tiles').addEventListener('click', (e) => {
-    const b = e.target.closest('.tile');
-    if (b) send({ cmd: 'navigate', input: b.dataset.url });
-  });
 
   // ---------- адресная строка ----------
   const omni = $('#omni');
@@ -468,8 +462,11 @@
   let sugItems = [];
   let sugSel = 0;
   let sugTimer;
-  function updateSug() {
-    const q = inp.value.trim();
+  // Чьи подсказки: адресной строки или поиска новой вкладки (ui/newtab.js).
+  let sugSrc = inp;
+  function updateSug(src = inp) {
+    sugSrc = src;
+    const q = src.value.trim();
     sugQ = q;
     if (!q) { hideSug(); return; }
     clearTimeout(sugTimer);
@@ -493,8 +490,9 @@
     showSug();
   }
   function positionSug() {
-    const r = omni.getBoundingClientRect();
-    const w = Math.min(Math.max(r.width, 460), innerWidth - 16);
+    const own = sugSrc === inp;
+    const r = (own ? omni : newtab.anchor()).getBoundingClientRect();
+    const w = Math.min(Math.max(r.width, own ? 460 : 0), innerWidth - 16);
     const left = Math.min(Math.max(8, r.left), innerWidth - 8 - w);
     Object.assign($('#sug').style, { left: left + 'px', top: r.bottom + 6 + 'px', width: w + 'px' });
   }
@@ -504,14 +502,15 @@
     if (!el.classList.contains('on')) {
       el.classList.add('on', 'anim');
       setTimeout(() => el.classList.remove('anim'), ms(400) + 50);
-      setOverlay('sug', true);
+      // Список под поиском новой вкладки не заходит на панель ИИ: её не прячем.
+      if (sugSrc === inp) setOverlay('sug', true);
     }
   }
   function hideSug() {
     const el = $('#sug');
     if (el.classList.contains('on')) {
       el.classList.remove('on');
-      setOverlay('sug', false);
+      if (overlayReasons.has('sug')) setOverlay('sug', false);
     }
     // Запрос подсказок мог уйти, а ответ прийти уже после Enter: он не должен
     // открыть список снова (под ним спрятана страница).
@@ -532,6 +531,7 @@
   });
 
   function onOmniKey(e) {
+    sugSrc = e.currentTarget;
     if (mode === 'find') {
       if (e.key === 'Enter') { e.preventDefault(); find(e.shiftKey); }
       else if (e.key === 'Escape') { e.preventDefault(); inp.blur(); }
@@ -542,14 +542,14 @@
     else if (e.key === 'ArrowUp' && open) { e.preventDefault(); sugSel = (sugSel - 1 + sugItems.length) % sugItems.length; markSel(); }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      const q = inp.value.trim();
+      const q = e.currentTarget.value.trim();
       if (!q) return;
       if (e.ctrlKey || e.metaKey) { askAi(q); return; }
       const fallback = looksLikeUrl(q) ? { kind: 'go', input: q } : { kind: 'search', input: q };
       runItem(open ? sugItems[sugSel] : fallback, e.altKey);
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      if (open) hideSug(); else inp.blur();
+      if (open) hideSug(); else e.currentTarget.blur();
     }
   }
   function runItem(it, newTab) {
@@ -558,12 +558,12 @@
     send(newTab ? { cmd: 'new_tab', input: it.input } : { cmd: 'navigate', input: it.input });
     if (it.kind === 'search' && B.double_search) send({ cmd: 'ai', open: true, query: it.input });
     hideSug();
-    inp.blur();
+    sugSrc.blur();
   }
   function askAi(q) {
     send({ cmd: 'ai', open: true, query: q });
     hideSug();
-    inp.blur();
+    sugSrc.blur();
   }
 
   $('#dsBtn').addEventListener('click', () => {
@@ -631,7 +631,8 @@
   }
   function toggleAi() {
     if (S.aiOpen) { send({ cmd: 'ai', open: false }); return; }
-    let q = document.activeElement === inp && mode === 'url' ? inp.value.trim() : '';
+    const field = document.activeElement;
+    let q = (field === inp && mode === 'url') || field === newtab.input ? field.value.trim() : '';
     if (!q) { const u = parseUrl(activeTab()?.url || ''); if (isDdg(u)) q = u.searchParams.get('q') || ''; }
     send({ cmd: 'ai', open: true, query: q || null });
   }
@@ -782,11 +783,12 @@
         aiOpen: !!m.ai_open,
         aiProxy: !!m.ai_proxy,
         canRestore: !!m.can_restore,
-        topSites: Array.isArray(m.top_sites) && m.top_sites.length ? m.top_sites : S.topSites,
+        // Плитки приходят только для новой вкладки (null — открыта страница).
+        topSites: Array.isArray(m.top_sites) ? m.top_sites : S.topSites,
       });
       render();
     },
-    suggestions(m) { if (m.q === sugQ && mode === 'url' && document.activeElement === inp) { sugHist = m.items || []; renderSug(); } },
+    suggestions(m) { if (m.q === sugQ && mode === 'url' && document.activeElement === sugSrc) { sugHist = m.items || []; renderSug(); } },
     hotkey(m) { hotkey(m.action); },
     find(m) { omni.classList.toggle('nf', !m.found); },
     toast(m) { toast(m.text); },
@@ -797,8 +799,8 @@
       b.innerHTML = icon(S.maximized ? 'restore' : 'max');
       b.title = S.maximized ? 'Восстановить' : 'Развернуть';
     },
-    system(m) { SYS = { ...SYS, ...(m.status || {}) }; panels.onSystem(); },
-    imported(m) { panels.onImported(m); },
+    system(m) { SYS = { ...SYS, ...(m.status || {}) }; panels.onSystem(); newtab.onSystem(); },
+    imported(m) { panels.onImported(m); newtab.onImported(m); },
     installed(m) { panels.onInstalled(m); },
     downloads(m) { dl.onList(m); },
     download_progress(m) { dl.onProgress(m); },

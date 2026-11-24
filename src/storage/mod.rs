@@ -1,5 +1,6 @@
 //! Папка профиля и простые JSON-файлы: настройки, сессия, история.
 
+pub mod app_links;
 pub mod bookmarks;
 pub mod history;
 pub mod import;

@@ -126,6 +126,7 @@ pub fn build_tab(
     let id = spec.id;
     let ai = spec.ai;
     let (title_tx, load_tx, open_tx) = (events.clone(), events.clone(), events.clone());
+    let nav_tx = events.clone();
 
     let builder = WebViewBuilder::new_with_web_context(context)
         .with_url(spec.url)
@@ -135,7 +136,11 @@ pub fn build_tab(
         .with_devtools(true)
         .with_hotkeys_zoom(true)
         .with_initialization_script(super::sleep::DRAFT_TRACKER)
-        .with_navigation_handler(|url| omnibox::is_navigable(&url))
+        .with_initialization_script(super::external::INPUT_TRACKER)
+        .with_navigation_handler(move |url| {
+            // Не веб-адрес — ссылка на приложение (`mailto:`, `tg:`…): решает external.
+            omnibox::is_navigable(&url) || super::external::on_navigation(id, &url, &nav_tx)
+        })
         .with_document_title_changed_handler(move |title| {
             let _ = title_tx.send_event(UserEvent::TabTitle(id, title));
         })
@@ -151,6 +156,9 @@ pub fn build_tab(
                     ai,
                     from: Some(id),
                 });
+            } else if !omnibox::is_navigable(&url) {
+                let gesture = super::popups::user_initiated(&url);
+                super::external::on_new_window(id, url, gesture, &open_tx);
             }
             NewWindowResponse::Deny
         });
@@ -160,6 +168,8 @@ pub fn build_tab(
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
     hotkeys::install(&webview, events.clone());
     super::popups::install(&webview);
+    super::external::install(&webview, id, events.clone());
+    super::tracking::install(&webview, id, events.clone());
     super::fullscreen::install(&webview, super::fullscreen::Owner::Tab(id), events.clone());
     downloads::install(&webview, Some(id), events.clone());
     enable_autofill(&webview);

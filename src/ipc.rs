@@ -99,6 +99,9 @@ pub struct SettingsIn {
     pub force_dark: bool,
     #[serde(default = "yes")]
     pub check_updates: bool,
+    /// Убирать метки слежки из адресов. Нет поля — не менять.
+    #[serde(default)]
+    pub strip_tracking: Option<bool>,
 }
 
 fn yes() -> bool {
@@ -217,6 +220,13 @@ pub enum UiCmd {
     /// Язык перевода, «Всегда переводить» и «Предлагать перевод».
     TranslatePrefs {
         prefs: crate::translate::Prefs,
+    },
+    /// Ответ в окошке «Открыть приложение?». Что открывать, знает только Rust.
+    AppLink {
+        id: u64,
+        open: bool,
+        #[serde(default)]
+        always: bool,
     },
 }
 
@@ -389,6 +399,18 @@ pub enum ToUi<'a> {
     Translate(crate::translate::View<'a>),
     /// Снимок страницы под окном (или «убрать снимок»).
     Snapshot(crate::tabs::snapshot::View),
+    /// Сайт просит открыть приложение; `id = 0` — закрыть окошко.
+    AppLink {
+        id: u64,
+        /// Сайт для показа (`example.com`), пустой — неизвестен.
+        site: &'a str,
+        /// Название программы, пустое — не нашли.
+        app: &'a str,
+        scheme: &'a str,
+        link: &'a str,
+        /// Показать «Всегда разрешать для этого сайта».
+        remember: bool,
+    },
 }
 
 #[cfg(test)]
@@ -464,6 +486,23 @@ mod tests {
             parse(r#"{"cmd":"translate"}"#),
             Ok(UiCmd::Translate)
         ));
+    }
+
+    #[test]
+    fn parses_app_link_answer() {
+        assert!(matches!(
+            parse(r#"{"cmd":"app_link","id":4,"open":true,"always":true}"#),
+            Ok(UiCmd::AppLink {
+                id: 4,
+                open: true,
+                always: true
+            })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"app_link","id":4,"open":false}"#),
+            Ok(UiCmd::AppLink { always: false, .. })
+        ));
+        assert!(parse(r#"{"cmd":"app_link","open":true}"#).is_err());
     }
 
     #[test]

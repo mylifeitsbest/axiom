@@ -63,6 +63,8 @@ pub struct Settings {
     pub check_updates: bool,
     /// Перевод страниц: язык, автоперевод, предлагать ли перевод.
     pub translate: crate::translate::Prefs,
+    /// Убирать метки слежки (`utm_*`, `fbclid`, `gclid`…) из открываемых адресов.
+    pub strip_tracking: bool,
 }
 
 impl Default for Settings {
@@ -78,6 +80,7 @@ impl Default for Settings {
             force_dark: false,
             check_updates: true,
             translate: crate::translate::Prefs::default(),
+            strip_tracking: true,
         }
     }
 }
@@ -103,6 +106,10 @@ impl Settings {
         self.onboarded |= incoming.onboarded;
         self.force_dark = incoming.force_dark;
         self.check_updates = incoming.check_updates;
+        // Интерфейс без этого переключателя поле не шлёт — тогда не трогаем.
+        if let Some(on) = incoming.strip_tracking {
+            self.strip_tracking = on;
+        }
     }
 
     fn sanitized(mut self) -> Self {

@@ -84,6 +84,9 @@
   // ---------- перевод страниц (ui/translate.js) ----------
   const tr = createTranslate({ esc, send, speed, setOverlay, toast: (t) => toast(t) });
 
+  // ---------- ссылки на приложения (ui/applink.js) ----------
+  const xap = createAppLink({ esc, send, setOverlay });
+
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
 
@@ -805,6 +808,7 @@
     update(m) { upd.onState(m); },
     translate(m) { tr.onState(m); },
     snapshot(m) { snap.onMessage(m); },
+    app_link(m) { xap.onRequest(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

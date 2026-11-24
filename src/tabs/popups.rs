@@ -30,8 +30,9 @@ thread_local! {
 #[cfg(windows)]
 const MAX_PENDING: usize = 32;
 
+/// Просил ли сайт окно по клику (ссылки на приложения с `target=_blank` тоже идут сюда).
 #[cfg(windows)]
-fn user_initiated(url: &str) -> bool {
+pub fn user_initiated(url: &str) -> bool {
     GESTURES.with(|q| {
         let mut q = q.borrow_mut();
         match q.iter().position(|(u, _)| u == url) {
@@ -44,7 +45,7 @@ fn user_initiated(url: &str) -> bool {
 }
 
 #[cfg(not(windows))]
-fn user_initiated(_url: &str) -> bool {
+pub fn user_initiated(_url: &str) -> bool {
     true
 }
 

@@ -1,5 +1,6 @@
 //! Состояние браузера и обработка событий главного цикла.
 
+mod app_links;
 mod translation;
 
 use std::{
@@ -92,6 +93,8 @@ pub struct App {
     translate: crate::translate::Translator,
     /// Видео или страница (F11) на весь экран.
     fullscreen: fullscreen::State,
+    /// Ссылки на приложения: окошко «Открыть?» и запомненные разрешения.
+    app_links: app_links::State,
 }
 
 impl App {
@@ -150,7 +153,9 @@ impl App {
             maximized: None,
             translate: crate::translate::Translator::default(),
             fullscreen: fullscreen::State::default(),
+            app_links: app_links::State::default(),
         };
+        app.sync_tracking();
         app.restore_session(open);
         Ok(app)
     }
@@ -180,6 +185,7 @@ impl App {
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
             UserEvent::TabLoad { id, started, url } => self.on_load(id, started, url),
             UserEvent::OpenTab { url, ai, from } => {
+                let url = self.untracked(url);
                 if omnibox::is_navigable(&url) {
                     let id = self.tabs.add(url.clone(), display_title(&url), ai, None);
                     if let Some(tab) = self.tabs.get_mut(id) {
@@ -217,6 +223,8 @@ impl App {
                 let step = self.snapshot.on_event(event, &self.events);
                 self.snapshot_step(step);
             }
+            UserEvent::AppLink(event) => self.on_app_link(event),
+            UserEvent::Untracked { id, url } => self.load_untracked(id, url),
             UserEvent::Tick => self.on_tick(),
         }
         Ok(Flow::Continue)
@@ -427,6 +435,7 @@ impl App {
             UiCmd::Translate => self.translate_active(),
             UiCmd::TranslateOriginal => self.translate_original(),
             UiCmd::TranslatePrefs { prefs } => self.translate_prefs(prefs),
+            UiCmd::AppLink { id, open, always } => self.answer_app_link(id, open, always),
         }
         Ok(Flow::Continue)
     }
@@ -529,6 +538,7 @@ impl App {
             }
         }
         self.tabs.active = Some(id);
+        self.close_app_link_unless(id);
         if self.tabs.get(id).is_some_and(|t| t.is_sleeping())
             && let Err(err) = self.wake(id)
         {
@@ -597,13 +607,17 @@ impl App {
     }
 
     fn navigate(&mut self, input: &str) -> Result<()> {
+        if self.open_typed_app(input) {
+            return Ok(());
+        }
         let Some(target) = omnibox::resolve(input) else {
             return Ok(());
         };
         let Some(id) = self.tabs.active else {
             return Ok(());
         };
-        self.load_in_tab(id, target.into_url())
+        let url = self.untracked(target.into_url());
+        self.load_in_tab(id, url)
     }
 
     fn load_in_tab(&mut self, id: TabId, url: String) -> Result<()> {
@@ -647,9 +661,12 @@ impl App {
     }
 
     fn new_tab(&mut self, input: Option<&str>) {
+        if input.is_some_and(|i| self.open_typed_app(i)) {
+            return;
+        }
         let url = input
             .and_then(omnibox::resolve)
-            .map(omnibox::Target::into_url)
+            .map(|t| self.untracked(t.into_url()))
             .unwrap_or_else(|| NEWTAB.to_string());
         let title = if url == NEWTAB {
             String::new()
@@ -1007,7 +1024,7 @@ impl App {
             let url = if path.is_absolute() && path.exists() {
                 Url::from_file_path(path).ok().map(String::from)
             } else {
-                omnibox::resolve(arg).map(omnibox::Target::into_url)
+                omnibox::resolve(arg).map(|t| self.untracked(t.into_url()))
             };
             if let Some(url) = url.filter(|u| u != NEWTAB) {
                 let id = self.tabs.add(url.clone(), display_title(&url), false, None);
@@ -1031,6 +1048,7 @@ impl App {
             }
         };
         self.settings.apply(incoming);
+        self.sync_tracking();
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }

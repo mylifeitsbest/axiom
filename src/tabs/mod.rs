@@ -1,10 +1,12 @@
 //! Модель вкладок. Вкладка без webview — «спящая» или новая: память не занимает.
 
+pub mod external;
 pub mod fullscreen;
 pub mod omnibox;
 pub mod popups;
 pub mod sleep;
 pub mod snapshot;
+pub mod tracking;
 pub mod webview;
 
 use std::time::Instant;

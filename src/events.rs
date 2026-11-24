@@ -59,6 +59,13 @@ pub enum UserEvent {
     ShowFallback,
     /// Снимок страницы под окном интерфейса готов или не успел.
     Snapshot(crate::tabs::snapshot::Event),
+    /// Ссылка на приложение (`mailto:`, `tg:`…): запрос страницы или итог запуска.
+    AppLink(crate::tabs::external::Event),
+    /// Переход по ссылке с метками слежки отменён: загрузить чистый адрес.
+    Untracked {
+        id: TabId,
+        url: String,
+    },
     Tick,
 }
 

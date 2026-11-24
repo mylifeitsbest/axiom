@@ -453,6 +453,18 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .trp.on>*{animation:rise var(--d2) var(--e) both}
 .trp.on>:nth-child(n+2){animation-delay:calc(30ms*var(--k))}
 
+/* ---------- ссылки на приложения (ui/applink.js) ---------- */
+.xap{padding:12px 6px 10px;transform-origin:top left}
+.xap .trp-head{align-items:flex-start}
+.xap .trp-t{flex:1}
+.xap .trp-t b{line-height:1.35;overflow-wrap:anywhere}
+.xap-link{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:calc(var(--fs) - 1.5px)/1.5 ui-monospace,"Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace}
+.xap .trp-list{margin-top:8px}
+.xap-acts{display:flex;justify-content:flex-end;gap:6px;margin:12px 8px 0}
+.xap-acts .btn{height:30px;padding:0 14px}
+.xap.on>*{animation:rise var(--d2) var(--e) both}
+.xap.on>:nth-child(n+2){animation-delay:calc(30ms*var(--k))}
+
 /* ---------- загрузки ---------- */
 .dl{position:relative}
 .dl[hidden]{display:none}

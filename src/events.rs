@@ -45,6 +45,8 @@ pub enum UserEvent {
     Installed(Result<(), String>),
     /// Импорт из Chrome завершился (выполняется в фоновом потоке).
     Imported(Result<crate::storage::chrome::Imported, String>),
+    /// Перевод страницы: ответ страницы, перевод от Google или таймер.
+    Translate(crate::translate::Event),
     /// Окно так и не получило `ready` от интерфейса — показываем его принудительно.
     ShowFallback,
     Tick,

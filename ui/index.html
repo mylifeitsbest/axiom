@@ -58,6 +58,8 @@
 
   <div class="dlp upp" id="upp" role="dialog" aria-label="Обновление Axiom"></div>
 
+  <div class="dlp trp" id="trp" role="dialog" aria-label="Перевод страницы"></div>
+
   <div class="edge n" data-edge="n"></div><div class="edge s" data-edge="s"></div>
   <div class="edge e" data-edge="e"></div><div class="edge w" data-edge="w"></div>
   <div class="edge ne" data-edge="ne"></div><div class="edge nw" data-edge="nw"></div>
@@ -80,6 +82,7 @@
     <input id="omniInput" type="text" spellcheck="false" autocomplete="off" placeholder="Поиск или адрес" aria-label="Адресная строка">
     <span class="omni-view" id="omniView"></span>
     <span class="omni-msg" id="omniMsg"></span>
+    <button class="ib sm tr" id="trBtn" title="Перевести страницу" data-i="translate" hidden></button>
     <button class="ib sm star" id="starBtn" title="В закладки (Ctrl+D)" data-i="star" hidden></button>
     <button class="ib sm ds" id="dsBtn" title="Двойной поиск: DuckDuckGo + ИИ" data-i="spark"></button>
   </div>
@@ -104,6 +107,7 @@
 <script src="settings.js"></script>
 <script src="downloads.js"></script>
 <script src="update.js"></script>
+<script src="translate.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -61,6 +61,8 @@ pub struct Settings {
     pub force_dark: bool,
     /// Узнавать у GitHub о новых версиях (раз в несколько часов).
     pub check_updates: bool,
+    /// Перевод страниц: язык, автоперевод, предлагать ли перевод.
+    pub translate: crate::translate::Prefs,
 }
 
 impl Default for Settings {
@@ -75,6 +77,7 @@ impl Default for Settings {
             onboarded: false,
             force_dark: false,
             check_updates: true,
+            translate: crate::translate::Prefs::default(),
         }
     }
 }
@@ -105,6 +108,7 @@ impl Settings {
     fn sanitized(mut self) -> Self {
         self.sleep_minutes = self.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.live_tabs = self.live_tabs.min(MAX_LIVE_TABS);
+        self.translate = self.translate.sanitized();
         if crate::ai_panel::proxy::parse(&self.ai_proxy).is_err() {
             self.ai_proxy.clear();
         }

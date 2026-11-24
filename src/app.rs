@@ -1,5 +1,7 @@
 //! Состояние браузера и обработка событий главного цикла.
 
+mod translation;
+
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -82,6 +84,8 @@ pub struct App {
     settings_dirty: bool,
     /// Что последним сообщили интерфейсу о развёрнутости окна.
     maximized: Option<bool>,
+    /// Перевод страниц во вкладках.
+    translate: crate::translate::Translator,
 }
 
 impl App {
@@ -137,6 +141,7 @@ impl App {
             closed: false,
             settings_dirty: false,
             maximized: None,
+            translate: crate::translate::Translator::default(),
         };
         app.restore_session(open);
         Ok(app)
@@ -195,6 +200,7 @@ impl App {
                 });
             }
             UserEvent::Imported(result) => self.finish_import(result),
+            UserEvent::Translate(event) => self.on_translate(event),
             UserEvent::ShowFallback => self.show_window(),
             UserEvent::Tick => self.on_tick(),
         }
@@ -216,6 +222,7 @@ impl App {
                 self.push_downloads();
                 self.push_update(false);
                 self.push_window_state();
+                self.push_translate_all();
                 self.show_window();
                 if std::mem::take(&mut self.just_updated) {
                     let text = format!("Axiom обновлён до версии {}", env!("CARGO_PKG_VERSION"));
@@ -388,6 +395,9 @@ impl App {
                     self.push_update(false);
                 }
             }
+            UiCmd::Translate => self.translate_active(),
+            UiCmd::TranslateOriginal => self.translate_original(),
+            UiCmd::TranslatePrefs { prefs } => self.translate_prefs(prefs),
         }
         Ok(Flow::Continue)
     }
@@ -690,6 +700,7 @@ impl App {
             self.mirror_search(id);
         }
         self.push_state();
+        self.translate_load(id, started);
     }
 
     /// Двойной поиск работает и для поиска внутри самой страницы DuckDuckGo:

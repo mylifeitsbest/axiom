@@ -20,8 +20,8 @@ install -D -m 0644 "$SRC/stats.py" /opt/axiom-stats/stats.py
 # Секретный ключ панели создаём один раз и больше не трогаем.
 if [ ! -f /etc/axiom-stats.env ]; then
 	KEY="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
-	printf 'AXIOM_STATS_KEY=%s\n' "$KEY" >/etc/axiom-stats.env
-	chmod 600 /etc/axiom-stats.env
+	# umask: файл с ключом ни на миг не бывает доступен на чтение другим.
+	(umask 077 && printf 'AXIOM_STATS_KEY=%s\n' "$KEY" >/etc/axiom-stats.env)
 fi
 install -m 0644 "$SRC/axiom-stats.service" /etc/systemd/system/axiom-stats.service
 
@@ -41,6 +41,10 @@ echo "==> Запуск"
 systemctl daemon-reload
 systemctl enable --now axiom-stats.service
 systemctl enable --now caddy.service
+# Повторный запуск: enable --now не перезапускает уже работающие службы,
+# и новый stats.py и Caddyfile иначе не применились бы.
+systemctl restart axiom-stats.service
+systemctl reload caddy.service || systemctl restart caddy.service
 
 # Если включён ufw — открыть порты 80/443 и 22.
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then

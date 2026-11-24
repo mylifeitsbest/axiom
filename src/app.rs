@@ -76,6 +76,12 @@ pub struct App {
     updater: Updater,
     /// Запущены сразу после обновления: скажем об этом, когда интерфейс будет готов.
     just_updated: bool,
+    /// `shutdown` уже сохранил состояние.
+    closed: bool,
+    /// Цвета темы поменялись, а настройки ещё не записаны.
+    settings_dirty: bool,
+    /// Что последним сообщили интерфейсу о развёрнутости окна.
+    maximized: Option<bool>,
 }
 
 impl App {
@@ -128,9 +134,11 @@ impl App {
             force_dark,
             updater: Updater::new(),
             just_updated,
+            closed: false,
+            settings_dirty: false,
+            maximized: None,
         };
-        app.restore_session();
-        app.open_external(open);
+        app.restore_session(open);
         Ok(app)
     }
 
@@ -148,14 +156,22 @@ impl App {
         match event {
             UserEvent::Ui(raw) => match ipc::parse(&raw) {
                 Ok(cmd) => return self.on_ui(cmd),
-                Err(err) => eprintln!("IPC отклонён: {err}"),
+                Err(err) => {
+                    eprintln!("IPC отклонён: {err}");
+                    if let Some(text) = err.user_text() {
+                        self.send(&ToUi::Toast { text });
+                    }
+                }
             },
             UserEvent::Hotkey(hotkey) => self.on_hotkey(hotkey)?,
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
             UserEvent::TabLoad { id, started, url } => self.on_load(id, started, url),
-            UserEvent::OpenTab { url, ai } => {
+            UserEvent::OpenTab { url, ai, from } => {
                 if omnibox::is_navigable(&url) {
                     let id = self.tabs.add(url.clone(), display_title(&url), ai, None);
+                    if let Some(tab) = self.tabs.get_mut(id) {
+                        tab.opener = from;
+                    }
                     self.activate(id);
                 }
             }
@@ -168,6 +184,15 @@ impl App {
                 self.window.set_minimized(false);
                 self.window.set_visible(true);
                 self.window.set_focus();
+            }
+            UserEvent::Installed(result) => {
+                self.send(&ToUi::Installed {
+                    ok: result.is_ok(),
+                    error: result.as_ref().err().map_or("", String::as_str),
+                });
+                self.send(&ToUi::System {
+                    status: system::status(),
+                });
             }
             UserEvent::Imported(result) => self.finish_import(result),
             UserEvent::ShowFallback => self.show_window(),
@@ -258,18 +283,10 @@ impl App {
             UiCmd::ToggleBookmark => self.toggle_bookmark(),
             UiCmd::ImportChrome => self.start_import(),
             UiCmd::Install => {
-                let result = system::install();
-                let error = result
-                    .as_ref()
-                    .err()
-                    .map(|e| format!("{e:#}"))
-                    .unwrap_or_default();
-                self.send(&ToUi::Installed {
-                    ok: result.is_ok(),
-                    error: &error,
-                });
-                self.send(&ToUi::System {
-                    status: system::status(),
+                let events = self.events.clone();
+                std::thread::spawn(move || {
+                    let result = system::install().map(drop).map_err(|e| format!("{e:#}"));
+                    let _ = events.send_event(UserEvent::Installed(result));
                 });
             }
             UiCmd::OpenDefaultApps => match system::make_default() {
@@ -305,7 +322,8 @@ impl App {
                         self.settings.colors.scheme = scheme;
                         self.apply_site_theme();
                     }
-                    self.persist_settings();
+                    // Ползунок цвета шлёт это каждый кадр: на диск — по таймеру и при выходе.
+                    self.settings_dirty = true;
                 }
             }
             UiCmd::Window { action } => match action {
@@ -425,21 +443,29 @@ impl App {
 
     // ---------- вкладки ----------
 
-    fn restore_session(&mut self) {
-        let mut active = None;
+    /// `open` — адреса из командной строки (клик по ссылке в другой программе).
+    fn restore_session(&mut self, open: &[String]) {
+        let mut restored = None;
         if let Some(session) = Session::load(&self.paths) {
             for (i, saved) in session.tabs.iter().enumerate() {
                 let id = self
                     .tabs
                     .add(saved.url.clone(), saved.title.clone(), saved.ai, Some(i));
                 if i == session.active {
-                    active = Some(id);
+                    restored = Some(id);
                 }
             }
         }
-        let id = active.unwrap_or_else(|| self.tabs.add(NEWTAB.into(), String::new(), false, None));
-        // Остальные вкладки остаются спящими до первого клика.
-        self.activate(id);
+        // Адреса снаружи встают после активной вкладки сессии, а она сама
+        // остаётся спящей: незачем грузить страницу, которую сразу закроет другая.
+        self.tabs.active = restored;
+        self.open_external(open);
+        if self.tabs.active == restored {
+            let id = restored
+                .unwrap_or_else(|| self.tabs.add(NEWTAB.into(), String::new(), false, None));
+            // Остальные вкладки остаются спящими до первого клика.
+            self.activate(id);
+        }
     }
 
     fn activate(&mut self, id: TabId) {
@@ -530,6 +556,11 @@ impl App {
             tab.url = url;
             tab.title.clear();
             tab.webview = None;
+            tab.loading = false;
+            tab.scroll = None;
+            tab.sleep_requested = None;
+            tab.keep_alive = false;
+            self.session_dirty = true;
             self.push_state();
             return Ok(());
         }
@@ -573,6 +604,11 @@ impl App {
     }
 
     fn close_tab_with(&mut self, id: TabId, remember: bool) {
+        self.close_tab_then(id, remember, None);
+    }
+
+    /// `prefer` — какую вкладку открыть вместо закрытой, если она ещё есть.
+    fn close_tab_then(&mut self, id: TabId, remember: bool, prefer: Option<TabId>) {
         let Some(index) = self.tabs.index_of(id) else {
             return;
         };
@@ -584,7 +620,10 @@ impl App {
             let fresh = self.tabs.add(NEWTAB.into(), String::new(), false, None);
             self.activate(fresh);
         } else if was_active {
-            if let Some(next) = self.tabs.successor_for(index) {
+            let next = prefer
+                .filter(|&p| self.tabs.get(p).is_some())
+                .or_else(|| self.tabs.successor_for(index));
+            if let Some(next) = next {
                 self.activate(next);
             }
         } else {
@@ -607,7 +646,8 @@ impl App {
     }
 
     fn on_title(&mut self, id: TabId, title: String) {
-        let Some(tab) = self.tabs.get_mut(id) else {
+        // Вкладка без webview: событие от уже выгруженной или припаркованной страницы.
+        let Some(tab) = self.tabs.get_mut(id).filter(|t| t.webview.is_some()) else {
             return;
         };
         let title: String = title.chars().take(300).collect();
@@ -628,7 +668,7 @@ impl App {
     }
 
     fn on_load(&mut self, id: TabId, started: bool, url: String) {
-        let Some(tab) = self.tabs.get_mut(id) else {
+        let Some(tab) = self.tabs.get_mut(id).filter(|t| t.webview.is_some()) else {
             return;
         };
         tab.loading = started;
@@ -770,7 +810,9 @@ impl App {
             return;
         }
         if self.tabs.len() > 1 {
-            self.close_tab_with(id, false);
+            // Возвращаемся туда, где кликнули по ссылке, а не на соседнюю справа.
+            let opener = self.tabs.get(id).and_then(|t| t.opener);
+            self.close_tab_then(id, false, opener);
         } else if let Err(err) = self.load_in_tab(id, NEWTAB.into()) {
             eprintln!("вкладка загрузки: {err:#}");
         }
@@ -902,30 +944,48 @@ impl App {
 
     fn save_settings(&mut self, mut incoming: ipc::SettingsIn) {
         let old_proxy = self.settings.ai_proxy.clone();
-        if let Err(err) = proxy::parse(&incoming.ai_proxy) {
-            let text = format!("Прокси не применён: {err}");
-            self.send(&ToUi::Toast { text: &text });
-            incoming.ai_proxy = old_proxy.clone();
-        }
+        let rejected = match proxy::parse(&incoming.ai_proxy) {
+            Ok(_) => None,
+            Err(err) => {
+                incoming.ai_proxy = old_proxy.clone();
+                Some(format!("Прокси не применён: {err}"))
+            }
+        };
         self.settings.apply(incoming);
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }
         self.limit_live_tabs();
         self.persist_settings();
+        if let Some(text) = rejected {
+            // Интерфейс держит отклонённый адрес у себя и слал бы его с каждым
+            // сохранением — возвращаем ему настоящие настройки.
+            self.send(&ToUi::Settings {
+                settings: &self.settings,
+            });
+            self.send(&ToUi::Toast { text: &text });
+        }
     }
 
     fn apply_proxy_change(&mut self) {
         let was_open = self.ai.open;
         self.ai.set_proxy(&self.settings.ai_proxy);
         // Вкладки «из ИИ» пересоздадутся с новым прокси при следующем открытии.
+        // Вкладки с недописанным текстом не трогаем (сменят прокси, когда уснут),
+        // а идущую загрузку не обрываем — webview паркуется до её конца.
         let active = self.tabs.active;
-        for tab in self
+        let ids: Vec<TabId> = self
             .tabs
-            .iter_mut()
-            .filter(|t| t.ai && Some(t.id) != active)
-        {
-            tab.webview = None;
+            .iter()
+            .filter(|t| t.ai && Some(t.id) != active && t.webview.is_some() && !t.keep_alive)
+            .map(|t| t.id)
+            .collect();
+        for id in ids {
+            self.park_if_busy(id);
+            if let Some(tab) = self.tabs.get_mut(id) {
+                tab.webview = None;
+                tab.sleep_requested = None;
+            }
         }
         if was_open && let Err(err) = self.open_ai(None) {
             eprintln!("панель ИИ: {err:#}");
@@ -959,7 +1019,10 @@ impl App {
 
     pub fn on_resize(&mut self) {
         let _ = self.ui.set_bounds(full_bounds(&self.window));
-        self.push_window_state();
+        // Resized приходит на каждый шаг перетаскивания рамки — шлём только перемену.
+        if self.maximized != Some(self.window.is_maximized()) {
+            self.push_window_state();
+        }
     }
 
     fn show_window(&mut self) {
@@ -970,10 +1033,10 @@ impl App {
         }
     }
 
-    fn push_window_state(&self) {
-        self.send(&ToUi::Window {
-            maximized: self.window.is_maximized(),
-        });
+    fn push_window_state(&mut self) {
+        let maximized = self.window.is_maximized();
+        self.maximized = Some(maximized);
+        self.send(&ToUi::Window { maximized });
     }
 
     fn find(&self, query: &str, backwards: bool) {
@@ -1008,6 +1071,9 @@ impl App {
         }
         if self.session_dirty {
             self.save_session();
+        }
+        if std::mem::take(&mut self.settings_dirty) {
+            self.persist_settings();
         }
         if let Err(err) = self.downloads.save_if_dirty(&self.paths) {
             eprintln!("список загрузок не сохранён: {err:#}");
@@ -1056,7 +1122,17 @@ impl App {
         if keep == 0 {
             return;
         }
-        for id in sleep::excess(self.sleep_candidates(), keep) {
+        let candidates = self.sleep_candidates();
+        // Вкладки, которые усыплять нельзя (черновик, звук, загрузка), всё равно
+        // живые и занимают место в лимите: вместо них засыпают следующие по давности.
+        let active = self.tabs.active;
+        let live = self
+            .tabs
+            .iter()
+            .filter(|t| Some(t.id) != active && t.webview.is_some() && t.sleep_requested.is_none())
+            .count();
+        let keep = keep.saturating_sub(live.saturating_sub(candidates.len()));
+        for id in sleep::excess(candidates, keep) {
             self.request_sleep(id);
         }
     }
@@ -1168,9 +1244,13 @@ impl App {
         }
     }
 
+    /// Сохраняет всё на диск. Повторный вызов (после `LoopDestroyed`) ничего не делает.
     pub fn shutdown(&mut self) {
+        if std::mem::replace(&mut self.closed, true) {
+            return;
+        }
         self.save_session();
-        let _ = self.history.save_if_dirty(&self.paths);
+        let _ = self.history.save_all(&self.paths);
         let _ = self.downloads.save_if_dirty(&self.paths);
         self.persist_settings();
     }

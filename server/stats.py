@@ -12,6 +12,7 @@
   AXIOM_STATS_KEY   секрет в адресе панели: /d/<ключ>. Без него панель закрыта.
 """
 
+import hmac
 import json
 import os
 import re
@@ -25,9 +26,11 @@ HOST = os.environ.get("AXIOM_STATS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("AXIOM_STATS_PORT", "8787"))
 KEY = os.environ.get("AXIOM_STATS_KEY", "")
 
-VERSION_RE = re.compile(r"^\d{1,9}\.\d{1,9}\.\d{1,9}$")
+VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
 OSES = {"windows", "linux", "macos", "other"}
 MAX_BODY = 512
+# Строк (версия × ОС) за день. Поддельные версии иначе раздували бы базу без предела.
+MAX_ROWS_PER_DAY = 200
 
 
 def db():
@@ -52,12 +55,19 @@ def record(payload):
     """Проверить пинг и прибавить к агрегатам за сегодня."""
     v = payload.get("v", "")
     os_ = payload.get("os", "")
-    if not isinstance(v, str) or not VERSION_RE.match(v):
+    # fullmatch: с `$` в match() проходит и "1.2.3\n".
+    if not isinstance(v, str) or not VERSION_RE.fullmatch(v):
         return False
-    if os_ not in OSES:
+    if not isinstance(os_, str) or os_ not in OSES:
         return False
     flag = lambda k: 1 if payload.get(k) is True else 0
+    day = today()
     con = db()
+    known = con.execute(
+        "SELECT 1 FROM hits WHERE day=? AND v=? AND os=?", (day, v, os_)).fetchone()
+    if not known and q1(con, "SELECT COUNT(*) FROM hits WHERE day=?", (day,)) >= MAX_ROWS_PER_DAY:
+        con.close()
+        return False
     with con:
         con.execute(
             """INSERT INTO hits(day, v, os, pings, dau, wau, mau, installs)
@@ -65,7 +75,7 @@ def record(payload):
                ON CONFLICT(day, v, os) DO UPDATE SET
                  pings=pings+1, dau=dau+excluded.dau, wau=wau+excluded.wau,
                  mau=mau+excluded.mau, installs=installs+excluded.installs""",
-            (today(), v, os_, flag("d"), flag("w"), flag("m"), flag("new")),
+            (day, v, os_, flag("d"), flag("w"), flag("m"), flag("new")),
         )
     con.close()
     return True
@@ -80,13 +90,18 @@ def q1(con, sql, args=()):
 
 def dashboard():
     con = db()
+    now = datetime.now(timezone.utc)
     t = today()
-    d7 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
-    d30 = (datetime.now(timezone.utc) - timedelta(days=29)).strftime("%Y-%m-%d")
+    d30 = (now - timedelta(days=29)).strftime("%Y-%m-%d")
+    # Браузер ставит флаги w/m на первый пинг календарной недели (с понедельника,
+    # UTC) и месяца. Поэтому и считаем с их начала: в скользящем окне 7/30 дней
+    # человек, заходивший в обе недели (оба месяца), попадал бы дважды.
+    week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+    month_start = now.strftime("%Y-%m-01")
 
     dau = q1(con, "SELECT SUM(dau) FROM hits WHERE day=?", (t,))
-    wau = q1(con, "SELECT SUM(wau) FROM hits WHERE day>=?", (d7,))
-    mau = q1(con, "SELECT SUM(mau) FROM hits WHERE day>=?", (d30,))
+    wau = q1(con, "SELECT SUM(wau) FROM hits WHERE day>=?", (week_start,))
+    mau = q1(con, "SELECT SUM(mau) FROM hits WHERE day>=?", (month_start,))
     pings_today = q1(con, "SELECT SUM(pings) FROM hits WHERE day=?", (t,))
     installs_all = q1(con, "SELECT SUM(installs) FROM hits")
     installs_30 = q1(con, "SELECT SUM(installs) FROM hits WHERE day>=?", (d30,))
@@ -169,8 +184,8 @@ def render(dau, wau, mau, pings_today, installs_all, installs_30, bars, by_ver, 
   <div class="sub">Обновлено {updated}. Страница сама обновляется каждые 5 минут.</div>
   <div class="cards">
     {card(dau, "сегодня (DAU)")}
-    {card(wau, "за 7 дней (WAU)")}
-    {card(mau, "за 30 дней (MAU)")}
+    {card(wau, "за эту неделю (WAU)")}
+    {card(mau, "за этот месяц (MAU)")}
     {card(installs_30, "установок за 30д")}
     {card(installs_all, "установок всего")}
     {card(pings_today, "пингов сегодня")}
@@ -189,6 +204,9 @@ def render(dau, wau, mau, pings_today, installs_all, installs_30, bars, by_ver, 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "axiom-stats"
+    # Таймаут сокета: клиент, приславший Content-Length и замолчавший,
+    # иначе держал бы поток вечно.
+    timeout = 10
 
     def log_message(self, *a):
         pass  # не пишем лог доступа — там были бы IP
@@ -222,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._send(200, b"ok")
-        if KEY and self.path.rstrip("/") == f"/d/{KEY}":
+        if KEY and hmac.compare_digest(self.path.rstrip("/").encode(), f"/d/{KEY}".encode()):
             return self._send(200, dashboard().encode("utf-8"),
                               "text/html; charset=utf-8")
         self._send(404, b"not found")

@@ -128,9 +128,13 @@ pub fn build_tab(
             let _ = load_tx.send_event(UserEvent::TabLoad { id, started, url });
         })
         .with_new_window_req_handler(move |url, _features| {
-            // Вместо всплывающего окна — новая вкладка рядом.
-            if omnibox::is_navigable(&url) && !url.starts_with("about:") {
-                let _ = open_tx.send_event(UserEvent::OpenTab { url, ai });
+            // Вместо всплывающего окна — новая вкладка рядом, если сайт просил по клику.
+            if super::popups::allowed(&url) {
+                let _ = open_tx.send_event(UserEvent::OpenTab {
+                    url,
+                    ai,
+                    from: Some(id),
+                });
             }
             NewWindowResponse::Deny
         });
@@ -139,6 +143,7 @@ pub fn build_tab(
 
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
     hotkeys::install(&webview, events.clone());
+    super::popups::install(&webview);
     downloads::install(&webview, Some(id), events.clone());
     enable_autofill(&webview);
     Ok(webview)

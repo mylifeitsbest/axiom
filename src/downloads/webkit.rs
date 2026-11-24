@@ -51,10 +51,13 @@ pub fn attach<'a>(
         .with_download_completed_handler(move |url, path, ok| {
             let found = PENDING.with(|p| {
                 let mut pending = p.borrow_mut();
-                let index = pending
-                    .iter()
-                    .position(|d| path.as_ref().is_some_and(|path| &d.path == path))
-                    .or_else(|| pending.iter().position(|d| d.url == url))?;
+                // По адресу — только если путь неизвестен: обработчик вызывается
+                // по разу на каждый webview, и повторы закрыли бы другую загрузку
+                // того же адреса, которая ещё идёт.
+                let index = match &path {
+                    Some(path) => pending.iter().position(|d| &d.path == path),
+                    None => pending.iter().position(|d| d.url == url),
+                }?;
                 Some(pending.remove(index))
             });
             let Some(download) = found else { return };

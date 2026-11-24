@@ -1,6 +1,7 @@
 //! Модель вкладок. Вкладка без webview — «спящая» или новая: память не занимает.
 
 pub mod omnibox;
+pub mod popups;
 pub mod sleep;
 pub mod webview;
 
@@ -27,6 +28,8 @@ pub struct Tab {
     pub sleep_requested: Option<Instant>,
     /// В странице недописанный текст: не усыпляем, пока вкладку снова не откроют.
     pub keep_alive: bool,
+    /// Вкладка, с которой сайт открыл эту (`target=_blank`, `window.open`).
+    pub opener: Option<TabId>,
 }
 
 impl Tab {
@@ -105,6 +108,7 @@ impl TabStore {
                 scroll: None,
                 sleep_requested: None,
                 keep_alive: false,
+                opener: None,
             },
         );
         id

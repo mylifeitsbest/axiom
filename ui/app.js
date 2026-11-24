@@ -87,9 +87,12 @@
   document.addEventListener('error', (e) => { if (e.target.matches?.('img.fi')) e.target.remove(); }, true);
 
   // ---------- раскладка ----------
+  let placed = '';
   function place() {
     const l = A.layout;
     app.dataset.layout = l;
+    if (l === placed) { queueLayout(); return; }
+    placed = l;
     const [nav, tabs, omni, acts, wc, grow] = ['#nav', '#tabs', '#omni', '#acts', '#wc', '#growA'].map((s) => $(s));
     if (l === 'two') {
       $('#row1').append(tabs, wc);
@@ -441,7 +444,8 @@
   inp.addEventListener('input', () => { if (mode === 'find') find(false); else updateSug(); });
   inp.addEventListener('keydown', onOmniKey);
 
-  const looksLikeUrl = (q) => !/\s/.test(q) && (/^[a-z][a-z0-9+.-]*:\/\//i.test(q) || /^localhost(:\d+)?(\/|$)/i.test(q) || /^[^/?#]+\.[\p{L}]{2,}(:\d+)?([/?#]|$)/u.test(q));
+  const looksLikeUrl = (q) => !/\s/.test(q) && (/^[a-z][a-z0-9+.-]*:\/\//i.test(q) || /^localhost(:\d+)?(\/|$)/i.test(q) || /^[^/?#]+\.[\p{L}]{2,}(:\d+)?([/?#]|$)/u.test(q)
+    || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?([/?#]|$)/.test(q) || /^\[[0-9a-f:.]+\](:\d+)?([/?#]|$)/i.test(q));
 
   let sugQ = '';
   let sugHist = [];
@@ -493,6 +497,10 @@
       el.classList.remove('on');
       setOverlay('sug', false);
     }
+    // Запрос подсказок мог уйти, а ответ прийти уже после Enter: он не должен
+    // открыть список снова (под ним спрятана страница).
+    clearTimeout(sugTimer);
+    sugQ = '';
     sugHist = [];
     sugSel = 0;
   }
@@ -615,11 +623,13 @@
       bar.classList.remove('drag');
       bar.removeEventListener('pointermove', move);
       bar.removeEventListener('pointerup', up);
+      bar.removeEventListener('pointercancel', up);
       panels.sync();
       saveSettings();
     };
     bar.addEventListener('pointermove', move);
     bar.addEventListener('pointerup', up);
+    bar.addEventListener('pointercancel', up);
   });
 
   // ---------- окно ----------
@@ -641,7 +651,8 @@
 
   // ---------- горячие клавиши (когда фокус в интерфейсе) ----------
   function keyAction(e) {
-    const mod = e.ctrlKey || e.metaKey;
+    // AltGr на Windows приходит как Ctrl+Alt: это ввод символа (# { [ @ ł), а не сочетание.
+    const mod = (e.ctrlKey || e.metaKey) && !e.altKey && !e.getModifierState('AltGraph');
     const c = e.code;
     if (mod && e.shiftKey && c === 'KeyT') return 'restore_tab';
     if (mod && !e.shiftKey && c === 'KeyT') return 'new_tab';
@@ -739,7 +750,7 @@
       });
       render();
     },
-    suggestions(m) { if (m.q === sugQ && mode === 'url') { sugHist = m.items || []; renderSug(); } },
+    suggestions(m) { if (m.q === sugQ && mode === 'url' && document.activeElement === inp) { sugHist = m.items || []; renderSug(); } },
     hotkey(m) { hotkey(m.action); },
     find(m) { omni.classList.toggle('nf', !m.found); },
     toast(m) { toast(m.text); },

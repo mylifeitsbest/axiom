@@ -94,6 +94,53 @@ jobs:
           name: arch
           path: dist/*
 
+  aur:
+    # PKGBUILD для AUR (axiom-browser-bin) качает архив из релиза, а релиза ещё нет.
+    # Поэтому подставляем архив, собранный выше в задаче debian, — его же и опубликуют.
+    # Артефактов не выгружает: publish собирает в релиз все артефакты подряд.
+    needs: debian
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Зависимости
+        run: pacman -Syu --noconfirm --needed git namcap
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: debian
+          path: dist
+      - name: makepkg -si и namcap
+        shell: bash
+        run: |
+          AUR="$GITHUB_WORKSPACE/packaging/aur/axiom-browser-bin"
+          useradd -m builder
+          # makepkg — от обычного пользователя, как у людей: зависимости и пакет ставит sudo pacman.
+          echo 'builder ALL=(root) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          as_builder() { sudo -u builder -H bash -c "cd '$AUR' && $1"; }
+          echo "::group::.SRCINFO совпадает с PKGBUILD"
+          as_builder "makepkg --printsrcinfo" | diff -u "$AUR/.SRCINFO" -
+          echo "::endgroup::"
+          VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          SUM=$(sha256sum dist/axiom-linux-x86_64.tar.gz | cut -d' ' -f1)
+          sudo -u builder sh packaging/aur/bump.sh "$VER" "$SUM"
+          as_builder "makepkg --printsrcinfo" | diff -u "$AUR/.SRCINFO" -
+          # Архив под именем из source=(): makepkg найдёт его рядом с PKGBUILD и не станет качать.
+          sudo -u builder cp dist/axiom-linux-x86_64.tar.gz "$AUR/axiom-browser-bin-$VER.tar.gz"
+          as_builder "makepkg -si --noconfirm"
+          test -x /usr/bin/axiom-browser
+          test -f /usr/share/applications/axiom-browser.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/axiom-browser.svg
+          test -f /usr/share/icons/hicolor/256x256/apps/axiom-browser.png
+          if ldd /usr/bin/axiom-browser | grep "not found"; then exit 1; fi
+          pacman -Qi axiom-browser-bin
+          # namcap — для сведения: на license=('custom') без файла лицензии он ругается всегда.
+          namcap "$AUR/PKGBUILD" "$AUR"/axiom-browser-bin-"$VER"-*.pkg.tar.zst || true
+          {
+            echo "### AUR: axiom-browser-bin $VER"
+            echo "SHA-256 архива: \`$SUM\`. После публикации релиза: \`sh packaging/aur/bump.sh $VER\`, затем push в AUR (packaging/aur/README.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     needs: [windows, debian, arch]
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
@@ -118,14 +165,17 @@ jobs:
           irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
           ```
 
-          **Linux одной командой** (Ubuntu, Debian, Kali, Arch): подключит подписанный репозиторий,
-          обновления придут через `apt upgrade` или `pacman -Syu`:
+          **Linux одной командой** (Ubuntu, Debian, Kali, Arch). На Ubuntu, Debian и Kali подключит
+          подписанный репозиторий, обновления придут через `apt upgrade`. На Arch поставит
+          `axiom-browser-bin` из AUR без обновления системы:
           ```sh
           curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh
           ```
 
+          **Arch из AUR:** `yay -S axiom-browser-bin`.
+
           Ручная настройка репозиториев: https://mylifeitsbest.github.io/axiom/
-          Пакет на Linux называется `axiom-browser`, команда запуска — `axiom-browser`.
+          Пакет на Linux называется `axiom-browser` (в AUR — `axiom-browser-bin`), команда запуска — `axiom-browser`.
 
           EOF
           # Latest — только самая новая версия. Иначе перевыпуск старого тега

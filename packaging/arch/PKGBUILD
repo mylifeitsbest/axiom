@@ -8,7 +8,9 @@ pkgdesc='Лёгкий браузер на Rust: минимум памяти, Duc
 arch=('x86_64')
 url='https://github.com/mylifeitsbest/axiom'
 license=('custom')
-depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'glib2' 'cairo' 'gdk-pixbuf2' 'xdg-utils' 'hicolor-icon-theme' 'curl')
+# Библиотеки — по DT_NEEDED бинарника (libdbus-1 тянет tao); xdg-utils и curl — внешние команды.
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'glib2' 'cairo' 'gdk-pixbuf2' 'dbus' 'gcc-libs' 'glibc'
+         'xdg-utils' 'hicolor-icon-theme' 'curl')
 makedepends=('cargo')
 options=('!lto' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")

@@ -179,7 +179,10 @@ pub enum UiCmd {
     ToggleNoSleep {
         id: u64,
     },
-    ImportChrome,
+    /// Перенести закладки и историю из другого браузера.
+    Import {
+        browser: crate::storage::import::Browser,
+    },
     /// Установить в систему и зарегистрировать как браузер.
     Install,
     /// Открыть «Приложения по умолчанию» в параметрах Windows.
@@ -362,6 +365,8 @@ pub enum ToUi<'a> {
     },
     Imported {
         ok: bool,
+        browser: crate::storage::import::Browser,
+        name: &'static str,
         profile: &'a str,
         bookmarks: usize,
         history: usize,
@@ -389,6 +394,19 @@ pub enum ToUi<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_import() {
+        let cmd = parse(r#"{"cmd":"import","browser":"opera_gx"}"#);
+        assert!(matches!(
+            cmd,
+            Ok(UiCmd::Import {
+                browser: crate::storage::import::Browser::OperaGx
+            })
+        ));
+        assert!(parse(r#"{"cmd":"import","browser":"netscape"}"#).is_err());
+        assert!(parse(r#"{"cmd":"import_chrome"}"#).is_err());
+    }
 
     #[test]
     fn parses_navigate() {

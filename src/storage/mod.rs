@@ -1,8 +1,8 @@
 //! Папка профиля и простые JSON-файлы: настройки, сессия, история.
 
 pub mod bookmarks;
-pub mod chrome;
 pub mod history;
+pub mod import;
 pub mod session;
 
 use std::{

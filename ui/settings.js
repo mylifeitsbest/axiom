@@ -13,7 +13,7 @@ function createPanels(ax) {
     { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'DuckDuckGo, Google AI Mode и прокси только для ИИ.' },
     { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов, как в Chrome.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
-    { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome.' },
+    { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome, Edge, Firefox и других браузеров.' },
     { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка, обновления и браузер по умолчанию.' },
     { id: 'keys', icon: 'keyboard', title: 'Клавиши', desc: 'Всё как в Chrome, плюс пара своих.' },
   ];
@@ -33,7 +33,11 @@ function createPanels(ax) {
   const onb = $('#onb');
   let built = false;
   let section = 'look';
-  let importState = { busy: false, text: '' };
+  // Перенос из браузеров: какой идёт сейчас и чем закончился каждый.
+  let importState = { busy: '', res: {} };
+  let onbPick = '';
+  // Значок браузера — буква, без чужих логотипов.
+  const MARK = { chrome: 'C', edge: 'E', yandex: 'Я', opera: 'O', opera_gx: 'GX', brave: 'B', vivaldi: 'V', chromium: 'C', firefox: 'F', zen: 'Z' };
 
   // ---------- общие кусочки разметки ----------
   const kbd = (combo) => combo.split(' ').map((k) => `<kbd>${esc(k)}</kbd>`).join('');
@@ -111,10 +115,11 @@ function createPanels(ax) {
         </div>
         <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Не засыпают вкладки, где играет звук или остался недописанный текст, и те, что вы отметили кружкой в адресной строке. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
       data: `
-        <div class="card hero-card"><div class="hero-ic">${icon('download')}</div>
-          <div class="hero-t"><b>Перенести из Google Chrome</b><small>Закладки и история последнего профиля. Chrome можно не закрывать.</small><small class="imp-res" id="impRes"></small></div>
-          <button class="btn primary" data-act="import">Перенести</button></div>
-        <div class="note">${icon('lock')}<span>Пароли и входы на сайты не переносятся: Chrome шифрует их так, что прочитать их может только он сам. Войдите на нужные сайты один раз — Axiom предложит сохранить пароль.</span></div>`,
+        <div class="card imp-card">
+          <div class="imp-head"><div class="hero-ic">${icon('download')}</div>
+            <div class="hero-t"><b>Перенести из другого браузера</b><small>Закладки и история последнего профиля. Браузер можно не закрывать.</small></div></div>
+          <div id="impList"></div></div>
+        <div class="note">${icon('lock')}<span>Пароли и входы на сайты не переносятся: браузеры шифруют их так, что прочитать их может только сам браузер. Войдите на нужные сайты один раз — Axiom предложит сохранить пароль.</span></div>`,
       system: `
         <div class="card">
           <div class="srow" id="instRow"><span class="sl"><b>Установка</b><small id="instNote"></small></span><span class="sc"><button class="btn primary" data-act="install" id="instBtn">Установить</button></span></div>
@@ -196,7 +201,7 @@ function createPanels(ax) {
         : 'Axiom установлен пакетом (apt или pacman) и обновляется вместе с системой. Браузер по умолчанию меняется через xdg-settings.';
       syncUpdate(sys);
       $('#verNote').textContent = `Версия ${sys.version || ''} · Rust + ${win ? 'WebView2' : sys.platform === 'linux' ? 'WebKitGTK' : 'WebKit'}`;
-      $('#impRes').textContent = importState.text;
+      syncImportList(sys.browsers || []);
       const pv = $('#pvw');
       if (pv) pv.dataset.l = ax.A.layout;
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
@@ -293,7 +298,7 @@ function createPanels(ax) {
       case 'import-toggle': { const box = $('.import-box', sheet); box.hidden = !box.hidden; break; }
       case 'import-apply': importTheme(); break;
       case 'reset': ax.swap(() => { ax.resetAppearance(); }, e); ax.saveSettings(); ax.toast('Настройки вида сброшены'); break;
-      case 'import': startImport(); break;
+      case 'import': startImport(b.dataset.browser || onbPick); break;
       case 'install': ax.send({ cmd: 'install' }); b.classList.add('busy'); break;
       case 'default': ax.send({ cmd: 'open_default_apps' }); break;
       case 'update':
@@ -323,13 +328,32 @@ function createPanels(ax) {
     ax.toast(external ? 'Тема применена без своего CSS: в нём загрузка извне' : 'Тема применена');
   }
 
-  function startImport() {
-    if (importState.busy) return;
-    importState = { busy: true, text: 'Переносим…' };
-    $$('[data-act=import]').forEach((b) => b.classList.add('busy'));
-    ax.send({ cmd: 'import_chrome' });
+  // ---------- перенос из других браузеров ----------
+  const browsers = () => ax.system().browsers || [];
+  const mark = (b) => `<span class="bmark">${esc(MARK[b.id] || b.name.slice(0, 1))}</span>`;
+
+  function startImport(id) {
+    if (importState.busy || !browsers().some((b) => b.id === id)) return;
+    importState.busy = id;
+    importState.res[id] = { ok: true, text: 'Переносим…' };
+    ax.send({ cmd: 'import', browser: id });
     sync();
     syncOnbImport();
+  }
+
+  let listKey = '';
+  function syncImportList(list) {
+    const key = JSON.stringify([list, importState]);
+    if (key === listKey) return;
+    listKey = key;
+    $('#impList').innerHTML = list.length
+      ? list.map((b, i) => {
+        const res = importState.res[b.id];
+        const sub = [b.profile ? `<small>Профиль «${esc(b.profile)}»</small>` : '', res ? `<small class="imp-res${res.ok ? '' : ' bad'}">${esc(res.text)}</small>` : ''].join('');
+        return `<div class="srow imp-row">${mark(b)}<span class="sl"><b>${esc(b.name)}</b>${sub}</span>
+          <span class="sc"><button class="btn${i === 0 ? ' primary' : ''}${importState.busy === b.id ? ' busy' : ''}" data-act="import" data-browser="${esc(b.id)}">Перенести</button></span></div>`;
+      }).join('')
+      : `<div class="srow"><span class="sl"><b>Других браузеров не нашлось</b><small>Axiom переносит закладки и историю из Chrome, Edge, Яндекс Браузера, Opera, Brave, Vivaldi, Firefox и Zen.</small></span></div>`;
   }
 
   function bindSheet() {
@@ -382,11 +406,12 @@ function createPanels(ax) {
         </section>
         <section class="step" data-step="data">
           <div class="step-ic">${icon('download')}</div>
-          <h2>Перенести из Chrome?</h2>
-          <p class="lead">Закладки и история переедут за пару секунд. Chrome можно не закрывать.</p>
-          <div class="onb-list"><span>${icon('check')}Закладки со всеми папками</span><span>${icon('check')}История — для подсказок и плиток</span><span class="muted">${icon('lock')}Пароли и входы — нет: Chrome не отдаёт их другим программам</span></div>
+          <h2 id="onbImpTitle">Перенести из другого браузера?</h2>
+          <p class="lead" id="onbImpLead"></p>
+          <div class="onb-pick" id="onbPick"></div>
+          <div class="onb-list" id="onbImpList"><span>${icon('check')}Закладки со всеми папками</span><span>${icon('check')}История — для подсказок и плиток</span><span class="muted">${icon('lock')}Пароли и входы — нет: браузеры не отдают их другим программам</span></div>
           <div class="onb-result" id="onbImport"></div>
-          <div class="onb-actions"><button class="btn primary big" data-act="import">Перенести</button><button class="btn ghost big" data-onb="next">Пропустить</button></div>
+          <div class="onb-actions"><button class="btn primary big" data-act="import" id="onbImpBtn">Перенести</button><button class="btn ghost big" data-onb="next" id="onbImpSkip">Пропустить</button></div>
         </section>
         <section class="step" data-step="ai">
           <div class="step-ic">${icon('sparkles')}</div>
@@ -427,6 +452,7 @@ function createPanels(ax) {
       if (b.dataset.onb === 'next') { go(step + 1); return; }
       if (b.dataset.onb === 'back') { go(step - 1); return; }
       if (b.dataset.onb === 'finish') { finishOnb(); return; }
+      if (b.dataset.pick) { onbPick = b.dataset.pick; syncOnbImport(); return; }
       onClick(e);
     });
   }
@@ -474,18 +500,40 @@ function createPanels(ax) {
   }
   function syncOnbImport() {
     if (!onbBuilt) return;
-    $('#onbImport').textContent = importState.text;
-    $('#onbImport').classList.toggle('on', !!importState.text);
+    const list = browsers();
+    if (!list.some((b) => b.id === onbPick)) onbPick = list[0]?.id || '';
+    const one = list.length === 1 ? list[0] : null;
+    $('#onbImpTitle').textContent = !list.length ? 'Других браузеров не нашлось'
+      : one ? `Перенести из ${one.from}?` : 'Откуда перенести?';
+    $('#onbImpLead').textContent = !list.length ? 'Начнём с чистого листа: закладки и история появятся сами, пока вы пользуетесь Axiom.'
+      : one ? 'Закладки и история переедут за пару секунд. Браузер можно не закрывать.'
+        : 'Нашли несколько браузеров — выберите, где ваши закладки. Браузер можно не закрывать.';
+    const pick = $('#onbPick');
+    pick.hidden = list.length < 2;
+    pick.innerHTML = list.length < 2 ? '' : list.map((b) => {
+      const done = importState.res[b.id]?.done ? ' done' : '';
+      return `<button class="pick${b.id === onbPick ? ' on' : ''}${done}" data-pick="${esc(b.id)}">${mark(b)}<span>${esc(b.name)}</span><i class="ok">${icon('check')}</i></button>`;
+    }).join('');
+    $('#onbImpList').hidden = !list.length;
+    const btn = $('#onbImpBtn');
+    btn.hidden = !list.length;
+    btn.classList.toggle('busy', !!importState.busy);
+    $('#onbImpSkip').textContent = list.length ? 'Пропустить' : 'Далее';
+    const res = importState.res[onbPick];
+    // В настройках профиль подписан у браузера, здесь — в самом результате.
+    $('#onbImport').textContent = res ? res.text + (res.profile ? ` (профиль «${res.profile}»)` : '') : '';
+    $('#onbImport').classList.toggle('on', !!res);
+    $('#onbImport').classList.toggle('bad', !!res && !res.ok);
   }
 
   // ---------- ответы из Rust ----------
   function onImported(m) {
-    $$('[data-act=import]').forEach((b) => b.classList.remove('busy'));
-    importState = {
-      busy: false,
-      text: m.ok ? `Перенесено: ${m.bookmarks} ${plural(m.bookmarks, 'закладка', 'закладки', 'закладок')} и ${m.history} ${plural(m.history, 'страница', 'страницы', 'страниц')} истории (профиль «${m.profile}»)` : `Не получилось: ${m.error}`,
-    };
-    ax.toast(m.ok ? 'Данные из Chrome перенесены' : 'Импорт не удался');
+    const from = browsers().find((b) => b.id === m.browser)?.from || m.name;
+    importState.busy = '';
+    importState.res[m.browser] = m.ok
+      ? { ok: true, done: true, profile: m.profile, text: `Перенесено: ${m.bookmarks} ${plural(m.bookmarks, 'закладка', 'закладки', 'закладок')} и ${m.history} ${plural(m.history, 'страница', 'страницы', 'страниц')} истории` }
+      : { ok: false, text: `Не получилось: ${m.error}` };
+    ax.toast(m.ok ? `Данные из ${from} перенесены` : 'Импорт не удался');
     sync();
     syncOnbImport();
   }
@@ -493,7 +541,18 @@ function createPanels(ax) {
     $$('[data-act=install]').forEach((b) => b.classList.remove('busy'));
     ax.toast(m.ok ? 'Axiom установлен' : `Не удалось установить: ${m.error}`);
   }
-  function onSystem() { sync(); syncOnbSystem(); }
+  // Только для разработки (#import:браузер): начать перенос, когда придёт список браузеров.
+  let pendingImport = '';
+  const importSoon = (id) => { pendingImport = id || ''; };
+  function onSystem() {
+    sync();
+    syncOnbSystem();
+    syncOnbImport();
+    if (pendingImport && browsers().some((b) => b.id === pendingImport)) {
+      startImport(pendingImport);
+      pendingImport = '';
+    }
+  }
 
   function plural(n, one, few, many) {
     const a = n % 10, b = n % 100;
@@ -502,5 +561,5 @@ function createPanels(ax) {
     return many;
   }
 
-  return { open, close, isOpen, toggle: () => (isOpen() ? close() : open()), sync, openOnboarding, onImported, onInstalled, onSystem };
+  return { open, close, isOpen, toggle: () => (isOpen() ? close() : open()), sync, openOnboarding, onImported, onInstalled, onSystem, importSoon };
 }

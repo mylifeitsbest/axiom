@@ -34,7 +34,8 @@ pub struct Status {
     pub platform: &'static str,
     pub installed: bool,
     pub default_browser: bool,
-    pub chrome_found: bool,
+    /// Браузеры, из которых можно перенести закладки и историю.
+    pub browsers: Vec<crate::storage::import::Found>,
     /// Можно ли установить из самого приложения (на Linux — через пакетный менеджер).
     pub can_install: bool,
     pub version: &'static str,
@@ -45,7 +46,7 @@ pub fn status() -> Status {
         platform: std::env::consts::OS,
         installed: is_installed(),
         default_browser: is_default_browser(),
-        chrome_found: crate::storage::chrome::is_available(),
+        browsers: crate::storage::import::detect(),
         can_install: cfg!(windows),
         version: env!("CARGO_PKG_VERSION"),
     }

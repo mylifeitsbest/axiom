@@ -762,10 +762,12 @@
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел, #onb:шаг, #downloads, #update[:install] или #translate[:menu|:revert] — только для разработки (debug-сборка).
+        // #settings:раздел, #onb:шаг, #downloads, #update[:install], #translate[:menu|:revert]
+        // или #import:браузер (сразу начать перенос) — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') panels.open(arg);
         else if (screen === 'onb') panels.openOnboarding(+arg || 0);
+        else if (screen === 'import') { panels.open('data'); panels.importSoon(arg); }
         else if (screen === 'downloads') dl.open();
         else if (screen === 'update') upd.openSoon(arg === 'install');
         else if (screen === 'translate') tr.debug(arg);

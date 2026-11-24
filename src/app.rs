@@ -25,8 +25,8 @@ use crate::{
     storage::{
         Paths,
         bookmarks::Bookmarks,
-        chrome,
         history::History,
+        import::{self, Browser},
         session::{SavedTab, Session},
     },
     system,
@@ -208,7 +208,7 @@ impl App {
                     status: system::status(),
                 });
             }
-            UserEvent::Imported(result) => self.finish_import(result),
+            UserEvent::Imported(browser, result) => self.finish_import(browser, result),
             UserEvent::Translate(event) => self.on_translate(event),
             UserEvent::ShowFallback => self.show_window(),
             UserEvent::Snapshot(event) => {
@@ -314,7 +314,7 @@ impl App {
             }
             UiCmd::ToggleBookmark => self.toggle_bookmark(),
             UiCmd::ToggleNoSleep { id } => self.toggle_no_sleep(id),
-            UiCmd::ImportChrome => self.start_import(),
+            UiCmd::Import { browser } => self.start_import(browser),
             UiCmd::Install => {
                 let events = self.events.clone();
                 std::thread::spawn(move || {
@@ -950,20 +950,21 @@ impl App {
         self.push_state();
     }
 
-    /// Импорт читает файлы Chrome в фоновом потоке, чтобы окно не подвисало.
-    fn start_import(&mut self) {
+    /// Импорт читает файлы браузера в фоновом потоке, чтобы окно не подвисало.
+    /// По одному браузеру за раз: интерфейс сам не даёт начать второй.
+    fn start_import(&mut self, browser: Browser) {
         if self.importing {
             return;
         }
         self.importing = true;
         let (paths, events) = (self.paths.clone(), self.events.clone());
         std::thread::spawn(move || {
-            let result = chrome::import(&paths).map_err(|e| format!("{e:#}"));
-            let _ = events.send_event(UserEvent::Imported(result));
+            let result = import::import(browser, &paths).map_err(|e| format!("{e:#}"));
+            let _ = events.send_event(UserEvent::Imported(browser, result));
         });
     }
 
-    fn finish_import(&mut self, result: Result<chrome::Imported, String>) {
+    fn finish_import(&mut self, browser: Browser, result: Result<import::Imported, String>) {
         self.importing = false;
         match result {
             Ok(data) => {
@@ -973,6 +974,8 @@ impl App {
                 let _ = self.history.save_if_dirty(&self.paths);
                 self.send(&ToUi::Imported {
                     ok: true,
+                    browser,
+                    name: browser.name(),
                     profile: &data.profile,
                     bookmarks,
                     history,
@@ -982,6 +985,8 @@ impl App {
             }
             Err(error) => self.send(&ToUi::Imported {
                 ok: false,
+                browser,
+                name: browser.name(),
                 profile: "",
                 bookmarks: 0,
                 history: 0,

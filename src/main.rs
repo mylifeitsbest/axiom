@@ -54,16 +54,8 @@ fn run() -> Result<()> {
         println!("Axiom установлен: {}", path.display());
         return Ok(());
     }
-    if command == Some("--check-chrome") {
-        let paths = storage::Paths::resolve()?;
-        let data = storage::chrome::import(&paths)?;
-        println!(
-            "Chrome, профиль «{}»: закладок {}, записей истории {}",
-            data.profile,
-            data.bookmarks.len(),
-            data.history.len()
-        );
-        return Ok(());
+    if command == Some("--check-import") {
+        return check_import();
     }
     let updated = command == Some(update::UPDATED_FLAG);
     let handed_off = command == Some(system::handoff::FLAG);
@@ -119,6 +111,32 @@ fn run() -> Result<()> {
             *control_flow = ControlFlow::Exit;
         }
     });
+}
+
+/// `--check-import`: что будет перенесено из каждого найденного браузера, без записи.
+fn check_import() -> Result<()> {
+    let paths = storage::Paths::resolve()?;
+    let found = storage::import::detect();
+    if found.is_empty() {
+        println!("Других браузеров не найдено");
+    }
+    for browser in found {
+        let profile = if browser.profile.is_empty() {
+            String::new()
+        } else {
+            format!(", профиль «{}»", browser.profile)
+        };
+        match storage::import::import(browser.id, &paths) {
+            Ok(data) => println!(
+                "{}{profile}: закладок {}, записей истории {}",
+                browser.name,
+                data.bookmarks.len(),
+                data.history.len()
+            ),
+            Err(err) => println!("{}{profile}: ошибка: {err:#}", browser.name),
+        }
+    }
+    Ok(())
 }
 
 /// `axiom page.html` из консоли: относительный путь превращаем в полный,

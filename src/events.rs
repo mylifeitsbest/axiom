@@ -48,8 +48,11 @@ pub enum UserEvent {
     Update(crate::update::UpdateEvent),
     /// Установка в систему завершилась (фоновый поток: PowerShell для ярлыка — секунды).
     Installed(Result<(), String>),
-    /// Импорт из Chrome завершился (выполняется в фоновом потоке).
-    Imported(Result<crate::storage::chrome::Imported, String>),
+    /// Импорт из другого браузера завершился (выполняется в фоновом потоке).
+    Imported(
+        crate::storage::import::Browser,
+        Result<crate::storage::import::Imported, String>,
+    ),
     /// Перевод страницы: ответ страницы, перевод от Google или таймер.
     Translate(crate::translate::Event),
     /// Окно так и не получило `ready` от интерфейса — показываем его принудительно.

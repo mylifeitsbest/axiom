@@ -5,6 +5,7 @@ pub mod omnibox;
 pub mod popups;
 pub mod sleep;
 pub mod snapshot;
+pub mod waking;
 pub mod webview;
 
 use std::time::Instant;
@@ -34,6 +35,14 @@ pub struct Tab {
     pub no_sleep: bool,
     /// Вкладка, с которой сайт открыл эту (`target=_blank`, `window.open`).
     pub opener: Option<TabId>,
+    /// Запрос, с которым двойной поиск открыл для этой вкладки панель ИИ.
+    pub ai_query: Option<String>,
+    /// Страницу по адресу `url` уже открывали (в этом или прошлом запуске):
+    /// её пробуждение показывает заглушку, а не пустой фон.
+    pub loaded: bool,
+    /// Вкладка просыпается: webview уже грузит страницу, но его не видно, пока
+    /// в ней не появится что показать. На его месте заглушка «Просыпается…».
+    pub waking: Option<Instant>,
 }
 
 impl Tab {
@@ -43,6 +52,17 @@ impl Tab {
 
     pub fn is_sleeping(&self) -> bool {
         self.webview.is_none() && !self.is_newtab()
+    }
+
+    pub fn is_waking(&self) -> bool {
+        self.waking.is_some() && self.webview.is_some()
+    }
+
+    /// Webview активной вкладки можно показывать. Просыпающаяся страница на Linux
+    /// спрятана до загрузки, а на Windows лежит под окном интерфейса
+    /// (см. `webview::WAKES_BEHIND`).
+    pub fn page_visible(&self) -> bool {
+        webview::WAKES_BEHIND || !self.is_waking()
     }
 
     /// Флаги самой вкладки не мешают её усыпить. Активность, звук и загрузки
@@ -122,6 +142,9 @@ impl TabStore {
                 keep_alive: false,
                 no_sleep: false,
                 opener: None,
+                ai_query: None,
+                loaded: false,
+                waking: None,
             },
         );
         id

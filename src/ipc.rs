@@ -296,6 +296,8 @@ pub struct TabView<'a> {
     pub url: &'a str,
     pub loading: bool,
     pub sleeping: bool,
+    /// Страница просыпается: вместо неё видна заглушка.
+    pub waking: bool,
     pub ai: bool,
     pub bookmarked: bool,
     pub no_sleep: bool,

@@ -59,6 +59,8 @@ pub enum UserEvent {
     ShowFallback,
     /// Снимок страницы под окном интерфейса готов или не успел.
     Snapshot(crate::tabs::snapshot::Event),
+    /// Просыпающаяся вкладка: пора спросить страницу, нарисовалась ли она, или ответ.
+    Waking(TabId, crate::tabs::waking::Event),
     Tick,
 }
 

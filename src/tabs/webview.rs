@@ -224,6 +224,46 @@ fn gtk_container(window: &Window) -> gtk::Fixed {
     })
 }
 
+/// Просыпающаяся страница на Windows не прячется, а уходит под окно интерфейса:
+/// WebView2 считает её видимой, поэтому она грузится и рисуется без притормаживания,
+/// а человек видит заглушку интерфейса. На Linux её просто прячем.
+pub const WAKES_BEHIND: bool = cfg!(windows);
+
+/// Уводит webview под окно интерфейса (`behind`) или возвращает поверх него.
+#[cfg(windows)]
+pub fn set_behind(webview: &WebView, behind: bool) {
+    use windows::Win32::Foundation::HWND;
+    use wry::WebViewExtWindows;
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SetWindowPos(
+            hwnd: HWND,
+            after: isize,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+    const HWND_TOP: isize = 0;
+    const HWND_BOTTOM: isize = 1;
+    // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER
+    const FLAGS: u32 = 0x0001 | 0x0002 | 0x0010 | 0x0200;
+    let mut hwnd = HWND::default();
+    // SAFETY: контроллер принадлежит живому webview; его родитель — окно-контейнер wry
+    // внутри нашего окна, указатель на локальную переменную.
+    unsafe {
+        if webview.controller().ParentWindow(&mut hwnd).is_ok() && !hwnd.is_invalid() {
+            let after = if behind { HWND_BOTTOM } else { HWND_TOP };
+            SetWindowPos(hwnd, after, 0, 0, 0, 0, FLAGS);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_behind(_webview: &WebView, _behind: bool) {}
+
 /// Webview закрытой вкладки, который держим только ради идущей загрузки:
 /// его никто не увидит, поэтому память — в экономный режим.
 #[cfg(windows)]

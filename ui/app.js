@@ -62,7 +62,7 @@
     // Что сейчас закрыто нативными webview: id вкладки со страницей и панель ИИ.
     native() {
       const t = activeTab();
-      return { page: t && t.url !== NEWTAB && !t.sleeping ? t.id : null, ai: S.aiOpen && aiReady };
+      return { page: t && t.url !== NEWTAB && !t.sleeping && !t.waking ? t.id : null, ai: S.aiOpen && aiReady };
     },
   });
   const overlayReasons = new Set();
@@ -370,12 +370,22 @@
     const nt = !t || t.url === NEWTAB;
     const c = $('#content');
     c.classList.toggle('nt', nt);
-    c.classList.toggle('zz', !!t && !nt && !!t.sleeping);
+    const zz = !!t && !nt && (!!t.sleeping || !!t.waking);
+    c.classList.toggle('zz', zz);
+    if (zz) renderWaking(t);
     if (nt) renderNewtab();
     if (S.active !== prevActive) {
       prevActive = S.active;
       if (nt && mode === 'url' && !overlayReasons.has('onb') && !overlayReasons.has('sheet')) requestAnimationFrame(() => inp.focus());
     }
+  }
+
+  // Заглушка спящей или просыпающейся страницы: иконка и название сайта.
+  function renderWaking(t) {
+    const fav = $('#wakeFav');
+    const key = parseUrl(t.url)?.origin || t.url;
+    if (fav.dataset.key !== key) { fav.dataset.key = key; fav.innerHTML = favHtml(t.url); }
+    $('#wakeName').textContent = t.title || parseUrl(t.url)?.hostname.replace(/^www\./, '') || t.url;
   }
 
   function renderNewtab() {

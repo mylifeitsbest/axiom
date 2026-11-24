@@ -3,6 +3,7 @@
 //! Панель живёт в отдельном окружении WebView2 (своя папка данных),
 //! поэтому прокси применяется только к ней, а вкладки ходят напрямую.
 
+pub mod follow;
 pub mod proxy;
 
 use std::time::{Duration, Instant};
@@ -27,6 +28,10 @@ pub struct AiPanel {
     pub webview: Option<WebView>,
     /// Когда панель закрыли: спрятанная панель тоже усыпляется.
     pub hidden_since: Option<Instant>,
+    /// Кто открыл панель: от этого зависит, следует ли она за вкладками.
+    pub mode: follow::Mode,
+    /// Запрос, загруженный в панель (`None` — стартовая страница AI Mode).
+    query: Option<String>,
     context: Option<WebContext>,
     proxy_raw: String,
 }
@@ -37,6 +42,8 @@ impl AiPanel {
             open: false,
             webview: None,
             hidden_since: None,
+            mode: follow::Mode::Closed,
+            query: None,
             context: None,
             proxy_raw: proxy_raw.to_string(),
         }
@@ -77,7 +84,14 @@ impl AiPanel {
             .get_or_insert_with(|| WebContext::new(Some(paths.ai_data(&key))))
     }
 
-    /// Открывает панель; `query` — запрос для AI Mode.
+    /// Запрос, ответ на который сейчас в панели. Панель без webview (уснула,
+    /// сменился прокси, открепилась во вкладку) не показывает ничего.
+    pub fn shown_query(&self) -> Option<&str> {
+        self.webview.as_ref().and(self.query.as_deref())
+    }
+
+    /// Открывает панель; `query` — запрос для AI Mode. Запрос, который панель
+    /// уже показывает, не загружается заново: ответ и переписка остаются.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
@@ -91,16 +105,17 @@ impl AiPanel {
     ) -> Result<()> {
         self.open = true;
         self.hidden_since = None;
-        let url = query.filter(|q| !q.trim().is_empty()).map(omnibox::ai_url);
+        let query = query.map(str::trim).filter(|q| !q.is_empty());
         match &self.webview {
             Some(webview) => {
-                if let Some(url) = url {
-                    webview.load_url(&url)?;
+                if let Some(q) = query.filter(|&q| self.query.as_deref() != Some(q)) {
+                    webview.load_url(&omnibox::ai_url(q))?;
+                    self.query = Some(q.to_string());
                 }
             }
             None => {
                 let proxy = self.proxy_config();
-                let start = url.unwrap_or_else(|| omnibox::AI_HOME.to_string());
+                let start = query.map_or_else(|| omnibox::AI_HOME.to_string(), omnibox::ai_url);
                 let context = self.context(paths, shared);
                 let builder = WebViewBuilder::new_with_web_context(context)
                     .with_url(start)
@@ -133,6 +148,7 @@ impl AiPanel {
                 );
                 downloads::install(&webview, None, events.clone());
                 self.webview = Some(webview);
+                self.query = query.map(String::from);
             }
         }
         Ok(())

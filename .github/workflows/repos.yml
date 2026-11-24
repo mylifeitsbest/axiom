@@ -117,12 +117,21 @@ jobs:
       fail-fast: false
       matrix:
         image: ["ubuntu:22.04", "ubuntu:24.04", "kalilinux/kali-rolling", "archlinux:latest"]
+        mode: ["default"]
+        # На Arch скрипт по умолчанию собирает axiom-browser-bin по PKGBUILD для AUR,
+        # а с AXIOM_ARCH_REPO=1 подключает репозиторий [axiom]. Проверяем оба пути.
+        include:
+          - image: "archlinux:latest"
+            mode: "repo"
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
     steps:
       - name: Установка скриптом и проверка
         env:
           DEBIAN_FRONTEND: noninteractive
+          AXIOM_ARCH_REPO: ${{ matrix.mode == 'repo' && '1' || '' }}
+          # PKGBUILD из того же коммита, что и install.sh.
+          AXIOM_PKGBUILD_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/packaging/aur/axiom-browser-bin/PKGBUILD
         run: |
           if command -v pacman >/dev/null 2>&1; then
             pacman -Syu --noconfirm --needed curl
@@ -141,7 +150,9 @@ jobs:
           # Поставился именно наш браузер, а не одноимённый пакет дистрибутива.
           if command -v dpkg-query >/dev/null 2>&1; then
             dpkg-query -W -f '${Package} ${Version} ${Maintainer}\n' axiom-browser | tee /dev/stderr | grep -q "Axiom contributors"
-          else
+          elif [ -n "$AXIOM_ARCH_REPO" ]; then
             pacman -Qi axiom-browser | grep -E "^(Name|Version|URL)"
+          else
+            pacman -Qi axiom-browser-bin | grep -E "^(Name|Version|URL)"
           fi
           echo "Axiom установлен и все библиотеки на месте"

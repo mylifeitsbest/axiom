@@ -35,6 +35,7 @@ use crate::{
         fullscreen::{self, Owner},
         omnibox::{self, NEWTAB},
         sleep::{self, PageState},
+        snapshot::{self, Part, Snapshots},
         webview::{self as tab_webview, Look, TabSpec},
     },
     ui::{self, hotkeys::Hotkey},
@@ -69,6 +70,8 @@ pub struct App {
     ai_rect: Option<Rect>,
     /// Подсказки, настройки или приветствие поверх контента: webview временно прячутся.
     overlay: bool,
+    /// Снимок страницы на месте спрятанных webview, чтобы под окном не было пустого фона.
+    snapshot: Snapshots,
     shown: bool,
     session_dirty: bool,
     /// Последний запрос, отправленный в AI Mode (чтобы не грузить его дважды).
@@ -134,6 +137,7 @@ impl App {
             content: None,
             ai_rect: None,
             overlay: false,
+            snapshot: Snapshots::default(),
             shown: false,
             session_dirty: false,
             last_ai_query: String::new(),
@@ -207,6 +211,10 @@ impl App {
             UserEvent::Imported(result) => self.finish_import(result),
             UserEvent::Translate(event) => self.on_translate(event),
             UserEvent::ShowFallback => self.show_window(),
+            UserEvent::Snapshot(event) => {
+                let step = self.snapshot.on_event(event, &self.events);
+                self.snapshot_step(step);
+            }
             UserEvent::Tick => self.on_tick(),
         }
         Ok(Flow::Continue)
@@ -282,9 +290,11 @@ impl App {
                 self.push_state();
             }
             UiCmd::AiPopOut => self.pop_out_ai(),
-            UiCmd::Overlay { open } => {
-                self.overlay = open;
-                self.apply_layout();
+            UiCmd::Overlay { open } => self.set_overlay(open),
+            UiCmd::SnapshotShown { seq } => {
+                if self.snapshot.shown(seq) {
+                    self.apply_layout();
+                }
             }
             UiCmd::Suggest { q } => {
                 let mut items = self.bookmarks.search(&q, 3);
@@ -518,6 +528,7 @@ impl App {
             eprintln!("не удалось разбудить вкладку: {err:#}");
         }
         let mut is_newtab = false;
+        let covered = self.covered();
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.last_active = Instant::now();
             tab.sleep_requested = None;
@@ -527,7 +538,7 @@ impl App {
                 if let Some(rect) = self.content {
                     let _ = webview.set_bounds(rect);
                 }
-                let _ = webview.set_visible(!self.overlay);
+                let _ = webview.set_visible(!covered);
             }
         }
         if is_newtab {
@@ -539,6 +550,12 @@ impl App {
         self.limit_live_tabs();
         self.session_dirty = true;
         self.push_state();
+        // Под открытым окном был снимок прежней вкладки.
+        if self.overlay {
+            let targets = self.snapshot_targets();
+            let step = self.snapshot.retake(targets, &self.events);
+            self.snapshot_step(step);
+        }
     }
 
     /// Создаёт webview для спящей вкладки.
@@ -554,7 +571,7 @@ impl App {
             id,
             url: &url,
             bounds: self.content.unwrap_or_default(),
-            visible: self.tabs.active == Some(id) && !self.overlay,
+            visible: self.tabs.active == Some(id) && !self.covered(),
             look: self.look(),
             proxy: if ai { self.ai.proxy_config() } else { None },
             ai,
@@ -1158,21 +1175,68 @@ impl App {
         // На весь экран: страница на всё окно поверх интерфейса, остальное спрятано.
         let full = self.fullscreen.is_on().then(|| full_bounds(&self.window));
         let ai_full = self.fullscreen.page == Some(Owner::Ai);
+        let covered = self.covered();
         if let Some(webview) = self.tabs.active_tab().and_then(|t| t.webview.as_ref()) {
             if let Some(rect) = full.or(self.content) {
                 let _ = webview.set_bounds(rect);
             }
-            let visible = if full.is_some() {
-                !ai_full
-            } else {
-                !self.overlay
-            };
+            let visible = if full.is_some() { !ai_full } else { !covered };
             let _ = webview.set_visible(visible);
         }
         match full {
             Some(rect) => self.ai.place(ai_full.then_some(rect), false),
-            None => self.ai.place(self.ai_rect, self.overlay),
+            None => self.ai.place(self.ai_rect, covered),
         }
+    }
+
+    /// Webview спрятаны под окном интерфейса: окно открыто, и снимок уже
+    /// на их месте (или его не будет).
+    fn covered(&self) -> bool {
+        self.overlay && !self.snapshot.holding()
+    }
+
+    /// Окно интерфейса поверх контента открылось или закрылось.
+    fn set_overlay(&mut self, open: bool) {
+        self.overlay = open;
+        if open {
+            // Webview прячутся, когда интерфейс положит на их место снимок.
+            let targets = self.snapshot_targets();
+            let step = self.snapshot.begin(targets, &self.events);
+            self.snapshot_step(step);
+        } else {
+            // Сначала webview снова на экране, потом интерфейс убирает снимок.
+            let view = self.snapshot.end();
+            self.apply_layout();
+            self.send(&ToUi::Snapshot(view));
+        }
+    }
+
+    fn snapshot_step(&self, step: snapshot::Step) {
+        match step {
+            snapshot::Step::Wait => {}
+            snapshot::Step::Show(view) => self.send(&ToUi::Snapshot(view)),
+            snapshot::Step::Hide(view) => {
+                self.apply_layout();
+                if let Some(view) = view {
+                    self.send(&ToUi::Snapshot(view));
+                }
+            }
+        }
+    }
+
+    /// Нативные webview, которые сейчас на экране: страница активной вкладки и панель ИИ.
+    fn snapshot_targets(&self) -> Vec<snapshot::Target> {
+        let page = self
+            .tabs
+            .active_tab()
+            .and_then(|t| snapshot::target(t.webview.as_ref()?, Part::Page, Some(t.id)));
+        let ai = self
+            .ai
+            .webview
+            .as_ref()
+            .filter(|_| self.ai.open && self.ai_rect.is_some())
+            .and_then(|w| snapshot::target(w, Part::Ai, None));
+        page.into_iter().chain(ai).collect()
     }
 
     pub fn on_resize(&mut self) {

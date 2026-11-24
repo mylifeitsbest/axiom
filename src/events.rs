@@ -32,6 +32,18 @@ pub enum UserEvent {
         /// Вкладка-источник; `None` — панель ИИ.
         from: Option<TabId>,
     },
+    /// Страница ответила, как открывать её ссылку: в фоне (средний клик, Ctrl+клик) или впереди.
+    PageTab {
+        url: String,
+        ai: bool,
+        from: Option<TabId>,
+        background: bool,
+    },
+    /// Страница вкладки начала или перестала играть звук.
+    TabAudio {
+        id: TabId,
+        playing: bool,
+    },
     /// Страница ответила перед усыплением: позиция прокрутки и нет ли недописанного текста.
     SleepChecked(TabId, PageState),
     FindResult(bool),

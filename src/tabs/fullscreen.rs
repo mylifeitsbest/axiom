@@ -40,12 +40,12 @@ impl State {
 
     /// Выйти ли из полного экрана перед этим сочетанием клавиш.
     ///
-    /// Видео сворачивается от любого сочетания (как в Chrome: Ctrl+T, Ctrl+Tab).
-    /// В режиме F11 вкладки переключаются как обычно, а выходим, только когда
-    /// нужен сам интерфейс: адресная строка, панели, новая вкладка.
+    /// Видео сворачивается от любого сочетания (как в Chrome: Ctrl+T, Ctrl+Tab),
+    /// кроме звука и масштаба. В режиме F11 вкладки переключаются как обычно, а выходим,
+    /// только когда нужен сам интерфейс: адресная строка, панели, новая вкладка.
     pub fn leaves_on(self, hotkey: Hotkey) -> bool {
         match hotkey {
-            Hotkey::Fullscreen | Hotkey::Escape => false,
+            _ if hotkey.keeps_fullscreen() => false,
             _ if self.page.is_some() => true,
             _ => self.browser && (hotkey.is_ui() || hotkey == Hotkey::NewTab),
         }
@@ -136,6 +136,9 @@ mod tests {
         assert!(!video.leaves_on(Hotkey::Fullscreen));
         assert!(!video.leaves_on(Hotkey::Escape));
         assert!(!video.leaves_on_escape());
+        // Звук и масштаб меняют, не выходя из просмотра.
+        assert!(!video.leaves_on(Hotkey::Mute));
+        assert!(!video.leaves_on(Hotkey::ZoomOut));
     }
 
     #[test]

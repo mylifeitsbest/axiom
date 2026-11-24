@@ -18,7 +18,8 @@ sha2 = "0.10.9"
 tao = "0.37.3"
 thiserror = "2.0.21"
 url = "2.5.9"
-wry = "0.57.3"
+# devtools: F12 и Ctrl+Shift+I открывают инструменты разработчика и в release-сборке.
+wry = { version = "0.57.3", features = ["devtools"] }
 
 [target.'cfg(windows)'.dependencies]
 # Та же версия, что использует wry: нужна для перехвата горячих клавиш внутри страниц.

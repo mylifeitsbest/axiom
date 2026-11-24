@@ -193,6 +193,22 @@ pub enum UiCmd {
         url: String,
         hidden: bool,
     },
+    /// Меню вкладки и значок динамика: команды получают только номер вкладки.
+    ReloadTab {
+        id: u64,
+    },
+    DuplicateTab {
+        id: u64,
+    },
+    ToggleMute {
+        id: u64,
+    },
+    CloseOtherTabs {
+        id: u64,
+    },
+    CloseTabsRight {
+        id: u64,
+    },
     /// Перенести закладки и историю из другого браузера.
     Import {
         browser: crate::storage::import::Browser,
@@ -321,6 +337,10 @@ pub struct TabView<'a> {
     pub ai: bool,
     pub bookmarked: bool,
     pub no_sleep: bool,
+    /// Страница играет звук (значок динамика на вкладке).
+    pub audible: bool,
+    /// Звук вкладки выключен (перечёркнутый динамик).
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -499,6 +519,40 @@ mod tests {
             Ok(UiCmd::ToggleNoSleep { id: 7 })
         ));
         assert!(parse(r#"{"cmd":"toggle_no_sleep"}"#).is_err());
+    }
+
+    #[test]
+    fn tab_menu_commands_take_only_an_id() {
+        assert!(matches!(
+            parse(r#"{"cmd":"reload_tab","id":1}"#),
+            Ok(UiCmd::ReloadTab { id: 1 })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"duplicate_tab","id":2}"#),
+            Ok(UiCmd::DuplicateTab { id: 2 })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"toggle_mute","id":3}"#),
+            Ok(UiCmd::ToggleMute { id: 3 })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"close_other_tabs","id":4}"#),
+            Ok(UiCmd::CloseOtherTabs { id: 4 })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"close_tabs_right","id":5}"#),
+            Ok(UiCmd::CloseTabsRight { id: 5 })
+        ));
+        // Без номера, с чужим номером вместо числа или с адресом — отказ.
+        assert!(parse(r#"{"cmd":"toggle_mute"}"#).is_err());
+        assert!(parse(r#"{"cmd":"close_tabs_right","id":-1}"#).is_err());
+        assert!(parse(r#"{"cmd":"duplicate_tab","id":"7"}"#).is_err());
+        assert!(parse(r#"{"cmd":"reload_tab","url":"view-source:https://a/"}"#).is_err());
+        // Действия страницы из интерфейса — только известные имена сочетаний.
+        assert!(matches!(
+            parse(r#"{"cmd":"hotkey","action":"view_source"}"#),
+            Ok(UiCmd::Hotkey { action }) if crate::ui::hotkeys::Hotkey::parse(&action).is_some()
+        ));
     }
 
     #[test]

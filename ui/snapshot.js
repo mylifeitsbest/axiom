@@ -8,7 +8,7 @@
 function createSnapshot(ax) {
   const HOSTS = { page: '#content', ai: '#aiBody' };
   // Настройкам снимок не нужен: это отдельная вкладка, под ней страницы нет.
-  const POPUPS = { sug: '#sug', dl: '#dlp', upd: '#upp', trp: '#trp', onb: '#onb' };
+  const POPUPS = { sug: '#sug', dl: '#dlp', upd: '#upp', trp: '#trp', tabm: '#tabm', onb: '#onb' };
   // Rust ждёт снимок 150 мс и наш ответ 250 мс — дольше окно не придерживаем.
   const WAIT_LIMIT = 450;
   const shots = {};

@@ -1,10 +1,12 @@
 //! Модель вкладок. Вкладка без webview — «спящая» или новая: память не занимает.
 
 pub mod fullscreen;
+pub mod links;
 pub mod omnibox;
 pub mod popups;
 pub mod sleep;
 pub mod snapshot;
+pub mod tools;
 pub mod waking;
 pub mod webview;
 
@@ -48,6 +50,10 @@ pub struct Tab {
     /// Вкладка просыпается: webview уже грузит страницу, но его не видно, пока
     /// в ней не появится что показать. На его месте заглушка «Просыпается…».
     pub waking: Option<Instant>,
+    /// Звук вкладки выключен. Переживает усыпление: новый webview получает его снова.
+    pub muted: bool,
+    /// Страница сейчас играет звук (по событию движка).
+    pub audible: bool,
 }
 
 impl Tab {
@@ -164,6 +170,8 @@ impl TabStore {
                 ai_query: None,
                 loaded: false,
                 waking: None,
+                muted: false,
+                audible: false,
             },
         );
         id
@@ -229,6 +237,19 @@ impl TabStore {
             .map(|t| t.id)
     }
 
+    /// Куда поставить вкладку, открытую со страницы `opener`: сразу за ней и за теми,
+    /// что она уже открыла, — несколько ссылок в фоне встают по порядку, как в Chrome.
+    pub fn child_index(&self, opener: TabId) -> Option<usize> {
+        let start = self.index_of(opener)? + 1;
+        let children = self
+            .tabs
+            .iter()
+            .skip(start)
+            .take_while(|t| t.opener == Some(opener))
+            .count();
+        Some(start + children)
+    }
+
     /// Какую вкладку активировать после закрытия вкладки с индексом `index`.
     pub fn successor_for(&self, index: usize) -> Option<TabId> {
         self.tabs
@@ -289,6 +310,37 @@ mod tests {
         assert!(s.remove(id, true).is_some());
         assert!(!s.can_restore());
         assert_eq!(s.settings(), None);
+    }
+
+    #[test]
+    fn children_open_in_order() {
+        let mut s = store(3);
+        let ids: Vec<TabId> = s.iter().map(|t| t.id).collect();
+        let opener = ids[0];
+        assert_eq!(s.child_index(opener), Some(1));
+        let a = s.add(
+            "https://a/".into(),
+            String::new(),
+            false,
+            s.child_index(opener),
+        );
+        if let Some(t) = s.get_mut(a) {
+            t.opener = Some(opener);
+        }
+        let b = s.add(
+            "https://b/".into(),
+            String::new(),
+            false,
+            s.child_index(opener),
+        );
+        if let Some(t) = s.get_mut(b) {
+            t.opener = Some(opener);
+        }
+        let order: Vec<TabId> = s.iter().map(|t| t.id).collect();
+        assert_eq!(order, vec![opener, a, b, ids[1], ids[2]]);
+        // У последней вкладки детей нет — новая встаёт в конец.
+        assert_eq!(s.child_index(ids[2]), Some(5));
+        assert_eq!(s.child_index(999), None);
     }
 
     #[test]

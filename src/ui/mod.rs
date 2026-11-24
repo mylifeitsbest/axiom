@@ -91,6 +91,11 @@ const ASSETS: &[Asset] = &[
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/newtab.js"),
     },
+    Asset {
+        path: "/tabmenu.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/tabmenu.js"),
+    },
 ];
 
 pub fn serve(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {

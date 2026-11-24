@@ -274,7 +274,10 @@ function createPanels(ax) {
     if (built) syncScope(sheet);
     if (onb.classList.contains('on')) syncScope(onb);
     const ds = document.getElementById('dsBtn');
-    if (ds) ds.title = `Двойной поиск: ${searchEngineName(ax.B)} + ИИ`;
+    if (ds) {
+      const name = searchEngineName(ax.B);
+      ds.title = ax.B.double_search ? `Двойной поиск включён: ${name} + ИИ` : `Двойной поиск выключен: только ${name}`;
+    }
     if (built) {
       const sys = ax.system();
       const win = sys.platform === 'windows';

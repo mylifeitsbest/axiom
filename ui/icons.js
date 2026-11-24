@@ -1,5 +1,7 @@
 'use strict';
-// Собственный минимальный набор иконок (stroke, 24×24).
+// Собственный минимальный набор иконок: контур, сетка 24×24, без дробных сдвигов.
+// Толщину линии задаёт CSS (.i) в пикселях экрана, она одна при любом размере значка.
+// Деталь с классом f закрашивается во «включённом» состоянии кнопки.
 const ICONS = {
   back: '<path d="M15 6l-6 6 6 6"/>',
   fwd: '<path d="M9 6l6 6-6 6"/>',
@@ -10,7 +12,7 @@ const ICONS = {
   globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.5 3.4 5.3 3.4 8.5s-1 6-3.4 8.5c-2.4-2.5-3.4-5.3-3.4-8.5s1-6 3.4-8.5z"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
   sparkles: '<path d="M12 3.5l1.7 4.8 4.8 1.7-4.8 1.7L12 16.5l-1.7-4.8L5.5 10l4.8-1.7L12 3.5z"/><path d="M18.5 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z"/>',
-  spark: '<path d="M12 5l1.4 4.1 4.1 1.4-4.1 1.4L12 16l-1.4-4.1-4.1-1.4 4.1-1.4L12 5z"/>',
+  spark: '<path d="M12 4l2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6z"/>',
   sliders: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
   min: '<path d="M6.5 12h11"/>',
   max: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/>',
@@ -20,8 +22,8 @@ const ICONS = {
   star: '<path d="M12 4l2.5 5.1 5.6.8-4.1 4 1 5.6L12 16.8l-5 2.7 1-5.6-4.1-4 5.6-.8L12 4z"/>',
   translate: '<path d="M3 5.5h10.5M8.25 3v2.5"/><path d="M11.5 5.5c-.9 4-3.4 7.3-7.5 9.3"/><path d="M6 8.8c1.2 2.4 3 4.2 5.3 5.4"/><path d="M12.5 21l4-10 4 10M13.9 17.6h5.2"/>',
   moon: '<path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/>',
-  // Кружка кофе — «не усыплять». Линии по сетке 14px, чтобы значок в адресной строке был чётким.
-  cup: '<path d="M4.29 9.43h12v6.85a3.43 3.43 0 0 1-3.43 3.43H7.72a3.43 3.43 0 0 1-3.43-3.43z"/><path d="M16.29 11.14h1a2.57 2.57 0 0 1 0 5.14h-1"/><path d="M7.71 3.43v3.43M12.86 3.43v3.43"/>',
+  // Кружка кофе — «не усыплять»: когда включено, кружка закрашена.
+  cup: '<path class="f" d="M4 9.5h12v6.5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z"/><path d="M16 11h1.5a2.75 2.75 0 0 1 0 5.5H16"/><path d="M8 3v3.5M12 3v3.5"/>',
   palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.6 1.7-1.6h2A4.5 4.5 0 0 0 20.5 10C20.5 6.4 16.7 3.5 12 3.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/>',
   layout: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17M9 9v10.5"/>',
   cpu: '<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/>',
@@ -50,4 +52,26 @@ function logoSvg(size, _id = 'l', animated = false) {
 
 function icon(name) {
   return `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+}
+
+/// Значки кнопок окна («свернуть», «развернуть», «восстановить», «закрыть») в пикселях экрана:
+/// viewBox — это 16 CSS px × масштаб Windows, координаты линий — центры пикселей. Тонкие
+/// линии остаются в один чёткий пиксель на 100%, 125% и 150%, как у системных кнопок,
+/// а не расплываются в серую полосу в два пикселя. При смене масштаба app.js рисует заново.
+function capIcon(kind, dpr = window.devicePixelRatio || 1) {
+  const n = 16 * dpr;
+  const g = Math.round(10 * dpr);
+  const w = Math.max(1, Math.round(dpr - 0.25));
+  const o = Math.round((n - g) / 2);
+  const a = o + w / 2;
+  const b = o + g - w / 2;
+  const s = Math.round(2 * dpr);
+  const r = Math.max(1, Math.round(dpr));
+  const body = {
+    min: `<path d="M${o} ${Math.floor(n / 2) + w / 2}H${o + g}"/>`,
+    max: `<rect x="${a}" y="${a}" width="${g - w}" height="${g - w}" rx="${r}"/>`,
+    restore: `<rect x="${a}" y="${a + s}" width="${g - s - w}" height="${g - s - w}" rx="${r}"/><path d="M${a + s} ${a + s}V${a}H${b}V${b - s}H${b - s}"/>`,
+    x: `<path d="M${o} ${o}L${o + g} ${o + g}M${o + g} ${o}L${o} ${o + g}"/>`,
+  }[kind] || '';
+  return `<svg class="i cap" viewBox="0 0 ${n} ${n}" style="stroke-width:${w}" aria-hidden="true">${body}</svg>`;
 }

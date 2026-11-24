@@ -294,7 +294,7 @@ function createDownloads(ax) {
     // В боковой раскладке кнопки внизу — список открывается вверх.
     const up = r.bottom + 6 + h > innerHeight - 8 && r.top - 6 - h >= 8;
     panel.classList.toggle('up', up);
-    Object.assign(panel.style, { left: left + 'px', top: (up ? r.top - 6 - h : r.bottom + 6) + 'px' });
+    Object.assign(panel.style, { left: Math.round(left) + 'px', top: Math.round(up ? r.top - 6 - h : r.bottom + 6) + 'px' });
   }
   function open() {
     if (isOpen()) return;

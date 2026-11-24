@@ -78,6 +78,8 @@ pub enum UserEvent {
     /// Ссылка на приложение (`mailto:`, `tg:`…): запрос страницы или итог запуска.
     AppLink(crate::tabs::external::Event),
     /// Переход по ссылке с метками слежки отменён: загрузить чистый адрес.
+    /// Только WebView2: на Linux переходы внутри вкладки не переписываются.
+    #[cfg_attr(not(windows), allow(dead_code))]
     Untracked {
         id: TabId,
         url: String,

@@ -167,7 +167,7 @@ impl AiPanel {
         let Some(webview) = &self.webview else { return };
         match bounds {
             Some(rect) if self.open && !overlay => {
-                let _ = webview.set_bounds(rect);
+                crate::tabs::webview::set_bounds(webview, rect);
                 let _ = webview.set_visible(true);
             }
             _ => {

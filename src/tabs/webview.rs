@@ -238,11 +238,115 @@ fn gtk_container(window: &Window) -> gtk::Fixed {
                 if let Some(vbox) = window.default_vbox() {
                     vbox.pack_start(&fixed, true, true, 0);
                 }
+                // GtkFixed только что разложил детей по их стартовым размерам — возвращаем
+                // каждому webview его место (см. `gtk_place`).
+                fixed.connect_size_allocate(|_, alloc| gtk_place::relayout(alloc));
                 fixed.show_all();
                 fixed
             })
             .clone()
     })
+}
+
+/// Ставит webview на место: прямоугольник в логических пикселях окна.
+pub fn set_bounds(webview: &WebView, rect: Rect) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        use wry::WebViewExtUnix;
+        let widget = webview.webview().upcast::<gtk::Widget>();
+        let scale = f64::from(widget.scale_factor());
+        let (x, y) = rect.position.to_logical::<i32>(scale).into();
+        let (w, h) = rect.size.to_logical::<i32>(scale).into();
+        gtk_place::remember(&widget, gtk_place::Place::At(x, y, w, h));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = webview.set_bounds(rect);
+    }
+}
+
+/// Интерфейс на всё окно. На Linux он просто растягивается вместе с контейнером:
+/// размер окна от tao в момент `Resized` бывает ещё старым.
+pub fn fill_window(webview: &WebView, rect: Rect) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        use wry::WebViewExtUnix;
+        let _ = rect;
+        let widget = webview.webview().upcast::<gtk::Widget>();
+        gtk_place::remember(&widget, gtk_place::Place::Fill);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = webview.set_bounds(rect);
+    }
+}
+
+/// Linux: места webview в общем `gtk::Fixed`.
+///
+/// `set_bounds` у wry для webview в GtkFixed только разово вызывает `size_allocate`,
+/// а запрошенный размер и позиция остаются стартовыми. При любой перекладке GTK
+/// (оконный менеджер подогнал окно под плитку, развернул его, показалась вкладка)
+/// GtkFixed возвращает детей к стартовым размерам: интерфейс застревал в углу окна.
+/// Здесь каждый webview помнит своё место и получает его после каждой перекладки,
+/// а запрошенный размер сброшен до 1×1, чтобы не мешать окну уменьшаться.
+#[cfg(target_os = "linux")]
+mod gtk_place {
+    use gtk::{glib, prelude::*};
+    use std::cell::RefCell;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Place {
+        /// На весь контейнер (интерфейс).
+        Fill,
+        /// x, y, ширина, высота в логических пикселях от угла контейнера.
+        At(i32, i32, i32, i32),
+    }
+
+    thread_local! {
+        static PLACES: RefCell<Vec<(glib::WeakRef<gtk::Widget>, Place)>> =
+            const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn remember(widget: &gtk::Widget, place: Place) {
+        PLACES.with(|p| {
+            let mut p = p.borrow_mut();
+            p.retain(|(w, _)| w.upgrade().is_some_and(|w| &w != widget));
+            p.push((widget.downgrade(), place));
+        });
+        widget.set_size_request(1, 1);
+        if let Some(parent) = widget.parent() {
+            allocate(widget, place, &parent.allocation());
+        }
+    }
+
+    pub fn relayout(parent: &gtk::Allocation) {
+        // Сначала список, потом размещение: size_allocate не должен застать занятый RefCell.
+        let items: Vec<(gtk::Widget, Place)> = PLACES.with(|p| {
+            let mut p = p.borrow_mut();
+            p.retain(|(w, _)| w.upgrade().is_some());
+            p.iter()
+                .filter_map(|(w, place)| w.upgrade().map(|w| (w, *place)))
+                .collect()
+        });
+        for (widget, place) in items {
+            allocate(&widget, place, parent);
+        }
+    }
+
+    fn allocate(widget: &gtk::Widget, place: Place, parent: &gtk::Allocation) {
+        if !widget.is_visible() {
+            return;
+        }
+        let (x, y, w, h) = match place {
+            Place::Fill => (0, 0, parent.width(), parent.height()),
+            Place::At(x, y, w, h) => (x, y, w, h),
+        };
+        // У GtkFixed нет своего окна: координаты детей — от угла родительского окна.
+        let rect = gtk::Allocation::new(parent.x() + x, parent.y() + y, w.max(1), h.max(1));
+        widget.size_allocate(&rect);
+    }
 }
 
 /// Просыпающаяся страница на Windows не прячется, а уходит под окно интерфейса:

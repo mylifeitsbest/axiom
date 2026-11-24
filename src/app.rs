@@ -588,7 +588,7 @@ impl App {
             internal = tab.is_internal();
             if let Some(webview) = &tab.webview {
                 if let Some(rect) = self.content {
-                    let _ = webview.set_bounds(rect);
+                    tab_webview::set_bounds(webview, rect);
                 }
                 let _ = webview.set_visible(!covered && tab.page_visible());
             }
@@ -1338,7 +1338,7 @@ impl App {
             && let Some(webview) = &tab.webview
         {
             if let Some(rect) = full.or(self.content) {
-                let _ = webview.set_bounds(rect);
+                tab_webview::set_bounds(webview, rect);
             }
             let visible = if full.is_some() { !ai_full } else { !covered };
             let _ = webview.set_visible(visible && tab.page_visible());
@@ -1401,7 +1401,7 @@ impl App {
     }
 
     pub fn on_resize(&mut self) {
-        let _ = self.ui.set_bounds(full_bounds(&self.window));
+        tab_webview::fill_window(&self.ui, full_bounds(&self.window));
         // Окно разворачивается на монитор не сразу, а размер монитора может смениться.
         if self.fullscreen.is_on() {
             self.apply_layout();
@@ -1849,7 +1849,9 @@ fn build_ui(
     // На Linux обработчик загрузок общий для всех webview, а путь выбирает первый
     // зарегистрированный — интерфейс создаётся раньше вкладок.
     let builder = downloads::attach(builder, events);
-    tab_webview::build_child(builder, window).context("не удалось создать интерфейс")
+    let ui = tab_webview::build_child(builder, window).context("не удалось создать интерфейс")?;
+    tab_webview::fill_window(&ui, full_bounds(window));
+    Ok(ui)
 }
 
 fn full_bounds(window: &Window) -> Rect {

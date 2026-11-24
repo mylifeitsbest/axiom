@@ -102,19 +102,41 @@ function createDownloads(ax) {
   }
 
   // ---------- кнопка ----------
+  // Кольцо живёт по своему расписанию: пока значок новой загрузки летит,
+  // кольца ещё нет, а загрузка, закончившаяся в полёте, получит галочку
+  // уже после посадки. idle → run (кольцо крутится) → fin (галочка) → idle.
+  let phase = 'idle';
+  let finTimer = 0;
+  let doneSince = false; // пока кольцо крутилось, что-то докачалось — в конце будет галочка
+  let flying = 0;
+
   function renderBtn() {
     const active = items.filter((d) => d.status === 'active');
     btn.hidden = !items.length;
-    btn.classList.toggle('busy', active.length > 0);
     const sized = active.filter((d) => d.total);
     const indeterminate = active.length > 0 && sized.length < active.length;
     btn.classList.toggle('spin', indeterminate);
     const total = sized.reduce((s, d) => s + d.total, 0);
     const got = sized.reduce((s, d) => s + Math.min(d.received, d.total), 0);
-    btn.style.setProperty('--p', total ? ((got / total) * 100).toFixed(1) : '0');
+    // Короткая дуга видна и на 0% — иначе в начале по кольцу крутилась бы точка.
+    btn.style.setProperty('--p', total ? Math.max(4, (got / total) * 100).toFixed(1) : '0');
     btn.title = active.length
       ? `Загрузки: ${active.length === 1 ? 'идёт одна' : `идут ${active.length}`}${total && !indeterminate ? `, ${Math.floor((got / total) * 100)}%` : ''} (Ctrl+J)`
       : 'Загрузки (Ctrl+J)';
+  }
+  function sync() {
+    if (flying) return;
+    if (items.some((d) => d.status === 'active')) setPhase('run');
+    else if (phase === 'run' || doneSince) setPhase(doneSince && ax.speed() ? 'fin' : 'idle');
+  }
+  function setPhase(p) {
+    if (p === phase) return;
+    clearTimeout(finTimer);
+    phase = p;
+    if (p !== 'run') doneSince = false;
+    btn.classList.toggle('busy', p === 'run');
+    btn.classList.toggle('fin', p === 'fin');
+    if (p === 'fin') finTimer = setTimeout(() => setPhase('idle'), ax.ms(1300) + 50);
   }
   function flash(cls) {
     if (!ax.speed()) return;
@@ -122,7 +144,128 @@ function createDownloads(ax) {
     void btn.offsetWidth;
     btn.classList.add(cls);
   }
-  btn.addEventListener('animationend', (e) => { if (e.target === btn || e.target.closest?.('#dlBtn')) btn.classList.remove('bump', 'done'); });
+  // Разовые анимации снимаем по окончании, чтобы их можно было повторить.
+  const ONCE = { pop: 'in', dlGlow: 'catch', dlDone: 'done' };
+  btn.addEventListener('animationend', (e) => { if (ONCE[e.animationName]) btn.classList.remove(ONCE[e.animationName]); });
+
+  // ---------- «вжух»: новая загрузка влетает в кнопку ----------
+  // Страница — отдельный нативный webview поверх области контента, и всё, что
+  // интерфейс рисует там, скрыто под ней. Поэтому значок стартует за краем
+  // страницы (она сама его обрезает — файл будто выныривает из неё), а дальше
+  // летит только над панелью.
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  // Плавность как у cubic-bezier в CSS, но в JS: так известна скорость значка
+  // в каждой точке, и хвост за ним тянется нужной длины.
+  function bezier(x1, y1, x2, y2) {
+    const at = (a, b, t) => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+    return (x) => {
+      let lo = 0, hi = 1;
+      for (let n = 0; n < 24; n++) { const m = (lo + hi) / 2; if (at(x1, x2, m) < x) lo = m; else hi = m; }
+      return at(y1, y2, (lo + hi) / 2);
+    };
+  }
+  const flightEase = bezier(0.5, 0, 0.3, 1);
+  // Долю времени значок летит, остаток — тает уже в самой кнопке.
+  const ARRIVE = 0.82;
+
+  // Несколько загрузок разом: значки вылетают друг за другом, а не кучей,
+  // у каждого своя дорожка (стартует чуть дальше), больше четырёх — без полёта.
+  let slot = 0;
+  function launch(list) {
+    if (!ax.speed() || document.hidden) return;
+    for (const d of list) {
+      const lane = flying;
+      if (lane >= 4) return;
+      flying++;
+      const now = performance.now();
+      slot = Math.max(now, slot + ax.ms(130));
+      setTimeout(() => fly(d, lane), slot - now);
+    }
+  }
+  let caught = 0;
+  function land() {
+    flying--;
+    // Вереницу значков кнопка ловит одним движением, а не дёргается на каждый.
+    if (performance.now() - caught > ax.ms(400)) { caught = performance.now(); flash('catch'); }
+    sync();
+  }
+
+  // Дуга — квадратичная кривая Безье от края страницы к центру кнопки.
+  function flightPath(i) {
+    const b = btn.getBoundingClientRect();
+    const c = $('#content').getBoundingClientRect();
+    if (btn.hidden || !b.width || !c.width) return null;
+    const end = [b.left + b.width / 2, b.top + b.height / 2];
+    let start, ctrl;
+    if (end[1] < c.top) {
+      // Кнопка над страницей: значок поднимается из-за верхнего края и сверху падает в кнопку.
+      start = [clamp(end[0] - 150 - 20 * i, c.left + 30, c.right - 30), c.top + 18];
+      // Вершина дуги ровно на высоте top, чтобы значок не ушёл за край окна.
+      const top = Math.min(end[1], Math.max(14, end[1] - 24));
+      ctrl = [start[0] + (end[0] - start[0]) * 0.4, top - Math.sqrt((start[1] - top) * (end[1] - top))];
+    } else {
+      // Боковая раскладка: вылетает из-за бокового края и сверху падает в кнопку.
+      start = [end[0] < c.left ? c.left + 18 : c.right - 18, clamp(end[1] - 150 - 20 * i, c.top + 30, c.bottom - 30)];
+      ctrl = [end[0], start[1]];
+    }
+    const N = 36;
+    const pts = [];
+    for (let n = 0; n <= N; n++) {
+      const t = flightEase(Math.min(1, n / N / ARRIVE));
+      const u = 1 - t;
+      pts.push([u * u * start[0] + 2 * u * t * ctrl[0] + t * t * end[0], u * u * start[1] + 2 * u * t * ctrl[1] + t * t * end[1], t]);
+    }
+    return { pts, dir: Math.sign(end[0] - start[0]) || 1 };
+  }
+
+  function fly(d, i) {
+    const path = flightPath(i);
+    if (!path) { land(); return; }
+    const { pts, dir } = path;
+    const N = pts.length - 1;
+    const vel = pts.map((_, n) => {
+      const a = pts[Math.max(0, n - 1)];
+      const z = pts[Math.min(N, n + 1)];
+      return [Math.hypot(z[0] - a[0], z[1] - a[1]), Math.atan2(z[1] - a[1], z[0] - a[0])];
+    });
+    const vmax = Math.max(1e-6, ...vel.map((v) => v[0]));
+    const chip = [];
+    const tail = [];
+    let ang = vel[0][1];
+    pts.forEach(([x, y, t], n) => {
+      const offset = n / N;
+      const fade = Math.min(1, offset / 0.06, (1 - offset) / (1 - ARRIVE));
+      // Вынырнув, значок подрастает, а у кнопки сжимается — «проваливается» в неё.
+      const sc = offset > ARRIVE ? 0.5 - ((offset - ARRIVE) / (1 - ARRIVE)) * 0.3
+        : t < 0.3 ? 0.7 + t : t < 0.65 ? 1 : 1 - ((t - 0.65) / 0.35) ** 2 * 0.5;
+      chip.push({ offset, opacity: fade, transform: `translate(${x}px,${y}px) rotate(${dir * 12 * Math.sin(Math.PI * t)}deg) scale(${sc})` });
+      // Угол без скачков через ±180°, иначе хвост крутанётся на полный оборот.
+      let a = vel[n][1];
+      while (a - ang > Math.PI) a -= 2 * Math.PI;
+      while (ang - a > Math.PI) a += 2 * Math.PI;
+      ang = a;
+      const v = vel[n][0] / vmax;
+      tail.push({ offset, opacity: fade * v * 0.6, transform: `translate(${x}px,${y}px) rotate(${a}rad) scaleX(${Math.max(0.01, v * sc)})` });
+    });
+
+    const { ext, color } = badge(d.name);
+    const el = document.createElement('div');
+    el.className = 'dl-fly';
+    el.style.setProperty('--f', color);
+    el.innerHTML = `<i></i><b${ext.length > 3 ? ' class="l4"' : ''}>${ext ? ax.esc(ext) : icon('file')}</b>`;
+    document.body.append(el);
+    const duration = ax.ms(640);
+    el.firstElementChild.animate(tail, { duration, fill: 'both' });
+    const anim = el.lastElementChild.animate(chip, { duration, fill: 'both' });
+    // Кнопка «ловит» значок, как только он в неё входит, — пока он тает внутри.
+    let landed = false;
+    const touch = () => { if (!landed) { landed = true; land(); } };
+    const done = () => { el.remove(); touch(); };
+    setTimeout(touch, duration * (ARRIVE - 0.04));
+    anim.onfinish = anim.oncancel = done;
+    // Свёрнутое окно может придержать анимацию — посадка всё равно случится.
+    setTimeout(done, duration + 500);
+  }
 
   // ---------- панель ----------
   const isOpen = () => panel.classList.contains('on');
@@ -185,11 +328,19 @@ function createDownloads(ax) {
     const prev = seen;
     seen = new Map(items.map((d) => [d.id, d.status]));
     for (const id of rates.keys()) if (seen.get(id) !== 'active') rates.delete(id);
-    if (prev) {
-      if (items.some((d) => d.status === 'active' && !prev.has(d.id))) flash('bump');
-      else if (items.some((d) => d.status === 'done' && prev.get(d.id) === 'active')) flash('done');
-    }
+    const hidden = btn.hidden;
     renderBtn();
+    // Первый список — восстановленные с прошлого раза загрузки: им не влетать.
+    if (prev) {
+      if (hidden && !btn.hidden) flash('in');
+      launch(items.filter((d) => !prev.has(d.id)));
+      if (items.some((d) => d.status === 'done' && prev.get(d.id) === 'active')) {
+        doneSince = true;
+        // Остальные ещё качаются — готовый файл отмечаем коротким кругом.
+        if (phase === 'run' && items.some((d) => d.status === 'active')) flash('done');
+      }
+    }
+    sync();
     if (isOpen()) { renderList(); position(); }
   }
   function onProgress(m) {

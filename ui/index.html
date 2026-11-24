@@ -86,8 +86,12 @@
   <div class="acts" id="acts">
     <button class="upd" id="updBtn" hidden><span data-i="up"></span><span class="upd-t">Обновить</span></button>
     <button class="ib dl" id="dlBtn" title="Загрузки (Ctrl+J)" hidden>
-      <svg class="ring" viewBox="0 0 28 28" aria-hidden="true"><circle class="rt" cx="14" cy="14" r="12"/><circle class="rp" cx="14" cy="14" r="12" pathLength="100"/></svg>
-      <span data-i="download"></span>
+      <span class="dl-rg" aria-hidden="true">
+        <svg class="ring" viewBox="0 0 28 28"><circle class="rt" cx="14" cy="14" r="12"/><circle class="rp" cx="14" cy="14" r="12" pathLength="100"/></svg>
+        <i class="dl-comet"></i>
+      </span>
+      <span class="dl-ic" data-i="download"></span>
+      <span class="dl-ok" data-i="check" aria-hidden="true"></span>
     </button>
     <button class="ib" id="aiBtn" title="AI Mode (Ctrl+K)" data-i="sparkles"></button>
     <button class="ib" id="setBtn" title="Настройки (Ctrl+,)" data-i="sliders"></button>

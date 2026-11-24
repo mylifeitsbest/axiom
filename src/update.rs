@@ -82,6 +82,8 @@ pub enum How {
     InPlace,
     Apt,
     Pacman,
+    /// Пакет `axiom-browser-bin` из AUR (или собранный по его PKGBUILD через makepkg).
+    Aur,
     /// Только вручную: страница релиза (архив на Linux, другие системы).
     Manual,
 }
@@ -93,6 +95,7 @@ impl How {
             match how.as_str() {
                 "apt" => return Self::Apt,
                 "pacman" => return Self::Pacman,
+                "aur" => return Self::Aur,
                 "manual" => return Self::Manual,
                 _ => {}
             }
@@ -111,6 +114,10 @@ impl How {
             Self::Apt => "sudo apt update && sudo apt install --only-upgrade axiom-browser",
             // В Arch обновляют всю систему сразу: частичное обновление (-Sy) её ломает.
             Self::Pacman => "sudo pacman -Syu",
+            // Скрипт сам выберет yay/paru или makepkg и не обновляет всю систему.
+            Self::Aur => {
+                "curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh"
+            }
             Self::InPlace | Self::Manual => "",
         }
     }
@@ -127,14 +134,22 @@ fn linux_how() -> How {
     {
         return How::Apt;
     }
-    let pacman_pkg = std::fs::read_dir("/var/lib/pacman/local").is_ok_and(|dir| {
-        dir.flatten().any(|e| {
-            e.file_name()
-                .to_str()
-                .and_then(|n| n.strip_prefix("axiom-browser-"))
-                .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+    // Каталог пакета в базе pacman: `<имя>-<версия>-<сборка>`.
+    let pacman_has = |name: &str| {
+        std::fs::read_dir("/var/lib/pacman/local").is_ok_and(|dir| {
+            dir.flatten().any(|e| {
+                e.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_prefix(name))
+                    .and_then(|rest| rest.strip_prefix('-'))
+                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+            })
         })
-    });
+    };
+    if pacman_has("axiom-browser-bin") {
+        return How::Aur;
+    }
+    let pacman_pkg = pacman_has("axiom-browser");
     let pacman_repo = std::fs::read_to_string("/etc/pacman.conf")
         .is_ok_and(|conf| conf.lines().any(|l| l.trim() == "[axiom]"));
     if pacman_pkg && pacman_repo {

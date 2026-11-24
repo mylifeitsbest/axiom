@@ -66,10 +66,12 @@ function createUpdate(ax) {
         if (U.busy) extra = `<p class="upp-warn">${icon('download')}<span>Идут загрузки — перезапуск их прервёт.</span></p>`;
         acts = button('later', 'Позже') + button('install', `${icon('up')}Обновить и перезапустить`, true);
       }
-    } else if (U.how === 'apt' || U.how === 'pacman') {
+    } else if (U.how === 'apt' || U.how === 'pacman' || U.how === 'aur') {
       text = U.how === 'apt'
         ? 'Axiom стоит из репозитория apt и обновится вместе с системой. Чтобы обновить сейчас, выполните в терминале:'
-        : 'Axiom обновится вместе с системой. Чтобы обновить сейчас, выполните в терминале:';
+        : U.how === 'aur'
+          ? 'Axiom стоит из AUR (axiom-browser-bin). Чтобы обновить только его, без обновления всей системы, выполните в терминале:'
+          : 'Axiom обновится вместе с системой. Чтобы обновить сейчас, выполните в терминале:';
       // Переносы только между словами: `--only-upgrade` не разорвётся на дефисе.
       const words = U.command.split(' ').map((w) => `<span>${ax.esc(w)}</span>`).join(' ');
       extra = `<div class="upp-cmd"><code>${words}</code><button class="ib sm" data-u="copy" title="Скопировать">${icon('copy')}</button></div>`;

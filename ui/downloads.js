@@ -55,10 +55,14 @@ function createDownloads(ax) {
     r.bytes = d.received;
   }
 
+  // Файл опасного типа ждёт решения пользователя — кольцо его не ждёт.
+  const running = (d) => d.status === 'active' && !d.ask;
+
   // ---------- строки списка ----------
   function sub(d) {
     switch (d.status) {
       case 'active': {
+        if (d.ask) return 'Этот тип файла может навредить компьютеру';
         if (!d.received) return 'Начинается…';
         const speed = rates.get(d.id)?.speed || 0;
         const parts = [d.total ? `${size(d.received)} из ${size(d.total)}` : size(d.received)];
@@ -69,7 +73,7 @@ function createDownloads(ax) {
       case 'done':
         if (!d.exists) return 'Файл удалён или перемещён';
         return [size(d.total ?? d.received), host(d.url)].filter(Boolean).join(' · ');
-      case 'cancelled': return 'Отменено';
+      case 'cancelled': return d.error || 'Отменено';
       default: return d.error || 'Не удалось скачать';
     }
   }
@@ -80,16 +84,22 @@ function createDownloads(ax) {
     const active = d.status === 'active';
     const openable = d.status === 'done' && d.exists;
     const acts = [];
-    if (d.status !== 'cancelled' && d.status !== 'failed' && (d.exists || active)) {
+    // Решение о файле опасного типа — кнопками под именем, сбоку ничего.
+    if (!d.ask && d.status !== 'cancelled' && d.status !== 'failed' && (d.exists || active)) {
       acts.push(`<button class="ib sm" data-a="show" title="Показать в папке">${icon('folder')}</button>`);
     }
-    if (active && canCancel) acts.push(`<button class="ib sm" data-a="cancel" title="Отменить">${icon('x')}</button>`);
+    if (active && !d.ask && canCancel) acts.push(`<button class="ib sm" data-a="cancel" title="Отменить">${icon('x')}</button>`);
     if (!active) acts.push(`<button class="ib sm" data-a="remove" title="Убрать из списка">${icon('x')}</button>`);
-    const bar = active ? `<span class="dl-bar${d.total ? '' : ' ind'}"><i style="--p:${pct(d).toFixed(1)}"></i></span>` : '';
+    const bar = running(d) ? `<span class="dl-bar${d.total ? '' : ' ind'}"><i style="--p:${pct(d).toFixed(1)}"></i></span>` : '';
+    // «Удалить» — та же отмена: файл не сохраняется.
+    const ask = d.ask
+      ? '<span class="dl-ask"><button class="btn" data-a="cancel">Удалить</button><button class="btn ghost" data-a="keep">Сохранить всё равно</button></span>'
+      : '';
     const title = openable ? `Открыть ${d.name}` : d.name;
-    return `<div class="dli st-${ax.esc(d.status)}${openable ? ' open' : ''}${d.exists ? '' : ' gone'}" data-id="${d.id}" title="${ax.esc(title)}">
-      <span class="dl-ext" style="--f:${d.status === 'cancelled' || d.status === 'failed' || !d.exists ? 'var(--t3)' : color}">${ext ? ax.esc(ext) : icon('file')}</span>
-      <span class="dl-main"><span class="dl-name">${ax.esc(d.name)}</span><span class="dl-sub">${ax.esc(sub(d))}</span>${bar}</span>
+    const fill = d.ask ? 'var(--dl-warn)' : d.status === 'cancelled' || d.status === 'failed' || !d.exists ? 'var(--t3)' : color;
+    return `<div class="dli st-${ax.esc(d.status)}${d.ask ? ' ask' : ''}${openable ? ' open' : ''}${d.exists ? '' : ' gone'}" data-id="${d.id}" title="${ax.esc(title)}">
+      <span class="dl-ext" style="--f:${fill}">${ext ? ax.esc(ext) : icon('file')}</span>
+      <span class="dl-main"><span class="dl-name">${ax.esc(d.name)}</span><span class="dl-sub">${ax.esc(sub(d))}</span>${bar}${ask}</span>
       <span class="dl-acts">${acts.join('')}</span>
     </div>`;
   }
@@ -111,7 +121,8 @@ function createDownloads(ax) {
   let flying = 0;
 
   function renderBtn() {
-    const active = items.filter((d) => d.status === 'active');
+    const active = items.filter(running);
+    const asking = items.some((d) => d.ask);
     btn.hidden = !items.length;
     const sized = active.filter((d) => d.total);
     const indeterminate = active.length > 0 && sized.length < active.length;
@@ -120,13 +131,17 @@ function createDownloads(ax) {
     const got = sized.reduce((s, d) => s + Math.min(d.received, d.total), 0);
     // Короткая дуга видна и на 0% — иначе в начале по кольцу крутилась бы точка.
     btn.style.setProperty('--p', total ? Math.max(4, (got / total) * 100).toFixed(1) : '0');
-    btn.title = active.length
-      ? `Загрузки: ${active.length === 1 ? 'идёт одна' : `идут ${active.length}`}${total && !indeterminate ? `, ${Math.floor((got / total) * 100)}%` : ''} (Ctrl+J)`
-      : 'Загрузки (Ctrl+J)';
+    btn.title = asking
+      ? 'Загрузки: файл ждёт вашего решения (Ctrl+J)'
+      : active.length
+        ? `Загрузки: ${active.length === 1 ? 'идёт одна' : `идут ${active.length}`}${total && !indeterminate ? `, ${Math.floor((got / total) * 100)}%` : ''} (Ctrl+J)`
+        : 'Загрузки (Ctrl+J)';
   }
   function sync() {
     if (flying) return;
-    if (items.some((d) => d.status === 'active')) setPhase('run');
+    // Метка «ждёт решения» появляется, когда значок файла уже долетел до кнопки.
+    btn.classList.toggle('ask', items.some((d) => d.ask));
+    if (items.some(running)) setPhase('run');
     else if (phase === 'run' || doneSince) setPhase(doneSince && ax.speed() ? 'fin' : 'idle');
   }
   function setPhase(p) {
@@ -317,6 +332,7 @@ function createDownloads(ax) {
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'show') { ax.send({ cmd: 'download_show', id }); close(); }
     else if (a === 'cancel') ax.send({ cmd: 'download_cancel', id });
+    else if (a === 'keep') ax.send({ cmd: 'download_keep', id });
     else if (a === 'remove') ax.send({ cmd: 'download_remove', id });
     else if (row.classList.contains('open')) { ax.send({ cmd: 'download_open', id }); close(); }
   });

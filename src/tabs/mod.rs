@@ -1,5 +1,6 @@
 //! Модель вкладок. Вкладка без webview — «спящая» или новая: память не занимает.
 
+pub mod fullscreen;
 pub mod omnibox;
 pub mod popups;
 pub mod sleep;

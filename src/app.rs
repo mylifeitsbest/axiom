@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use tao::{
     dpi::{LogicalPosition, LogicalSize},
     event_loop::{EventLoop, EventLoopProxy},
-    window::{ResizeDirection, Window, WindowBuilder},
+    window::{Fullscreen, ResizeDirection, Window, WindowBuilder},
 };
 use url::Url;
 use wry::{NewWindowResponse, RGBA, Rect, WebContext, WebView, WebViewBuilder};
@@ -30,6 +30,7 @@ use crate::{
     system,
     tabs::{
         TabId, TabStore,
+        fullscreen::{self, Owner},
         omnibox::{self, NEWTAB},
         sleep::{self, PageState},
         webview::{self as tab_webview, Look, TabSpec},
@@ -82,6 +83,8 @@ pub struct App {
     settings_dirty: bool,
     /// Что последним сообщили интерфейсу о развёрнутости окна.
     maximized: Option<bool>,
+    /// Видео или страница (F11) на весь экран.
+    fullscreen: fullscreen::State,
 }
 
 impl App {
@@ -137,6 +140,7 @@ impl App {
             closed: false,
             settings_dirty: false,
             maximized: None,
+            fullscreen: fullscreen::State::default(),
         };
         app.restore_session(open);
         Ok(app)
@@ -177,6 +181,7 @@ impl App {
             }
             UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
+            UserEvent::Fullscreen { owner, on } => self.on_page_fullscreen(owner, on),
             UserEvent::Download(event) => self.on_download(event),
             UserEvent::Update(event) => return Ok(self.on_update(event)),
             UserEvent::External(urls) => {
@@ -393,6 +398,9 @@ impl App {
     }
 
     fn on_hotkey(&mut self, hotkey: Hotkey) -> Result<()> {
+        if self.fullscreen.leaves_on(hotkey) {
+            self.leave_fullscreen();
+        }
         if hotkey.is_ui() {
             let _ = self.ui.focus();
             self.send(&ToUi::Hotkey {
@@ -421,6 +429,12 @@ impl App {
                 }
             }
             Hotkey::Bookmark => self.toggle_bookmark(),
+            Hotkey::Fullscreen => self.toggle_fullscreen(),
+            Hotkey::Escape => {
+                if self.fullscreen.leaves_on_escape() {
+                    self.leave_fullscreen();
+                }
+            }
             Hotkey::Reload | Hotkey::Back | Hotkey::Forward => {
                 let Some(id) = active else { return Ok(()) };
                 let Some(tab) = self.tabs.get(id) else {
@@ -498,6 +512,9 @@ impl App {
         }
         if is_newtab {
             let _ = self.ui.focus();
+        }
+        if self.fullscreen.is_on() {
+            self.sync_fullscreen();
         }
         self.limit_live_tabs();
         self.session_dirty = true;
@@ -724,7 +741,8 @@ impl App {
             self.ai_rect,
             look,
         )?;
-        self.ai.place(self.ai_rect, self.overlay);
+        // Через раскладку: поверх страницы на весь экран панель не показываем.
+        self.apply_layout();
         Ok(())
     }
 
@@ -1005,20 +1023,133 @@ impl App {
         }
     }
 
+    // ---------- полный экран ----------
+
+    /// Страница развернула элемент на весь экран или свернула его (в том числе по Esc).
+    fn on_page_fullscreen(&mut self, owner: Owner, on: bool) {
+        if !on {
+            if self.fullscreen.page == Some(owner) {
+                self.fullscreen.page = None;
+                self.sync_fullscreen();
+            }
+            return;
+        }
+        let shown = match owner {
+            Owner::Tab(id) => self.tabs.active == Some(id),
+            Owner::Ai => self.ai.open,
+        };
+        if !shown {
+            // Невидимая страница не может занять собой весь экран.
+            self.exit_page(owner);
+            return;
+        }
+        if let Some(old) = self.fullscreen.page.filter(|&o| o != owner) {
+            self.exit_page(old);
+        }
+        self.fullscreen.page = Some(owner);
+        self.sync_fullscreen();
+    }
+
+    /// F11: включает режим или выходит из любого полного экрана.
+    fn toggle_fullscreen(&mut self) {
+        if self.fullscreen.is_on() {
+            self.leave_fullscreen();
+            return;
+        }
+        if self.tabs.active_tab().is_some_and(|t| t.webview.is_some()) {
+            self.fullscreen.browser = true;
+            self.sync_fullscreen();
+        } else {
+            self.send(&ToUi::Toast {
+                text: "Откройте сайт, чтобы развернуть его на весь экран",
+            });
+        }
+    }
+
+    fn leave_fullscreen(&mut self) {
+        if let Some(owner) = self.fullscreen.page.take() {
+            self.exit_page(owner);
+        }
+        self.fullscreen.browser = false;
+        self.sync_fullscreen();
+    }
+
+    fn exit_page(&self, owner: Owner) {
+        let webview = match owner {
+            Owner::Tab(id) => self.tabs.get(id).and_then(|t| t.webview.as_ref()),
+            Owner::Ai => self.ai.webview.as_ref(),
+        };
+        if let Some(webview) = webview {
+            fullscreen::exit_page(webview);
+        }
+    }
+
+    /// Приводит окно и раскладку к `self.fullscreen`. Страница, которую больше
+    /// не видно (переключили или закрыли вкладку, спрятали панель ИИ), выходит
+    /// из полного экрана: окно не должно остаться без рамки и без интерфейса.
+    fn sync_fullscreen(&mut self) {
+        let visible = match self.fullscreen.page {
+            Some(Owner::Tab(id)) => {
+                self.tabs.active == Some(id)
+                    && self.tabs.get(id).is_some_and(|t| t.webview.is_some())
+            }
+            Some(Owner::Ai) => self.ai.open && self.ai.webview.is_some(),
+            None => true,
+        };
+        if !visible && let Some(owner) = self.fullscreen.page.take() {
+            self.exit_page(owner);
+        }
+        // F11 растягивает страницу, а новая вкладка — это сам интерфейс.
+        if self.fullscreen.browser && !self.tabs.active_tab().is_some_and(|t| t.webview.is_some()) {
+            self.fullscreen.browser = false;
+        }
+        let on = self.fullscreen.is_on();
+        let entering = on && self.window.fullscreen().is_none();
+        self.window
+            .set_fullscreen(on.then_some(Fullscreen::Borderless(None)));
+        self.apply_layout();
+        if entering {
+            // Фокус мог остаться в спрятанном интерфейсе — тогда Esc и клавиши
+            // уходили бы туда, а не странице.
+            let webview = match self.fullscreen.page {
+                Some(Owner::Ai) => self.ai.webview.as_ref(),
+                _ => self.tabs.active_tab().and_then(|t| t.webview.as_ref()),
+            };
+            if let Some(webview) = webview {
+                let _ = webview.focus();
+            }
+        }
+    }
+
     // ---------- раскладка и окно ----------
 
     fn apply_layout(&self) {
+        // На весь экран: страница на всё окно поверх интерфейса, остальное спрятано.
+        let full = self.fullscreen.is_on().then(|| full_bounds(&self.window));
+        let ai_full = self.fullscreen.page == Some(Owner::Ai);
         if let Some(webview) = self.tabs.active_tab().and_then(|t| t.webview.as_ref()) {
-            if let Some(rect) = self.content {
+            if let Some(rect) = full.or(self.content) {
                 let _ = webview.set_bounds(rect);
             }
-            let _ = webview.set_visible(!self.overlay);
+            let visible = if full.is_some() {
+                !ai_full
+            } else {
+                !self.overlay
+            };
+            let _ = webview.set_visible(visible);
         }
-        self.ai.place(self.ai_rect, self.overlay);
+        match full {
+            Some(rect) => self.ai.place(ai_full.then_some(rect), false),
+            None => self.ai.place(self.ai_rect, self.overlay),
+        }
     }
 
     pub fn on_resize(&mut self) {
         let _ = self.ui.set_bounds(full_bounds(&self.window));
+        // Окно разворачивается на монитор не сразу, а размер монитора может смениться.
+        if self.fullscreen.is_on() {
+            self.apply_layout();
+        }
         // Resized приходит на каждый шаг перетаскивания рамки — шлём только перемену.
         if self.maximized != Some(self.window.is_maximized()) {
             self.push_window_state();
@@ -1061,6 +1192,10 @@ impl App {
 
     fn on_tick(&mut self) {
         self.updater.tick(self.settings.check_updates, &self.events);
+        // Страховка: webview страницы на весь экран мог пропасть без нашего ведома.
+        if self.fullscreen.is_on() {
+            self.sync_fullscreen();
+        }
         self.drop_unanswered();
         let idle = self.idle_limit();
         self.sleep_idle_tabs(idle);

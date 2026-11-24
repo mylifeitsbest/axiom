@@ -664,6 +664,7 @@
     if (mod && c === 'KeyD') return 'bookmark';
     if (mod && c === 'KeyJ') return 'downloads';
     if ((mod && c === 'KeyR') || c === 'F5') return 'reload';
+    if (c === 'F11' && !mod && !e.altKey && !e.shiftKey) return 'fullscreen';
     if (mod && c === 'Comma') return 'settings';
     if (e.altKey && c === 'ArrowLeft') return 'back';
     if (e.altKey && c === 'ArrowRight') return 'forward';

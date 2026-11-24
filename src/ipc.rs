@@ -146,6 +146,10 @@ pub enum UiCmd {
     Overlay {
         open: bool,
     },
+    /// Снимок страницы лёг на место: теперь её webview можно прятать.
+    SnapshotShown {
+        seq: u64,
+    },
     Suggest {
         q: String,
     },
@@ -372,6 +376,8 @@ pub enum ToUi<'a> {
     },
     Update(crate::update::View),
     Translate(crate::translate::View<'a>),
+    /// Снимок страницы под окном (или «убрать снимок»).
+    Snapshot(crate::tabs::snapshot::View),
 }
 
 #[cfg(test)]

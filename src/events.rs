@@ -54,6 +54,8 @@ pub enum UserEvent {
     Translate(crate::translate::Event),
     /// Окно так и не получило `ready` от интерфейса — показываем его принудительно.
     ShowFallback,
+    /// Снимок страницы под окном интерфейса готов или не успел.
+    Snapshot(crate::tabs::snapshot::Event),
     Tick,
 }
 

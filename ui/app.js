@@ -56,12 +56,23 @@
 
   // Пока поверх контента что-то открыто (подсказки, настройки, приветствие),
   // нативные webview страниц прячутся — иначе они перекрыли бы интерфейс.
+  // На их месте остаётся снимок страницы (ui/snapshot.js).
+  const snap = createSnapshot({
+    send,
+    // Что сейчас закрыто нативными webview: id вкладки со страницей и панель ИИ.
+    native() {
+      const t = activeTab();
+      return { page: t && t.url !== NEWTAB && !t.sleeping ? t.id : null, ai: S.aiOpen && aiReady };
+    },
+  });
   const overlayReasons = new Set();
   function setOverlay(reason, on) {
     const before = overlayReasons.size > 0;
     if (on) overlayReasons.add(reason); else overlayReasons.delete(reason);
     const after = overlayReasons.size > 0;
+    if (on) snap.opening(reason, !before);
     if (before !== after) send({ cmd: 'overlay', open: after });
+    if (!on) snap.closing(reason, !after);
   }
 
   // ---------- загрузки (ui/downloads.js) ----------
@@ -739,6 +750,7 @@
     renderOmni();
     renderAwake();
     renderAi();
+    snap.sync();
   }
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
   let firstSettings = true;
@@ -790,6 +802,7 @@
     download_progress(m) { dl.onProgress(m); },
     update(m) { upd.onState(m); },
     translate(m) { tr.onState(m); },
+    snapshot(m) { snap.onMessage(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

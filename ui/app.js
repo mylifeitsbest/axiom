@@ -69,7 +69,7 @@
     // Что сейчас закрыто нативными webview: id вкладки со страницей и панель ИИ.
     native() {
       const t = activeTab();
-      return { page: isPage(t) && !t.sleeping ? t.id : null, ai: S.aiOpen && aiReady && !isSettings(t) };
+      return { page: isPage(t) && !t.sleeping && !t.waking ? t.id : null, ai: S.aiOpen && aiReady && !isSettings(t) };
     },
   });
   const overlayReasons = new Set();
@@ -390,12 +390,22 @@
     const nt = !t || t.url === NEWTAB;
     const c = $('#content');
     c.classList.toggle('nt', nt);
-    c.classList.toggle('zz', !!t && !nt && !!t.sleeping);
+    const zz = !!t && !nt && (!!t.sleeping || !!t.waking);
+    c.classList.toggle('zz', zz);
+    if (zz) renderWaking(t);
     newtab.render(nt, S.topSites);
     if (S.active !== prevActive) {
       prevActive = S.active;
       if (nt && mode === 'url' && !overlayReasons.has('onb')) requestAnimationFrame(() => newtab.focus());
     }
+  }
+
+  // Заглушка спящей или просыпающейся страницы: иконка и название сайта.
+  function renderWaking(t) {
+    const fav = $('#wakeFav');
+    const key = parseUrl(t.url)?.origin || t.url;
+    if (fav.dataset.key !== key) { fav.dataset.key = key; fav.innerHTML = favHtml(t.url); }
+    $('#wakeName').textContent = t.title || parseUrl(t.url)?.hostname.replace(/^www\./, '') || t.url;
   }
 
   // ---------- адресная строка ----------

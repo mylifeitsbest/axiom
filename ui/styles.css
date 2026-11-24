@@ -252,8 +252,12 @@ input,textarea,select{font:inherit;color:inherit}
   .tiles{--tw:74px;--pw:54px}
   .nt-search{height:46px;padding:0 14px}
 }
-.sleeping{position:absolute;inset:0;display:none;align-items:center;justify-content:center;gap:8px;color:var(--t3)}
+.sleeping{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px 24px 6vh;color:var(--t3);text-align:center}
 .content.zz .sleeping{display:flex;animation:fade var(--d3) both}
+.wk-fav .fav{width:44px;height:44px;border-radius:13px;font-size:18px}
+.wk-fav .fav .i{width:22px;height:22px}
+.wk-name{max-width:min(460px,100%);color:var(--t1);font-size:calc(var(--fs)*1.2);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wk-note{display:flex;align-items:center;gap:6px;animation:pulse calc(1.6s*var(--k)) ease-in-out infinite}
 
 /* ---------- панель ИИ ---------- */
 .resizer{width:var(--gap);min-width:6px;flex:none;cursor:col-resize;display:none;position:relative}

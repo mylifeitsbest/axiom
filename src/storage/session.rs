@@ -140,4 +140,21 @@ mod tests {
         assert_eq!(loaded.tabs.len(), 2);
         assert_eq!(loaded.tabs[loaded.active].url, "https://b.example/");
     }
+
+    #[test]
+    fn closed_all_tabs_starts_fresh() {
+        // Последняя вкладка закрывает окно, и сессия сохраняется пустой:
+        // следующий запуск начинается с новой вкладки, а не со старых.
+        let root = std::env::temp_dir().join(format!("axiom-session-empty-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
+        let paths = Paths { root: root.clone() };
+        let saved = Session {
+            tabs: Vec::new(),
+            active: 0,
+        };
+        assert!(saved.save(&paths).is_ok());
+        let loaded = Session::load(&paths);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(loaded.is_none());
+    }
 }

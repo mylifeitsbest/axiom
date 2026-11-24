@@ -61,6 +61,8 @@ pub enum UserEvent {
     Snapshot(crate::tabs::snapshot::Event),
     /// Запасной таймер: интерфейс так и не сообщил, что лист закрытых настроек ушёл.
     SettingsLeft,
+    /// Просыпающаяся вкладка: пора спросить страницу, нарисовалась ли она, или ответ.
+    Waking(TabId, crate::tabs::waking::Event),
     Tick,
 }
 

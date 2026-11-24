@@ -1,6 +1,8 @@
 //! Состояние браузера и обработка событий главного цикла.
 
+mod ai_tabs;
 mod translation;
+mod waking;
 
 use std::{
     path::Path,
@@ -77,8 +79,6 @@ pub struct App {
     snapshot: Snapshots,
     shown: bool,
     session_dirty: bool,
-    /// Последний запрос, отправленный в AI Mode (чтобы не грузить его дважды).
-    last_ai_query: String,
     importing: bool,
     /// Принудительно тёмные сайты: аргумент запуска WebView2, меняется только перезапуском.
     force_dark: bool,
@@ -87,6 +87,8 @@ pub struct App {
     just_updated: bool,
     /// `shutdown` уже сохранил состояние.
     closed: bool,
+    /// Закрыли последнюю вкладку: окно закрывается так же, как кнопкой ×.
+    quit: bool,
     /// Цвета темы поменялись, а настройки ещё не записаны.
     settings_dirty: bool,
     /// Что последним сообщили интерфейсу о развёрнутости окна.
@@ -146,12 +148,12 @@ impl App {
             snapshot: Snapshots::default(),
             shown: false,
             session_dirty: false,
-            last_ai_query: String::new(),
             importing: false,
             force_dark,
             updater: Updater::new(),
             just_updated,
             closed: false,
+            quit: false,
             settings_dirty: false,
             maximized: None,
             translate: crate::translate::Translator::default(),
@@ -163,13 +165,14 @@ impl App {
     }
 
     pub fn handle(&mut self, event: UserEvent) -> Flow {
-        match self.dispatch(event) {
+        let flow = match self.dispatch(event) {
             Ok(flow) => flow,
             Err(err) => {
                 eprintln!("ошибка: {err:#}");
                 Flow::Continue
             }
-        }
+        };
+        if self.quit { Flow::Exit } else { flow }
     }
 
     fn dispatch(&mut self, event: UserEvent) -> Result<Flow> {
@@ -232,6 +235,7 @@ impl App {
                     self.settings_left();
                 }
             }
+            UserEvent::Waking(id, event) => self.on_waking(id, event),
             UserEvent::Tick => self.on_tick(),
         }
         Ok(Flow::Continue)
@@ -300,14 +304,7 @@ impl App {
                 }
             }
             UiCmd::Ai { open, query } => {
-                if open {
-                    if let Some(q) = query.as_deref().filter(|q| !q.trim().is_empty()) {
-                        self.last_ai_query = q.trim().to_string();
-                    }
-                    self.open_ai(query.as_deref())?;
-                } else {
-                    self.ai.hide();
-                }
+                self.ai_command(open, query.as_deref())?;
                 self.push_state();
             }
             UiCmd::AiPopOut => self.pop_out_ai(),
@@ -526,6 +523,7 @@ impl App {
                     .add(saved.url.clone(), saved.title.clone(), saved.ai, Some(i));
                 if let Some(tab) = self.tabs.get_mut(id) {
                     tab.no_sleep = saved.no_sleep;
+                    tab.loaded = true;
                 }
                 if i == session.active {
                     restored = Some(id);
@@ -570,12 +568,13 @@ impl App {
                 if let Some(rect) = self.content {
                     let _ = webview.set_bounds(rect);
                 }
-                let _ = webview.set_visible(!covered);
+                let _ = webview.set_visible(!covered && tab.page_visible());
             }
         }
         if internal {
             let _ = self.ui.focus();
         }
+        self.ai_follow_tab();
         // На вкладке настроек панель ИИ спрятана, при уходе с неё — снова на месте.
         self.apply_layout();
         if self.fullscreen.is_on() {
@@ -601,11 +600,15 @@ impl App {
             return Ok(());
         }
         let (url, ai) = (tab.url.clone(), tab.ai);
+        let shown = self.tabs.active == Some(id);
+        // Уснувшую страницу показываем, когда она нарисуется, а пока — заглушку
+        // (см. `app/waking.rs`). Новую ссылку грузим на виду, как обычно.
+        let waking = shown && tab.loaded;
         let spec = TabSpec {
             id,
             url: &url,
             bounds: self.content.unwrap_or_default(),
-            visible: self.tabs.active == Some(id) && !self.covered(),
+            visible: shown && !self.covered() && !waking,
             look: self.look(),
             proxy: if ai { self.ai.proxy_config() } else { None },
             ai,
@@ -619,6 +622,11 @@ impl App {
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.webview = Some(webview);
             tab.loading = true;
+            tab.loaded = true;
+            tab.waking = None;
+        }
+        if waking {
+            self.begin_waking(id);
         }
         Ok(())
     }
@@ -630,13 +638,18 @@ impl App {
         let Some(id) = self.tabs.active else {
             return Ok(());
         };
-        self.load_in_tab(id, target.into_url(self.settings.search()))
+        let prev = self.tabs.get(id).map(|t| t.url.clone()).unwrap_or_default();
+        self.load_in_tab(id, target.into_url(self.settings.search()))?;
+        self.mirror_search(id, &prev);
+        Ok(())
     }
 
     fn load_in_tab(&mut self, id: TabId, url: String) -> Result<()> {
         if url == NEWTAB {
             self.park_if_busy(id);
         }
+        // Человек ушёл с просыпающейся страницы: новую показываем сразу.
+        self.end_waking(id);
         let Some(tab) = self.tabs.get_mut(id) else {
             return Ok(());
         };
@@ -655,6 +668,7 @@ impl App {
         tab.title = display_title(&url);
         tab.url = url.clone();
         tab.loading = true;
+        tab.loaded = false;
         tab.scroll = None;
         match &tab.webview {
             Some(webview) => {
@@ -684,6 +698,7 @@ impl App {
             display_title(&url)
         };
         let id = self.tabs.add(url, title, false, None);
+        self.ai_search_new_tab(id, input);
         self.activate(id);
     }
 
@@ -708,11 +723,15 @@ impl App {
             self.leave_settings();
         }
         self.park_if_busy(id);
-        drop(self.tabs.remove(id, remember));
+        let closed = self.tabs.remove(id, remember);
+        self.ai_tab_closed(closed.as_ref().and_then(|t| t.ai_query.as_deref()));
+        drop(closed);
         self.session_dirty = true;
         if self.tabs.len() == 0 {
-            let fresh = self.tabs.add(NEWTAB.into(), String::new(), false, None);
-            self.activate(fresh);
+            // Как в Chrome: последняя вкладка закрывает окно. Выход идёт тем же
+            // путём, что и по кнопке ×: `shutdown` сохранит пустую сессию (следующий
+            // запуск начнётся с новой вкладки) и список загрузок.
+            self.quit = true;
         } else if was_active {
             let next = prefer
                 .filter(|&p| self.tabs.get(p).is_some())
@@ -792,6 +811,7 @@ impl App {
             return;
         };
         let title: String = title.chars().take(300).collect();
+        let prev = tab.url.clone();
         // Адрес мог смениться без перезагрузки (history.pushState).
         if let Some(url) = tab.webview.as_ref().and_then(|w| w.url().ok())
             && omnibox::is_navigable(&url)
@@ -804,7 +824,7 @@ impl App {
             self.history.retitle(&tab.url, &tab.title);
         }
         self.session_dirty = true;
-        self.mirror_search(id);
+        self.mirror_search(id, &prev);
         self.push_state();
     }
 
@@ -813,6 +833,7 @@ impl App {
             return;
         };
         tab.loading = started;
+        let prev = tab.url.clone();
         let blank = url == "about:blank";
         if omnibox::is_navigable(&url) && !blank {
             tab.url = url;
@@ -828,7 +849,10 @@ impl App {
         }
         self.session_dirty = true;
         if started {
-            self.mirror_search(id);
+            self.mirror_search(id, &prev);
+        } else {
+            // Загрузилась просыпающаяся страница: не ждём следующей проверки.
+            self.on_waking(id, crate::tabs::waking::Event::Check);
         }
         self.push_state();
         self.translate_load(id, started);
@@ -836,21 +860,19 @@ impl App {
 
     /// Двойной поиск работает и для поиска внутри самой страницы DuckDuckGo:
     /// как только активная вкладка перешла на результаты с новым запросом,
-    /// тот же запрос уходит в AI Mode.
-    fn mirror_search(&mut self, id: TabId) {
+    /// тот же запрос уходит в AI Mode. `prev` — адрес вкладки до перехода:
+    /// пробуждение и перезагрузка той же выдачи ИИ заново не спрашивают.
+    fn mirror_search(&mut self, id: TabId, prev: &str) {
         if !self.settings.double_search || self.tabs.active != Some(id) {
             return;
         }
         let Some(query) = self.tabs.get(id).and_then(|t| self.settings.query(&t.url)) else {
             return;
         };
-        if query == self.last_ai_query {
+        if self.settings.query(prev).as_deref() == Some(query.as_str()) {
             return;
         }
-        self.last_ai_query = query.clone();
-        if let Err(err) = self.open_ai(Some(&query)) {
-            eprintln!("панель ИИ: {err:#}");
-        }
+        self.ai_search(id, &query);
     }
 
     // ---------- панель ИИ ----------
@@ -880,6 +902,7 @@ impl App {
             .unwrap_or_else(|| omnibox::AI_HOME.to_string());
         self.ai.hide();
         self.ai.webview = None;
+        self.ai.mode = crate::ai_panel::follow::Mode::Closed;
         let id = self.tabs.add(url, "AI Mode".into(), true, None);
         self.activate(id);
     }
@@ -1274,12 +1297,14 @@ impl App {
         let full = self.fullscreen.is_on().then(|| full_bounds(&self.window));
         let ai_full = self.fullscreen.page == Some(Owner::Ai);
         let covered = self.covered();
-        if let Some(webview) = self.tabs.active_tab().and_then(|t| t.webview.as_ref()) {
+        if let Some(tab) = self.tabs.active_tab()
+            && let Some(webview) = &tab.webview
+        {
             if let Some(rect) = full.or(self.content) {
                 let _ = webview.set_bounds(rect);
             }
             let visible = if full.is_some() { !ai_full } else { !covered };
-            let _ = webview.set_visible(visible);
+            let _ = webview.set_visible(visible && tab.page_visible());
         }
         match full {
             Some(rect) => self.ai.place(ai_full.then_some(rect), false),
@@ -1327,6 +1352,7 @@ impl App {
         let page = self
             .tabs
             .active_tab()
+            .filter(|t| !t.is_waking())
             .and_then(|t| snapshot::target(t.webview.as_ref()?, Part::Page, Some(t.id)));
         let ai = self
             .ai
@@ -1649,6 +1675,7 @@ impl App {
                 url: &t.url,
                 loading: t.loading,
                 sleeping: t.is_sleeping(),
+                waking: t.is_waking(),
                 ai: t.ai,
                 bookmarked: self.bookmarks.contains(&t.url),
                 no_sleep: t.no_sleep,

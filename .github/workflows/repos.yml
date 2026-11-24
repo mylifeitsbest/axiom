@@ -47,7 +47,7 @@ jobs:
             if [ -L "$f" ]; then cp --remove-destination "$(readlink -f "$f")" "$f"; fi
           done
           ls -la
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: arch-repo
           path: repo/
@@ -66,7 +66,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       SIGNING_KEY: ${{ secrets.PKG_SIGNING_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Репозиторий APT
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils
@@ -94,7 +94,7 @@ jobs:
           printf '%s\n' "$SIGNING_KEY" | gpg --batch --import
           gpg --batch --yes --pinentry-mode loopback --local-user "$KEY_ID" --clearsign -o dists/stable/InRelease dists/stable/Release
           gpg --batch --yes --pinentry-mode loopback --local-user "$KEY_ID" --armor --detach-sign -o dists/stable/Release.gpg dists/stable/Release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: arch-repo
           path: site/arch/x86_64
@@ -103,12 +103,12 @@ jobs:
           cp packaging/keys/axiom.asc packaging/keys/axiom.gpg packaging/site/index.html assets/logo.svg install.sh site/
           touch site/.nojekyll
           find site -type f | sort
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: site
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
 
   verify:
     needs: site

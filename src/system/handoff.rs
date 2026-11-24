@@ -4,7 +4,8 @@
 //! запускает по ссылкам из других программ), собранная из исходников, скачанная.
 //! Старая копия не знает новых полей профиля и, сохраняя его, потеряла бы их.
 //! Поэтому в профиле записано, какая версия открывала его последней и откуда;
-//! более старая сборка отдаёт адреса ей и выходит, ничего не трогая.
+//! более старая сборка отдаёт адреса ей и выходит, ничего не трогая. Запускаем
+//! по записи только Axiom из папки установки или из нашей же папки (см. `next`).
 
 use std::{
     path::{Path, PathBuf},
@@ -32,14 +33,26 @@ struct LastRun {
 
 /// `true` — адреса отданы более новой версии, этому процессу пора выйти.
 pub fn to_newer(paths: &Paths, urls: &[String]) -> bool {
-    let Some(last) = read_json::<LastRun>(&paths.root.join(FILE)) else {
+    let file = paths.root.join(FILE);
+    let Some(last) = read_json::<LastRun>(&file) else {
         return false;
     };
     let Ok(me) = std::env::current_exe() else {
         return false;
     };
-    let Some(exe) = newer_exe(&last, Version::current(), &me) else {
-        return false;
+    let exe = match next(&last, Version::current(), &me, &homes(&me)) {
+        Next::Run(exe) => exe,
+        Next::Stay => return false,
+        Next::Distrust => {
+            // Запись подсунули, или exe перенесли: работаем сами,
+            // а свою запись `record` сделает при запуске.
+            eprintln!(
+                "{FILE}: {} — не Axiom из его папки, запись удалена",
+                last.exe.display()
+            );
+            let _ = std::fs::remove_file(&file);
+            return false;
+        }
     };
     match Command::new(&exe).arg(FLAG).args(urls).spawn() {
         Ok(_) => true,
@@ -51,13 +64,77 @@ pub fn to_newer(paths: &Paths, urls: &[String]) -> bool {
     }
 }
 
-/// Exe версии новее нашей, если он ещё на месте и это не мы сами
-/// (после обновления на месте путь тот же, а версия в записи — уже наша).
-fn newer_exe(last: &LastRun, current: Version, me: &Path) -> Option<PathBuf> {
-    let version = Version::parse(&last.version)?;
+/// Что делать с записью о последнем запуске.
+#[derive(Debug, PartialEq)]
+enum Next {
+    /// Профиль открывала более новая версия — отдать адреса ей.
+    Run(PathBuf),
+    /// Запись о нас же или о старой версии, или её exe уже нет — работаем сами.
+    Stay,
+    /// Версия новее, но exe лежит не там, где Axiom, или не похож на него.
+    Distrust,
+}
+
+/// Откуда exe можно запустить по записи: рядом с нами (новый `axiom.exe`
+/// рядом со старым `axiom-prev.exe`) и папка установки — её копию Windows
+/// запускает по ссылкам из других программ, и её же обновляет более новая сборка.
+fn homes(me: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = me.parent().map(Path::to_path_buf).into_iter().collect();
+    #[cfg(windows)]
+    dirs.extend(super::install_path().and_then(|p| p.parent().map(Path::to_path_buf)));
+    // Сюда Axiom кладут пакеты .deb и pacman.
+    #[cfg(not(windows))]
+    dirs.push(PathBuf::from("/usr/bin"));
+    dirs
+}
+
+/// Решение по записи. Запись в профиле может подменить любой, кто пишет в его
+/// папку (портативный профиль на общем диске, синхронизация, чужая программа),
+/// поэтому exe из неё запускаем, только если это обычный файл с именем Axiom
+/// в одной из папок `homes`.
+fn next(last: &LastRun, current: Version, me: &Path, homes: &[PathBuf]) -> Next {
+    let Some(version) = Version::parse(&last.version) else {
+        return Next::Stay;
+    };
     let exe = &last.exe;
-    (version > current && exe.is_absolute() && exe.is_file() && !same_file(exe, me))
-        .then(|| exe.clone())
+    // После обновления на месте путь тот же, а версия в записи — уже наша.
+    if version <= current || !exe.is_absolute() || !exe.exists() || same_file(exe, me) {
+        return Next::Stay;
+    }
+    let regular = std::fs::symlink_metadata(exe).is_ok_and(|m| m.file_type().is_file());
+    let at_home = exe
+        .parent()
+        .and_then(|dir| dir.canonicalize().ok())
+        .is_some_and(|dir| {
+            homes
+                .iter()
+                .any(|home| home.canonicalize().is_ok_and(|home| home == dir))
+        });
+    if regular && at_home && expected_name(exe) {
+        Next::Run(exe.clone())
+    } else {
+        Next::Distrust
+    }
+}
+
+/// Имена, под которыми лежит Axiom: `axiom.exe` (установка, сборка), файл со
+/// страницы релиза и пакет на Linux. Браузер, сохраняя файл второй раз,
+/// добавляет к имени « (1)».
+fn expected_name(exe: &Path) -> bool {
+    const NAMES: &[&str] = &["axiom", "axiom-windows-x64", "axiom-browser"];
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    let Some(name) = exe.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    let Some(stem) = name.strip_suffix(suffix) else {
+        return false;
+    };
+    let copy = stem.rsplit_once(" (").and_then(|(base, n)| {
+        let digits = n.strip_suffix(')')?;
+        (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(base)
+    });
+    NAMES.contains(&copy.unwrap_or(stem))
 }
 
 /// Отмечает в профиле, что его открыла эта версия.
@@ -97,35 +174,114 @@ mod tests {
         }
     }
 
+    /// `axiom`, а на Windows — `axiom.exe`.
+    fn exe(stem: &str) -> String {
+        if cfg!(windows) {
+            format!("{stem}.exe")
+        } else {
+            stem.to_string()
+        }
+    }
+
+    /// Временные папки: `home` — где лежим мы сами, `away` — где-то ещё.
+    struct Dirs {
+        root: PathBuf,
+        home: PathBuf,
+        away: PathBuf,
+        me: PathBuf,
+    }
+
+    impl Dirs {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("axiom-{name}-{}", std::process::id()));
+            let (home, away) = (root.join("home"), root.join("away"));
+            let _ = std::fs::create_dir_all(&home);
+            let _ = std::fs::create_dir_all(&away);
+            let me = home.join(exe("axiom-prev"));
+            let _ = std::fs::write(&me, b"MZ");
+            Self {
+                root,
+                home,
+                away,
+                me,
+            }
+        }
+
+        fn file(&self, dir: &Path, name: &str) -> PathBuf {
+            let path = dir.join(name);
+            let _ = std::fs::write(&path, b"MZ");
+            path
+        }
+
+        /// Решение для записи `version`/`exe`, когда мы — версия `current`.
+        fn next(&self, version: &str, exe: &Path, current: &str) -> Next {
+            let current = Version::parse(current).unwrap_or_else(Version::current);
+            next(&last(version, exe), current, &self.me, &homes(&self.me))
+        }
+    }
+
+    impl Drop for Dirs {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     #[test]
     fn hands_off_only_to_existing_newer_exe() {
-        let dir = std::env::temp_dir().join(format!("axiom-handoff-test-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let newer = dir.join("newer.exe");
-        let me = dir.join("me.exe");
-        let _ = std::fs::write(&newer, b"MZ");
-        let _ = std::fs::write(&me, b"MZ");
-        let v = |s: &str| Version::parse(s).unwrap_or_else(Version::current);
+        let d = Dirs::new("handoff-test");
+        let newer = d.file(&d.home, &exe("axiom"));
 
-        let found = newer_exe(&last("0.4.1", &newer), v("0.4.0"), &me);
-        let same = newer_exe(&last("0.4.0", &newer), v("0.4.0"), &me);
-        let older = newer_exe(&last("0.3.9", &newer), v("0.4.0"), &me);
-        let minor = newer_exe(&last("0.10.0", &newer), v("0.9.9"), &me);
+        assert_eq!(d.next("0.4.1", &newer, "0.4.0"), Next::Run(newer.clone()));
+        assert_eq!(d.next("0.10.0", &newer, "0.9.9"), Next::Run(newer.clone()));
+        assert_eq!(d.next("0.4.0", &newer, "0.4.0"), Next::Stay);
+        assert_eq!(d.next("0.3.9", &newer, "0.4.0"), Next::Stay);
         // Обновились на месте: запись указывает на нас же.
-        let itself = newer_exe(&last("0.4.1", &me), v("0.4.0"), &me);
-        let gone = newer_exe(&last("0.4.1", &dir.join("gone.exe")), v("0.4.0"), &me);
-        let relative = newer_exe(&last("0.4.1", Path::new("newer.exe")), v("0.4.0"), &me);
-        let broken = newer_exe(&last("новая", &newer), v("0.4.0"), &me);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(d.next("0.4.1", &d.me, "0.4.0"), Next::Stay);
+        let gone = d.home.join(exe("axiom-browser"));
+        assert_eq!(d.next("0.4.1", &gone, "0.4.0"), Next::Stay);
+        let relative = PathBuf::from(exe("axiom"));
+        assert_eq!(d.next("0.4.1", &relative, "0.4.0"), Next::Stay);
+        assert_eq!(d.next("новая", &newer, "0.4.0"), Next::Stay);
+    }
 
-        assert_eq!(found, Some(newer.clone()));
-        assert_eq!(same, None);
-        assert_eq!(older, None);
-        assert_eq!(minor, Some(newer));
-        assert_eq!(itself, None);
-        assert_eq!(gone, None);
-        assert_eq!(relative, None);
-        assert_eq!(broken, None);
+    #[test]
+    fn runs_only_axiom_from_its_folders() {
+        let d = Dirs::new("handoff-trust");
+        // Файл со страницы релиза, скачанный второй раз.
+        let release = d.file(&d.home, &exe("Axiom-windows-x64 (2)"));
+        assert_eq!(d.next("0.4.1", &release, "0.4.0"), Next::Run(release));
+        // Чужая программа рядом с нами, Axiom где-то ещё и похожие имена.
+        let setup = d.file(&d.home, &exe("setup"));
+        let away = d.file(&d.away, &exe("axiom"));
+        let lookalike = d.file(&d.home, &exe("axiom (x)"));
+        let script = d.file(&d.home, "axiom.cmd");
+        for exe in [setup, away, lookalike, script] {
+            assert_eq!(d.next("0.4.1", &exe, "0.4.0"), Next::Distrust, "{exe:?}");
+        }
+        // Папка с именем программы — не программа.
+        let dir = d.home.join(exe("axiom-windows-x64"));
+        let _ = std::fs::create_dir_all(&dir);
+        assert_eq!(d.next("0.4.1", &dir, "0.4.0"), Next::Distrust);
+    }
+
+    #[test]
+    fn axiom_file_names() {
+        for name in [
+            "axiom",
+            "Axiom",
+            "AXIOM-windows-x64",
+            "axiom-browser",
+            "axiom (1)",
+        ] {
+            assert!(expected_name(Path::new(&exe(name))), "{name}");
+        }
+        for name in ["axiom-test", "cmd", "axiom ()", "axiom (1a)", "axiomx", ""] {
+            assert!(!expected_name(Path::new(&exe(name))), "{name}");
+        }
+        if cfg!(windows) {
+            assert!(!expected_name(Path::new("axiom")));
+            assert!(!expected_name(Path::new("axiom.exe.old")));
+        }
     }
 
     #[test]
@@ -143,6 +299,9 @@ mod tests {
         let saved = saved.unwrap_or_else(|| last("", Path::new("")));
         assert_eq!(saved, last(env!("CARGO_PKG_VERSION"), &me));
         // Своя же запись никуда не отправляет.
-        assert_eq!(newer_exe(&saved, Version::current(), &me), None);
+        assert_eq!(
+            next(&saved, Version::current(), &me, &homes(&me)),
+            Next::Stay
+        );
     }
 }

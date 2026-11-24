@@ -22,6 +22,10 @@ const STATS_URL: &str = "https://179-254-172-240.sslip.io";
 
 /// Как часто отмечаться, пока браузер открыт.
 const EVERY: Duration = Duration::from_secs(60 * 60);
+/// Как часто проверять, не пора ли. Один долгий `sleep` не годится: на Windows
+/// время в спящем режиме в таймаут не входит, и после пробуждения ноутбука
+/// первая отметка за день откладывалась бы почти на час.
+const POLL: Duration = Duration::from_secs(60);
 /// Первый пинг — не сразу при старте, чтобы не толкаться с остальной загрузкой.
 const WARMUP: Duration = Duration::from_secs(20);
 
@@ -34,7 +38,13 @@ struct State {
     day: String,
     week: String,
     month: String,
+    /// Новая установка, о которой сервер ещё не узнал.
+    #[serde(default)]
+    new: bool,
 }
+
+/// Файлы, которые есть у любого, кто уже пользовался браузером.
+const USED_PROFILE: [&str; 3] = ["settings.json", "session.json", "history.json"];
 
 /// Запустить фоновый поток счётчика. Вызывать один раз, у главного экземпляра.
 pub fn start(profile_root: &Path) {
@@ -48,11 +58,30 @@ pub fn start(profile_root: &Path) {
         return;
     }
     let file = profile_root.join("stats.json");
+    // Решаем до того, как браузер создаст свои файлы: нет счётчика и нет профиля —
+    // новая установка. Профиль есть, а счётчика нет — обновились со старой версии.
+    if !file.exists() {
+        let used = USED_PROFILE.iter().any(|f| profile_root.join(f).exists());
+        let state = State {
+            new: !used,
+            ..State::default()
+        };
+        let _ = crate::storage::write_json(&file, &state);
+    }
     thread::spawn(move || {
         thread::sleep(WARMUP);
+        let mut last: Option<(u64, String)> = None;
         loop {
-            tick(&file);
-            thread::sleep(EVERY);
+            let now = now_secs();
+            let day = buckets(now).0;
+            let due = last.as_ref().is_none_or(|(at, last_day)| {
+                *last_day != day || now < *at || now - at >= EVERY.as_secs()
+            });
+            if due {
+                tick(&file);
+                last = Some((now, day));
+            }
+            thread::sleep(POLL);
         }
     });
 }
@@ -62,10 +91,8 @@ fn tick(file: &Path) {
     let now = now_secs();
     let (day, week, month) = buckets(now);
 
-    // Файла нет — значит это первая отметка на этой машине (новая установка).
-    let prev = crate::storage::read_json::<State>(file);
-    let new_install = prev.is_none();
-    let prev = prev.unwrap_or_default();
+    let prev = crate::storage::read_json::<State>(file).unwrap_or_default();
+    let new_install = prev.new;
 
     let d = prev.day != day;
     let w = prev.week != week;
@@ -84,7 +111,12 @@ fn tick(file: &Path) {
     if send(&body).is_ok() {
         // Записываем только после удачной отправки: иначе при обрыве связи мы бы
         // «потеряли» этот день и не отметились бы, когда сеть вернётся.
-        let state = State { day, week, month };
+        let state = State {
+            day,
+            week,
+            month,
+            new: false,
+        };
         let _ = crate::storage::write_json(file, &state);
     }
 }
@@ -151,10 +183,17 @@ fn base_url() -> String {
 fn send(body: &str) -> Result<(), ()> {
     let url = format!("{}/p", base_url());
     let mut cmd = curl();
-    cmd.args(["-X", "POST", "-H", "Content-Type: application/json"])
-        .arg("--data")
-        .arg(body)
-        .arg(&url);
+    // --fail: ответ 5xx — тоже неудача, иначе день записался бы как отмеченный.
+    cmd.args([
+        "--fail",
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+    ])
+    .arg("--data")
+    .arg(body)
+    .arg(&url);
     match cmd.output() {
         Ok(out) if out.status.success() => Ok(()),
         _ => Err(()),

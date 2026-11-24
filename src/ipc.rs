@@ -24,6 +24,21 @@ pub enum IpcError {
     Invalid(&'static str),
 }
 
+impl IpcError {
+    /// Что сказать человеку, если отказ — следствие его ввода, а не ошибка интерфейса.
+    /// Иначе, например, слишком большой свой CSS молча отменял бы сохранение всех настроек.
+    pub fn user_text(&self) -> Option<&'static str> {
+        match self {
+            Self::TooLarge(_) | Self::Invalid("appearance") => {
+                Some("Свой CSS слишком большой — настройки не сохранены")
+            }
+            Self::Invalid("input" | "query") => Some("Слишком длинный текст"),
+            Self::Invalid("proxy") => Some("Слишком длинный адрес прокси"),
+            _ => None,
+        }
+    }
+}
+
 /// Прямоугольник в логических пикселях (CSS px интерфейса).
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct Rect {
@@ -210,7 +225,7 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::Navigate { input } => short(input, MAX_INPUT, "input")?,
         UiCmd::NewTab { input: Some(input) } => short(input, MAX_INPUT, "input")?,
         UiCmd::Ai { query: Some(q), .. } => short(q, MAX_INPUT, "query")?,
-        UiCmd::Suggest { q } | UiCmd::Find { q, .. } => short(q, 512, "query")?,
+        UiCmd::Suggest { q } | UiCmd::Find { q, .. } => short(q, 2048, "query")?,
         UiCmd::Hotkey { action } => short(action, 32, "hotkey")?,
         UiCmd::ThemeColors {
             window,
@@ -259,7 +274,7 @@ pub struct TabView<'a> {
     pub bookmarked: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Site {
     pub title: String,
     pub url: String,

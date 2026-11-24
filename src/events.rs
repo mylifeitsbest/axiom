@@ -29,6 +29,8 @@ pub enum UserEvent {
     OpenTab {
         url: String,
         ai: bool,
+        /// Вкладка-источник; `None` — панель ИИ.
+        from: Option<TabId>,
     },
     /// Страница ответила перед усыплением: позиция прокрутки и нет ли недописанного текста.
     SleepChecked(TabId, PageState),
@@ -39,6 +41,8 @@ pub enum UserEvent {
     External(Vec<String>),
     /// Проверка или скачивание обновления продвинулись (фоновый поток).
     Update(crate::update::UpdateEvent),
+    /// Установка в систему завершилась (фоновый поток: PowerShell для ярлыка — секунды).
+    Installed(Result<(), String>),
     /// Импорт из Chrome завершился (выполняется в фоновом потоке).
     Imported(Result<crate::storage::chrome::Imported, String>),
     /// Окно так и не получило `ready` от интерфейса — показываем его принудительно.

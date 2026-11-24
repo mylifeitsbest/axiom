@@ -1,11 +1,11 @@
 //! История посещений: подсказки в адресной строке и плитки новой вкладки.
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::{Paths, now_secs, read_json, write_json};
+use super::{Paths, now_secs, read_json, write_json_compact};
 use crate::ipc::{Site, Suggestion};
 
 const FILE: &str = "history.json";
@@ -23,22 +23,50 @@ pub struct Entry {
 pub struct History {
     entries: Vec<Entry>,
     dirty: bool,
+    /// Поменялись только заголовки. Сайт с мигающим заголовком («(1) Почта»)
+    /// иначе переписывал бы весь файл каждые 30 с; такое сохраняем при выходе
+    /// или вместе со следующим настоящим посещением.
+    titles_dirty: bool,
+    /// Плитки новой вкладки: пересчёт идёт по всей истории, а просят их
+    /// при каждом обновлении полосы вкладок.
+    top_cache: RefCell<Option<(usize, Vec<Site>)>>,
 }
 
 impl History {
     pub fn load(paths: &Paths) -> Self {
         Self {
             entries: read_json(&paths.root.join(FILE)).unwrap_or_default(),
-            dirty: false,
+            ..Self::default()
         }
     }
 
+    /// Сохраняет новые посещения (по таймеру).
     pub fn save_if_dirty(&mut self, paths: &Paths) -> anyhow::Result<()> {
         if self.dirty {
-            write_json(&paths.root.join(FILE), &self.entries)?;
-            self.dirty = false;
+            self.write(paths)?;
         }
         Ok(())
+    }
+
+    /// Сохраняет всё, включая обновлённые заголовки (при выходе).
+    pub fn save_all(&mut self, paths: &Paths) -> anyhow::Result<()> {
+        if self.dirty || self.titles_dirty {
+            self.write(paths)?;
+        }
+        Ok(())
+    }
+
+    fn write(&mut self, paths: &Paths) -> anyhow::Result<()> {
+        // Без отступов: файл до мегабайта переписывается по таймеру, руками его не правят.
+        write_json_compact(&paths.root.join(FILE), &self.entries)?;
+        self.dirty = false;
+        self.titles_dirty = false;
+        Ok(())
+    }
+
+    fn changed(&mut self) {
+        self.dirty = true;
+        self.top_cache.get_mut().take();
     }
 
     /// Учитывает посещение. Записываются только http(s).
@@ -65,14 +93,21 @@ impl History {
                 self.entries.truncate(MAX_ENTRIES);
             }
         }
-        self.dirty = true;
+        self.changed();
     }
 
     /// Вливает импортированную историю. Возвращает число новых адресов.
     pub fn merge(&mut self, incoming: Vec<Entry>) -> usize {
         let mut added = 0;
+        // Индекс по адресу: линейный поиск на каждую из тысяч записей Chrome — O(n·m).
+        let mut index: HashMap<String, usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.url.clone(), i))
+            .collect();
         for entry in incoming {
-            match self.entries.iter_mut().find(|e| e.url == entry.url) {
+            match index.get(&entry.url).and_then(|&i| self.entries.get_mut(i)) {
                 Some(e) => {
                     e.visits = e.visits.max(entry.visits);
                     e.last = e.last.max(entry.last);
@@ -81,6 +116,7 @@ impl History {
                     }
                 }
                 None => {
+                    index.insert(entry.url.clone(), self.entries.len());
                     self.entries.push(entry);
                     added += 1;
                 }
@@ -90,7 +126,7 @@ impl History {
             self.entries.sort_by_key(|e| std::cmp::Reverse(e.last));
             self.entries.truncate(MAX_ENTRIES);
         }
-        self.dirty = true;
+        self.changed();
         added
     }
 
@@ -100,7 +136,7 @@ impl History {
             && e.title != title
         {
             e.title = title.to_string();
-            self.dirty = true;
+            self.titles_dirty = true;
         }
     }
 
@@ -144,27 +180,38 @@ impl History {
 
     /// Самые посещаемые сайты (по домену) для новой вкладки.
     pub fn top_sites(&self, limit: usize) -> Vec<Site> {
-        let mut by_host: HashMap<String, (u32, String, String)> = HashMap::new();
+        if let Some((cached_limit, sites)) = self.top_cache.borrow().as_ref()
+            && *cached_limit == limit
+        {
+            return sites.clone();
+        }
+        let sites = self.compute_top_sites(limit);
+        *self.top_cache.borrow_mut() = Some((limit, sites.clone()));
+        sites
+    }
+
+    fn compute_top_sites(&self, limit: usize) -> Vec<Site> {
+        let mut by_host: HashMap<String, (u32, String)> = HashMap::new();
         for e in self.entries.iter().filter(|e| !is_search_page(&e.url)) {
-            let Some(host) = host_of(&e.url) else {
+            let Ok(url) = Url::parse(&e.url) else {
                 continue;
             };
-            let origin = match Url::parse(&e.url) {
-                Ok(u) => u.origin().ascii_serialization(),
-                Err(_) => continue,
+            let Some(host) = url.host_str().map(str::to_lowercase) else {
+                continue;
             };
-            let slot = by_host.entry(host).or_insert((0, String::new(), origin));
+            let slot = by_host
+                .entry(host)
+                .or_insert_with(|| (0, url.origin().ascii_serialization()));
             slot.0 = slot.0.saturating_add(e.visits);
-            if slot.1.is_empty() {
-                slot.1 = e.title.clone();
-            }
         }
-        let mut sites: Vec<(String, (u32, String, String))> = by_host.into_iter().collect();
-        sites.sort_by_key(|s| std::cmp::Reverse(s.1.0));
+        let mut sites: Vec<(String, (u32, String))> = by_host.into_iter().collect();
+        // При равном числе посещений — по имени: порядок HashMap случайный,
+        // и плитки перемешивались бы при каждом обновлении.
+        sites.sort_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(&b.0)));
         sites
             .into_iter()
             .take(limit)
-            .map(|(host, (_, _title, url))| Site {
+            .map(|(host, (_, url))| Site {
                 title: host.trim_start_matches("www.").to_string(),
                 url,
             })

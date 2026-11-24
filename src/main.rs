@@ -36,17 +36,24 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    // Служебные команды без окна.
-    if args.iter().any(|a| a == "--uninstall") {
+    // `args_os`: `args()` паникует на имени файла не в UTF-8 (бывает на Linux).
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    // Служебные команды без окна — только первым аргументом. Windows подставляет
+    // адрес ссылки в `"axiom.exe" "%1"` как есть, и ссылка с кавычкой внутри
+    // (`https://x/" --uninstall "`) иначе добавила бы свои ключи.
+    let command = args.first().map(String::as_str);
+    if command == Some("--uninstall") {
         return system::uninstall();
     }
-    if args.iter().any(|a| a == "--install") {
+    if command == Some("--install") {
         let path = system::install()?;
         println!("Axiom установлен: {}", path.display());
         return Ok(());
     }
-    if args.iter().any(|a| a == "--check-chrome") {
+    if command == Some("--check-chrome") {
         let paths = storage::Paths::resolve()?;
         let data = storage::chrome::import(&paths)?;
         println!(
@@ -57,8 +64,12 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
-    let updated = args.iter().any(|a| a == update::UPDATED_FLAG);
-    let urls: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
+    let updated = command == Some(update::UPDATED_FLAG);
+    let urls: Vec<String> = args
+        .into_iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(absolute_file)
+        .collect();
 
     let paths = storage::Paths::resolve()?;
     // Новую версию запустила старая: ждём, пока та закроется, иначе адреса ушли бы ей.
@@ -91,6 +102,9 @@ fn run() -> Result<()> {
                 _ => app::Flow::Continue,
             },
             Event::UserEvent(user_event) => app.handle(user_event),
+            // Выход из системы, перезагрузка, Restart Manager: tao присылает только
+            // это событие и сразу завершает процесс — CloseRequested не будет.
+            Event::LoopDestroyed => app::Flow::Exit,
             _ => app::Flow::Continue,
         };
         if flow == app::Flow::Exit {
@@ -98,6 +112,19 @@ fn run() -> Result<()> {
             *control_flow = ControlFlow::Exit;
         }
     });
+}
+
+/// `axiom page.html` из консоли: относительный путь превращаем в полный,
+/// иначе уже запущенное окно (у него другая рабочая папка) приняло бы его за адрес сайта.
+fn absolute_file(arg: String) -> String {
+    let path = std::path::Path::new(&arg);
+    if path.is_relative()
+        && path.is_file()
+        && let Ok(full) = std::path::absolute(path)
+    {
+        return full.display().to_string();
+    }
+    arg
 }
 
 /// Пишет фатальную ошибку в stderr и в файл рядом с профилем,

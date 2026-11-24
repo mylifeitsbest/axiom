@@ -311,10 +311,13 @@ function createPanels(ax) {
     let obj;
     try { obj = JSON.parse($('#themeJson').value); } catch { ax.toast('Это не JSON'); return; }
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { ax.toast('Нужен объект темы'); return; }
+    // Чужой CSS с загрузкой извне мог бы выдать заголовки вкладок через селекторы атрибутов.
+    const external = typeof obj.customCss === 'string' && /url\s*\(|@import|image-set|src\s*\(|\\/i.test(obj.customCss);
+    if (external) delete obj.customCss;
     ax.swap(() => { ax.mergeAppearance(obj); });
     ax.saveSettings();
     $('.import-box', sheet).hidden = true;
-    ax.toast('Тема применена');
+    ax.toast(external ? 'Тема применена без своего CSS: в нём загрузка извне' : 'Тема применена');
   }
 
   function startImport() {

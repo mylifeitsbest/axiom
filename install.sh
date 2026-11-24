@@ -7,8 +7,13 @@
 # Ubuntu, Debian, Kali — apt; Arch и производные — pacman.
 set -eu
 
+# Всё тело — в функции, которая вызывается последней строкой: если `curl | sh`
+# оборвётся на середине, оболочка не выполнит половину скрипта.
+main() {
 REPO_URL="https://mylifeitsbest.github.io/axiom"
 KEY_ID="643C6DE601D4BBB661D5322AF2F379CD75CF5C03"
+# SHA-256 файла packaging/keys/axiom.gpg — для систем без gpg. Обновить вместе с ключом.
+KEY_SHA256="1153068b262a99055e59e872b52d587596f907e38fc5ab0202218b4071bc15dd"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
@@ -59,9 +64,16 @@ if command -v pacman >/dev/null 2>&1; then
 elif command -v apt-get >/dev/null 2>&1; then
   say "Добавляю ключ подписи Axiom…"
   fetch "$REPO_URL/axiom.gpg" "$tmp/axiom.gpg"
+  # apt доверяет каждому ключу из файла signed-by, поэтому в файле должен быть
+  # ровно один ключ — наш. Без gpg (минимальная система) сверяем файл целиком.
   if command -v gpg >/dev/null 2>&1; then
-    gpg --batch --show-keys --with-colons "$tmp/axiom.gpg" 2>/dev/null | grep -q "fpr:::::::::$KEY_ID:" \
-      || die "отпечаток ключа не совпал"
+    keys=$(gpg --batch --show-keys --with-colons "$tmp/axiom.gpg" 2>/dev/null) || die "не удалось прочитать ключ подписи"
+    [ "$(printf '%s\n' "$keys" | grep -c '^pub:')" = 1 ] \
+      && printf '%s\n' "$keys" | grep -q "^fpr:::::::::$KEY_ID:" \
+      || die "ключ подписи не совпал"
+  else
+    printf '%s  %s\n' "$KEY_SHA256" "$tmp/axiom.gpg" | sha256sum -c --status - \
+      || die "ключ подписи не совпал"
   fi
   $SUDO install -Dm644 "$tmp/axiom.gpg" /usr/share/keyrings/axiom.gpg
   echo "deb [arch=amd64 signed-by=/usr/share/keyrings/axiom.gpg] $REPO_URL/apt stable main" \
@@ -78,3 +90,6 @@ fi
 
 say "Готово. Axiom есть в меню приложений, запуск из терминала: axiom-browser"
 say "Обновления придут вместе с системой."
+}
+
+main "$@"

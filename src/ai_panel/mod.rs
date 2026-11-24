@@ -110,8 +110,12 @@ impl AiPanel {
                     .with_new_window_req_handler({
                         let events = events.clone();
                         move |url, _| {
-                            if omnibox::is_navigable(&url) {
-                                let _ = events.send_event(UserEvent::OpenTab { url, ai: true });
+                            if crate::tabs::popups::allowed(&url) {
+                                let _ = events.send_event(UserEvent::OpenTab {
+                                    url,
+                                    ai: true,
+                                    from: None,
+                                });
                             }
                             wry::NewWindowResponse::Deny
                         }
@@ -121,6 +125,7 @@ impl AiPanel {
                 let webview = crate::tabs::webview::build_child(builder, window)
                     .context("не удалось создать панель ИИ")?;
                 hotkeys::install(&webview, events.clone());
+                crate::tabs::popups::install(&webview);
                 downloads::install(&webview, None, events.clone());
                 self.webview = Some(webview);
             }

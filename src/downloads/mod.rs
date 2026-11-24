@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "linux")]
 pub use self::webkit::attach;
 #[cfg(windows)]
-pub use self::webview2::{cancel, install};
+pub use self::webview2::{cancel, install, keep};
 use crate::{
     storage::{Paths, now_secs, read_json, write_json},
     tabs::TabId,
@@ -63,6 +63,10 @@ pub enum DownloadEvent {
         received: u64,
         total: Option<u64>,
     },
+    /// Файл опасного типа: WebView2 ждёт, сохранить его или удалить (`waiting`),
+    /// или пользователь уже решил сохранить.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Decision { id: DownloadId, waiting: bool },
     Finished {
         id: DownloadId,
         outcome: Outcome,
@@ -77,6 +81,9 @@ pub enum Outcome {
     Done,
     #[cfg_attr(not(windows), allow(dead_code))]
     Cancelled,
+    /// Пользователь отказался сохранять файл опасного типа.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Discarded,
     Failed(String),
 }
 
@@ -107,6 +114,9 @@ pub struct Download {
     pub at: u64,
     #[serde(skip)]
     pub tab: Option<TabId>,
+    /// Ждёт решения: сохранить файл опасного типа или удалить.
+    #[serde(skip)]
+    pub ask: bool,
 }
 
 impl Download {
@@ -183,6 +193,7 @@ impl Downloads {
                         error: String::new(),
                         at: now_secs(),
                         tab,
+                        ask: false,
                     },
                 );
                 self.trim();
@@ -201,6 +212,12 @@ impl Downloads {
                 }
                 None
             }
+            DownloadEvent::Decision { id, waiting } => {
+                let item = self.active_mut(id)?;
+                item.ask = waiting;
+                // О том, что нужно решение, стоит сказать; о самом решении — нет.
+                if waiting { Some(&*item) } else { None }
+            }
             DownloadEvent::Finished {
                 id,
                 outcome,
@@ -214,6 +231,7 @@ impl Downloads {
                 if let Some(received) = received {
                     item.received = received;
                 }
+                item.ask = false;
                 match outcome {
                     Outcome::Done => {
                         item.status = Status::Done;
@@ -223,6 +241,10 @@ impl Downloads {
                         }
                     }
                     Outcome::Cancelled => item.status = Status::Cancelled,
+                    Outcome::Discarded => {
+                        item.status = Status::Cancelled;
+                        item.error = "Удалено".into();
+                    }
                     Outcome::Failed(reason) => {
                         item.status = Status::Failed;
                         item.error = reason;
@@ -400,6 +422,9 @@ pub fn cancel(_id: DownloadId) -> bool {
     false
 }
 
+#[cfg(not(windows))]
+pub fn keep(_id: DownloadId) {}
+
 /// На Windows загрузки ловятся нативным событием после создания webview (см. [`install`]).
 #[cfg(not(target_os = "linux"))]
 pub fn attach<'a>(
@@ -501,6 +526,40 @@ mod tests {
         store.clear();
         let left: Vec<_> = store.iter().map(|d| d.id).collect();
         assert_eq!(left, vec![b]);
+    }
+
+    #[test]
+    fn dangerous_file_waits_for_decision() {
+        let mut store = Downloads::default();
+        let kept = started(&mut store, Some(3));
+        let dropped = started(&mut store, Some(3));
+        for id in [kept, dropped] {
+            let asked = store.apply(DownloadEvent::Decision { id, waiting: true });
+            assert!(asked.is_some_and(|d| d.ask && d.status == Status::Active));
+        }
+        // Пока ждёт решения, вкладку не усыпить, а загрузку не убрать из списка.
+        assert!(store.is_busy(3));
+        assert!(!store.remove(kept));
+        // «Сохранить всё равно»: снова обычная загрузка, говорить об этом незачем.
+        assert!(
+            store
+                .apply(DownloadEvent::Decision {
+                    id: kept,
+                    waiting: false
+                })
+                .is_none()
+        );
+        assert_eq!(store.get(kept).map(|d| d.ask), Some(false));
+        // «Удалить»: отменена, с пометкой «Удалено».
+        let gone = store.apply(DownloadEvent::Finished {
+            id: dropped,
+            outcome: Outcome::Discarded,
+            path: None,
+            received: None,
+        });
+        assert!(
+            gone.is_some_and(|d| d.status == Status::Cancelled && !d.ask && d.error == "Удалено")
+        );
     }
 
     #[test]

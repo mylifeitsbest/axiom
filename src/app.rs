@@ -244,7 +244,11 @@ impl App {
                 // Ссылка на файл при запуске: загрузка могла начаться раньше, чем
                 // интерфейс загрузился, и её сообщение не дошло.
                 if let Some(d) = self.downloads.iter().find(|d| d.status == Status::Active) {
-                    let text = format!("Скачивается {}", d.name());
+                    let text = if d.ask {
+                        format!("Файл может быть опасен: {}", d.name())
+                    } else {
+                        format!("Скачивается {}", d.name())
+                    };
                     self.send(&ToUi::Toast { text: &text });
                 }
                 if self.tabs.active_tab().is_some_and(|t| t.is_newtab()) {
@@ -387,6 +391,7 @@ impl App {
                     });
                 }
             }
+            UiCmd::DownloadKeep { id } => downloads::keep(id),
             UiCmd::DownloadRemove { id } => {
                 if self.downloads.remove(id) {
                     self.push_downloads();
@@ -822,6 +827,7 @@ impl App {
             _ => None,
         };
         let text = self.downloads.apply(event).and_then(|d| match d.status {
+            Status::Active if d.ask => Some(format!("Файл может быть опасен: {}", d.name())),
             Status::Active => Some(format!("Скачивается {}", d.name())),
             Status::Done => Some(format!("Скачано: {}", d.name())),
             // Отменил сам пользователь — сообщать незачем.
@@ -912,6 +918,7 @@ impl App {
                 error: d.error.clone(),
                 at: d.at,
                 exists: d.status != Status::Done || d.path.exists(),
+                ask: d.ask,
             })
             .collect();
         self.send(&ToUi::Downloads {

@@ -9,18 +9,26 @@
 //! сообщает о каждой попытке как о новой загрузке с новым объектом. Попытку
 //! с тем же адресом и путём считаем продолжением: номер прежний, а события
 //! от устаревших объектов игнорируются.
+//!
+//! Файл опасного типа (`.exe`, `.msi`, `.bat`…), скачанный без явного действия
+//! пользователя, Edge не сохраняет, пока в его окне загрузок не нажмут
+//! «Оставить», а это окно мы прячем — загрузка так и висела бы «идущей».
+//! Поэтому проверку типа файла (`SaveFileSecurityCheckStarting`) для таких
+//! файлов придерживаем и спрашиваем в своём списке. Настройки SmartScreen
+//! не трогаем.
 
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use tao::event_loop::EventLoopProxy;
 use webview2_com::{
     BytesReceivedChangedEventHandler, DownloadStartingEventHandler,
-    Microsoft::Web::WebView2::Win32::*, StateChangedEventHandler, take_pwstr,
+    Microsoft::Web::WebView2::Win32::*, SaveFileSecurityCheckStartingEventHandler,
+    StateChangedEventHandler, take_pwstr,
 };
 use windows_core::{BOOL, HSTRING, Interface, PWSTR};
 use wry::{WebView, WebViewExtWindows};
@@ -31,12 +39,57 @@ use crate::{events::UserEvent, tabs::TabId};
 /// Как часто отправлять прогресс в интерфейс.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
+/// Типы, которые Edge без жеста пользователя или без прошлых визитов на сайт
+/// не сохраняет молча: `DANGEROUS` и `ALLOW_ON_USER_GESTURE` для Windows
+/// в `download_file_types.asciipb` Chromium. Спрашиваем о них всегда: узнать,
+/// остановил бы файл сам Edge, нельзя. По алфавиту, через пробел.
+const RISKY: &str = "\
+    accda accdb accde accdr ad ade adp app application appref-ms appx appxbundle asp asx bas \
+    bat bgi cer cfg chi chm class cmd com cpi cpl crt crx der diagcab diagcfg diagpkg dll \
+    drv efi eml exe fon fxp gadget grp hlp hta htt img inf ini ins inx iqy isp isu jar jnlp \
+    job js jse library-ms lnk local mad maf mag mam manifest maq mar mas mat mau mav maw mda \
+    mdb mde mdt mdw mdz mht mhtml mmc mof msc msg msh msh1 msh1xml msh2 msh2xml mshxml msi \
+    msix msixbundle msp mst ocx ops oxt paf partial pcd pif pl plg prf prg ps1 ps1xml ps2 \
+    ps2xml psc1 psc2 psm1 pst py pyc pyd pyo pyw pyz pyzw rb reg rels rgs scf scr sct \
+    search-ms settingcontent-ms shb shs slk spl swf sys u3p url vb vbe vbs vbscript vdx vsd \
+    vsdm vsdx vsmacros vss vssm vssx vst vstm vstx vsw vsx vtx website ws wsc wsf wsh xbap \
+    xll xml xnk xrm-ms xsd xsl";
+
+/// Проверка файла опасного типа, отложенная до ответа пользователя.
+struct Pending {
+    args: ICoreWebView2SaveFileSecurityCheckStartingEventArgs,
+    deferral: ICoreWebView2Deferral,
+    events: EventLoopProxy<UserEvent>,
+}
+
+impl Pending {
+    /// Отвечает WebView2: сохранить файл или отменить загрузку.
+    fn finish(self, keep: bool) -> windows_core::Result<()> {
+        // SAFETY: объекты события живы, пока не завершена отсрочка; поток интерфейса.
+        unsafe {
+            if keep {
+                // Пропускает только проверку типа (на неё и ответил пользователь).
+                self.args.SetSuppressDefaultPolicy(true)?;
+            } else {
+                self.args.SetCancelSave(true)?;
+            }
+            self.deferral.Complete()
+        }
+    }
+}
+
 struct Tracked {
     /// Объекты всех попыток, последняя — текущая. Прежние держим до конца загрузки:
     /// если отпустить их раньше, WebView2 перестаёт сообщать о её завершении.
     operations: Vec<ICoreWebView2DownloadOperation>,
     url: String,
     path: PathBuf,
+    /// Проверка типа файла ждёт решения пользователя.
+    pending: Option<Pending>,
+    /// Пользователь разрешил сохранить: повторные попытки уже не спрашиваем.
+    kept: bool,
+    /// Пользователь отказался: прерывание загрузки — это «удалено», а не ошибка.
+    discarded: bool,
 }
 
 impl Tracked {
@@ -64,10 +117,11 @@ pub fn install(webview: &WebView, tab: Option<TabId>, events: EventLoopProxy<Use
     let Ok(core) = webview.webview().cast::<ICoreWebView2_4>() else {
         return;
     };
+    let can_ask = watch_checks(&core, &events);
     let handler = DownloadStartingEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else { return Ok(()) };
         // SAFETY: args — живой COM-объект события, вызываем его в потоке интерфейса.
-        unsafe { on_starting(&args, tab, &events) }
+        unsafe { on_starting(&args, tab, can_ask, &events) }
     }));
     let mut token = 0i64;
     // SAFETY: core принадлежит webview, обработчик живёт, пока жив webview.
@@ -76,8 +130,34 @@ pub fn install(webview: &WebView, tab: Option<TabId>, events: EventLoopProxy<Use
     }
 }
 
+/// Подписывает на проверку типа сохраняемого файла. `false` — WebView2 старше
+/// 1.0.2849 и этого события не знает.
+fn watch_checks(core: &ICoreWebView2_4, events: &EventLoopProxy<UserEvent>) -> bool {
+    let Ok(core) = core.cast::<ICoreWebView2_26>() else {
+        return false;
+    };
+    let events = events.clone();
+    let handler = SaveFileSecurityCheckStartingEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else { return Ok(()) };
+        // SAFETY: args — живой COM-объект события, вызываем его в потоке интерфейса.
+        unsafe { on_check(&args, &events) }
+    }));
+    let mut token = 0i64;
+    // SAFETY: core принадлежит webview, обработчик живёт, пока жив webview.
+    unsafe { core.add_SaveFileSecurityCheckStarting(&handler, &mut token) }.is_ok()
+}
+
+/// «Сохранить всё равно» для файла опасного типа.
+pub fn keep(id: DownloadId) {
+    decide(id, true);
+}
+
 /// Отменяет идущую загрузку.
 pub fn cancel(id: DownloadId) -> bool {
+    // Файл опасного типа ещё ждёт решения: отменить — значит не сохранять.
+    if decide(id, false) {
+        return true;
+    }
     // Клонируем объект из карты: Cancel может сразу вызвать StateChanged, а тот правит карту.
     let Some(operation) = TRACKED.with(|t| t.borrow().get(&id).and_then(Tracked::current).cloned())
     else {
@@ -87,9 +167,36 @@ pub fn cancel(id: DownloadId) -> bool {
     unsafe { operation.Cancel() }.is_ok()
 }
 
+/// Передаёт решение пользователя отложенной проверке. `false` — решать нечего.
+fn decide(id: DownloadId, keep: bool) -> bool {
+    // Достаём из карты до вызова WebView2: ответ может сразу вызвать StateChanged.
+    let Some(pending) = TRACKED.with(|t| {
+        let mut tracked = t.borrow_mut();
+        let download = tracked.get_mut(&id)?;
+        let pending = download.pending.take()?;
+        download.kept = keep;
+        download.discarded = !keep;
+        Some(pending)
+    }) else {
+        return false;
+    };
+    let events = pending.events.clone();
+    if pending.finish(keep).is_err() {
+        return false;
+    }
+    if keep {
+        let _ = events.send_event(UserEvent::Download(DownloadEvent::Decision {
+            id,
+            waiting: false,
+        }));
+    }
+    true
+}
+
 unsafe fn on_starting(
     args: &ICoreWebView2DownloadStartingEventArgs,
     tab: Option<TabId>,
+    can_ask: bool,
     events: &EventLoopProxy<UserEvent>,
 ) -> windows_core::Result<()> {
     // SAFETY (весь блок): методы живых COM-объектов, указатели на локальные переменные.
@@ -118,8 +225,11 @@ unsafe fn on_starting(
             path = unique_path(&path);
             args.SetResultFilePath(&HSTRING::from(path.as_os_str()))?;
         }
-        // Окно загрузок Edge не показываем: у нас своя панель.
-        args.SetHandled(true)?;
+        // Окно загрузок Edge не показываем: у нас своя панель. Без события проверки
+        // спросить о файле опасного типа нечем — пусть спросит Edge.
+        if can_ask || !is_risky(&path) {
+            args.SetHandled(true)?;
+        }
 
         let id = resumed.unwrap_or_else(next_id);
         if resumed.is_none() {
@@ -164,14 +274,17 @@ unsafe fn on_starting(
             if !is_current(id, &operation) {
                 return Ok(());
             }
-            let Some(outcome) = outcome_of(&operation)? else {
+            let Some(mut outcome) = outcome_of(&operation)? else {
                 return Ok(());
             };
             let mut raw = PWSTR::null();
             operation.ResultFilePath(&mut raw)?;
             let path = PathBuf::from(take_pwstr(raw));
             let (received, _) = bytes(&operation)?;
-            TRACKED.with(|t| t.borrow_mut().remove(&id));
+            let tracked = TRACKED.with(|t| t.borrow_mut().remove(&id));
+            if tracked.is_some_and(|d| d.discarded) && outcome != Outcome::Done {
+                outcome = Outcome::Discarded;
+            }
             let _ = state_events.send_event(UserEvent::Download(DownloadEvent::Finished {
                 id,
                 outcome,
@@ -189,12 +302,79 @@ unsafe fn on_starting(
                     operations: Vec::new(),
                     url,
                     path,
+                    pending: None,
+                    kept: false,
+                    discarded: false,
                 })
                 .operations
                 .push(operation)
         });
     }
     Ok(())
+}
+
+/// Проверка типа сохраняемого файла: о файле опасного типа спрашиваем пользователя.
+unsafe fn on_check(
+    args: &ICoreWebView2SaveFileSecurityCheckStartingEventArgs,
+    events: &EventLoopProxy<UserEvent>,
+) -> windows_core::Result<()> {
+    // SAFETY (весь блок): методы живого COM-объекта, указатели на локальные переменные.
+    unsafe {
+        let mut raw = PWSTR::null();
+        args.FilePath(&mut raw)?;
+        let path = PathBuf::from(take_pwstr(raw));
+        let mut raw = PWSTR::null();
+        args.DocumentOriginUri(&mut raw)?;
+        let url = take_pwstr(raw);
+        // Остальные типы Edge пропускает сам, не задерживая загрузку.
+        if !is_risky(&path) {
+            return Ok(());
+        }
+        let found = TRACKED.with(|t| {
+            let tracked = t.borrow();
+            tracked
+                .iter()
+                .find(|(_, d)| d.path == path)
+                .or_else(|| tracked.iter().find(|(_, d)| d.url == url && !d.kept))
+                .map(|(&id, d)| (id, d.kept))
+        });
+        // Не загрузка из нашего списка — решает Edge.
+        let Some((id, kept)) = found else {
+            return Ok(());
+        };
+        if kept {
+            // Новая попытка после обрыва связи: пользователь уже разрешил.
+            return args.SetSuppressDefaultPolicy(true);
+        }
+        let pending = Pending {
+            args: args.clone(),
+            deferral: args.GetDeferral()?,
+            events: events.clone(),
+        };
+        let stale = TRACKED.with(|t| {
+            t.borrow_mut()
+                .get_mut(&id)
+                .and_then(|d| d.pending.replace(pending))
+        });
+        // Прежняя попытка тоже ждала ответа — её место заняла новая.
+        if let Some(stale) = stale {
+            let _ = stale.finish(false);
+        }
+        let _ = events.send_event(UserEvent::Download(DownloadEvent::Decision {
+            id,
+            waiting: true,
+        }));
+    }
+    Ok(())
+}
+
+fn is_risky(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    RISKY
+        .split_ascii_whitespace()
+        .any(|risky| risky.eq_ignore_ascii_case(ext))
 }
 
 /// Получено байт и сколько всего (если сервер прислал размер).
@@ -264,5 +444,26 @@ fn describe(reason: COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON) -> &'static str {
         }
         COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN => "Прервано: браузер закрыт",
         _ => "Не удалось скачать",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn risky_types() {
+        let types: Vec<_> = RISKY.split_ascii_whitespace().collect();
+        assert!(
+            types.windows(2).all(|w| w[0] < w[1]),
+            "RISKY не по алфавиту"
+        );
+        assert_eq!(types.len(), 168);
+        assert!(is_risky(Path::new(r"C:\Загрузки\setup.EXE")));
+        assert!(is_risky(Path::new("install.msi")));
+        assert!(is_risky(Path::new("run.bat")));
+        assert!(!is_risky(Path::new("photos.zip")));
+        assert!(!is_risky(Path::new("firmware.bin")));
+        assert!(!is_risky(Path::new("README")));
     }
 }

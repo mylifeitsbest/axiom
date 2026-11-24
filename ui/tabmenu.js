@@ -71,7 +71,14 @@ function createTabMenu(ax) {
     document.querySelector(`.tab[data-id="${tabId}"]`)?.classList.add('ctx');
   }
 
+  // Когда меню только открылось, страница под ним прячется. На Linux от этого
+  // интерфейс может на миг потерять фокус или получить пересчёт размера — меню
+  // закрывалось сразу же и только мигало. Первые доли секунды такие события не в счёт.
+  let openedAt = 0;
+  const settling = () => performance.now() - openedAt < 400;
+
   function open(id, x, y) {
+    openedAt = performance.now();
     tabId = id;
     const t = tab();
     if (!t) { close(); return; }
@@ -136,10 +143,12 @@ function createTabMenu(ax) {
   document.addEventListener('mousedown', (e) => {
     if (!isOpen() || e.target.closest('#tabm')) return;
     if (e.button === 2 && e.target.closest('.tab')) return;
+    // Тот же правый клик, что открыл меню (на Linux contextmenu приходит раньше mouseup).
+    if (e.button === 2 && settling()) return;
     close();
   }, true);
-  addEventListener('resize', close);
-  addEventListener('blur', close);
+  addEventListener('resize', () => { if (!settling()) close(); });
+  addEventListener('blur', () => { if (!settling()) close(); });
   // Клавиатура: стрелки и Enter — по пунктам, Esc закрывает, остальные клавиши
   // (в том числе сочетания) закрывают меню и делают своё дело.
   document.addEventListener('keydown', (e) => {

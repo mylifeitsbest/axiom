@@ -8,7 +8,7 @@ use super::App;
 use crate::{
     events::UserEvent,
     ipc::ToUi,
-    tabs::TabId,
+    tabs::{TabId, script},
     translate::{
         self, Batch, Event, MAX_ERRORS, MAX_GLOBAL_PER_MINUTE, MAX_PROBES, MAX_RESUMES_PER_MINUTE,
         MAX_RUNNING, Page, Prefs, Probe, Stage, View, google::Output, lang,
@@ -134,7 +134,7 @@ impl App {
         };
         page.probes += 1;
         let (epoch, events) = (page.epoch, self.events.clone());
-        let _ = webview.evaluate_script_with_callback(translate::PROBE, move |raw| {
+        script::ask(webview, translate::PROBE, move |raw| {
             let _ = events.send_event(UserEvent::Translate(Event::Probed {
                 tab: id,
                 epoch,
@@ -215,7 +215,7 @@ impl App {
             .or_insert_with(|| Page::new(epoch, url.clone()));
         page.url = url;
         page.begin(epoch, &self.settings.translate.to);
-        if webview.evaluate_script(&translate::start_script()).is_err() {
+        if !script::run(webview, &translate::start_script()) {
             page.stage = Stage::Foreign;
         }
         self.push_translate(id);
@@ -261,16 +261,14 @@ impl App {
             return false;
         };
         let (epoch, events) = (page.epoch, self.events.clone());
-        let asked = webview
-            .evaluate_script_with_callback(&translate::take_script(limit), move |raw| {
-                let _ = events.send_event(UserEvent::Translate(Event::Taken {
-                    tab: id,
-                    epoch,
-                    raw,
-                    limit,
-                }));
-            })
-            .is_ok();
+        let asked = script::ask(webview, &translate::take_script(limit), move |raw| {
+            let _ = events.send_event(UserEvent::Translate(Event::Taken {
+                tab: id,
+                epoch,
+                raw,
+                limit,
+            }));
+        });
         if asked {
             page.asking = Some(now);
         }
@@ -421,7 +419,7 @@ impl App {
 
     fn eval(&self, id: TabId, js: &str) {
         if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
-            let _ = webview.evaluate_script(js);
+            script::run(webview, js);
         }
     }
 

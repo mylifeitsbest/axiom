@@ -151,11 +151,15 @@ pub fn print(webview: &WebView) {
         // SAFETY: ядро webview живое, вызов без указателей.
         .and_then(|core| unsafe { core.ShowPrintUI(COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER) });
     if shown.is_err() {
-        // Старый WebView2 без ShowPrintUI: печать изнутри страницы.
+        // Старый WebView2 без ShowPrintUI: печать изнутри страницы. Это `window.print()`
+        // через `ExecuteScript`, то есть с жестом — единственный служебный скрипт с ним
+        // (см. `script`), и он к месту: печать попросил сам человек (Ctrl+P, меню),
+        // а повторные `print()` без жеста Chromium придерживает.
         let _ = webview.print();
     }
 }
 
+/// WebKitGTK: окно печати без скриптов в странице (`WebKitPrintOperation` в wry).
 #[cfg(not(windows))]
 pub fn print(webview: &WebView) {
     let _ = webview.print();

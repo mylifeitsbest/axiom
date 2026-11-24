@@ -75,11 +75,11 @@ function createPanels(ax) {
     { id: 'look', icon: 'palette', title: 'Внешний вид', desc: 'Тема, цвета и шрифт. Всё меняется сразу.' },
     { id: 'layout', icon: 'layout', title: 'Раскладка', desc: 'Где живут вкладки и сколько воздуха вокруг.' },
     { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'Поисковая система, Google AI Mode и прокси только для ИИ.' },
-    { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов, как в Chrome.' },
+    { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
     { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome, Edge, Firefox и других браузеров.' },
     { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка, обновления и браузер по умолчанию.' },
-    { id: 'keys', icon: 'keyboard', title: 'Клавиши', desc: 'Всё как в Chrome, плюс пара своих.' },
+    { id: 'keys', icon: 'keyboard', title: 'Клавиши', desc: 'Привычные сочетания плюс пара своих.' },
   ];
   const LAYOUTS = [
     { v: 'one', name: 'Одна строка', note: 'Вкладки и адрес рядом. Максимум места.' },
@@ -155,7 +155,7 @@ function createPanels(ax) {
         </div>
         <h4>Сайты</h4><div class="card">
           ${row('Тема сайтов', 'Сайты получают тему Axiom: в тёмном режиме DuckDuckGo, GitHub, YouTube и другие сами становятся тёмными', '<span class="pill-v" id="siteScheme"></span>')}
-          ${row('Тёмные сайты принудительно', 'Затемняет и сайты без своей тёмной темы, как флаг в Chrome. Применится после перезапуска Axiom.', toggle('data-bkey', 'force_dark'), 'id="forceDarkRow"')}
+          ${row('Тёмные сайты принудительно', 'Затемняет и сайты без своей тёмной темы. Применится после перезапуска Axiom.', toggle('data-bkey', 'force_dark'), 'id="forceDarkRow"')}
         </div>
         <h4>Текст</h4><div class="card">
           ${row('Шрифт', '', '<select data-key="font"><option value="system">Системный</option><option value="rounded">Округлый</option><option value="mono">Моноширинный</option><option value="serif">С засечками</option><option value="custom">Свой…</option></select>')}

@@ -204,6 +204,9 @@ function createPanels(ax) {
           <div class="imp-head"><div class="hero-ic">${icon('download')}</div>
             <div class="hero-t"><b>Перенести из другого браузера</b><small>Закладки и история последнего профиля. Браузер можно не закрывать.</small></div></div>
           <div id="impList"></div></div>
+        <div class="card">
+          ${row('Убирать метки слежки из ссылок', 'utm_*, fbclid, gclid, yclid и другие: сайт не узнает, откуда вы пришли. Формы и кнопку «Назад» это не трогает.', toggle('data-bkey', 'strip_tracking'), 'data-kw="utm приватность трекинг метки слежка"')}
+        </div>
         <div class="note">${icon('lock')}<span>Пароли и входы на сайты не переносятся: браузеры шифруют их так, что прочитать их может только сам браузер. Войдите на нужные сайты один раз — Axiom предложит сохранить пароль.</span></div>`,
       system: `
         <div class="card">

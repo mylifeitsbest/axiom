@@ -52,7 +52,7 @@
   // ---------- состояние ----------
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: null, maximized: false };
   let A = { ...DEFAULTS };
-  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true, search_engine: 'duckduckgo', search_custom: '' };
+  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true, strip_tracking: true, search_engine: 'duckduckgo', search_custom: '' };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -251,6 +251,7 @@
         onboarded: !!B.onboarded,
         force_dark: !!B.force_dark,
         check_updates: B.check_updates !== false,
+        strip_tracking: B.strip_tracking !== false,
       },
     });
     if (now) run(); else saveTimer = setTimeout(run, 350);
@@ -908,7 +909,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '' };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {

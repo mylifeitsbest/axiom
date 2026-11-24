@@ -324,19 +324,78 @@
   }
 
   // Значок звука: динамик, пока страница играет звук, перечёркнутый — пока звук выключен.
-  // Клик по нему (и Ctrl+M) выключает и включает звук. На узкой вкладке он вместо фавиконки.
+  // Громкость вкладки ниже 100 % видна всегда, даже в тишине: динамик с одной волной
+  // (0 % — без волн). Клик по нему (и Ctrl+M) выключает и включает звук, колесо мыши
+  // над ним — громкость. На узкой вкладке он вместо фавиконки.
   function renderTabSound(el, t) {
     const b = el.querySelector('.ta');
-    const state = t.muted ? 'mute' : t.audible ? 'vol' : '';
+    const vol = t.volume ?? 100;
+    const state = t.muted ? 'mute' : vol < 100 ? volIcon(vol) : t.audible ? 'vol' : '';
     el.classList.toggle('snd', !!state);
     el.classList.toggle('muted', !!t.muted);
-    if (b.dataset.s === state) return;
-    b.dataset.s = state;
-    b.hidden = !state;
-    b.innerHTML = state ? icon(state) : '';
-    b.title = t.muted ? 'Включить звук (Ctrl+M)' : 'Выключить звук (Ctrl+M)';
-    b.setAttribute('aria-label', b.title);
+    if (b.dataset.s !== state) {
+      b.dataset.s = state;
+      b.hidden = !state;
+      b.innerHTML = state ? icon(state) : '';
+    }
+    const what = t.muted ? 'Включить звук (Ctrl+M)' : 'Выключить звук (Ctrl+M)';
+    const title = `${what}\nГромкость ${vol}% — колесо мыши`;
+    if (b.title !== title) {
+      b.title = title;
+      b.setAttribute('aria-label', `${what}, громкость ${vol}%`);
+    }
   }
+
+  // Колесо над значком динамика: громкость вкладки ±5 % и подсказка с процентами рядом.
+  const volTip = document.createElement('div');
+  volTip.className = 'voltip';
+  volTip.setAttribute('role', 'status');
+  volTip.innerHTML = '<span class="vt-ic"></span><i class="vt-bar"><i></i></i><b></b>';
+  app.append(volTip);
+  let volTipTimer = 0;
+  let wheel = { id: 0, acc: 0, at: 0 };
+  function showVolTip(b, vol, muted) {
+    const ic = muted ? 'mute' : volIcon(vol);
+    const slot = volTip.querySelector('.vt-ic');
+    if (slot.dataset.i !== ic) { slot.dataset.i = ic; slot.innerHTML = icon(ic); }
+    volTip.querySelector('.vt-bar').style.setProperty('--v', `${vol}%`);
+    volTip.querySelector('b').textContent = `${vol}%`;
+    // Слева от значка, по его середине; у левого края окна — справа. Всегда в полосе
+    // вкладок: ниже неё лежит страница, а её webview выше интерфейса.
+    const r = b.getBoundingClientRect();
+    const w = volTip.offsetWidth;
+    const h = volTip.offsetHeight;
+    const left = r.left - 6 - w >= 4 ? r.left - 6 - w : r.right + 6;
+    Object.assign(volTip.style, { left: `${Math.round(left)}px`, top: `${Math.round(r.top + (r.height - h) / 2)}px` });
+    volTip.classList.add('on');
+    clearTimeout(volTipTimer);
+    volTipTimer = setTimeout(() => volTip.classList.remove('on'), 900);
+  }
+  $('#tablist').addEventListener('wheel', (e) => {
+    const b = e.target.closest('.ta');
+    const el = b && !b.hidden && e.target.closest('.tab');
+    if (!el || el.classList.contains('out')) return;
+    e.preventDefault();
+    const t = S.tabs.find((x) => x.id === +el.dataset.id);
+    if (!t || isInternal(t)) return;
+    // Тачпад шлёт много мелких шагов: копим до одного щелчка колеса.
+    const now = performance.now();
+    if (wheel.id !== t.id || now - wheel.at > 300) wheel = { id: t.id, acc: 0, at: now };
+    wheel.at = now;
+    wheel.acc += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+    const vol = t.volume ?? 100;
+    if (Math.abs(wheel.acc) < 40) { showVolTip(b, vol, t.muted); return; }
+    const next = volStep(vol, wheel.acc < 0);
+    wheel.acc = 0;
+    if (next !== vol) {
+      // Сразу у себя: следующий щелчок считает от нового значения, не дожидаясь Rust.
+      t.volume = next;
+      renderTabSound(el, t);
+      tm.sync();
+      send({ cmd: 'set_volume', id: t.id, volume: next });
+    }
+    showVolTip(b, next, t.muted);
+  }, { passive: false });
 
   function flip(mutate) {
     const els = $$('.tab', $('#tablist'));

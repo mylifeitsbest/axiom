@@ -10,6 +10,7 @@ pub mod sleep;
 pub mod snapshot;
 pub mod tools;
 pub mod tracking;
+pub mod volume;
 pub mod waking;
 pub mod webview;
 
@@ -57,6 +58,9 @@ pub struct Tab {
     pub muted: bool,
     /// Страница сейчас играет звук (по событию движка).
     pub audible: bool,
+    /// Громкость вкладки, 0–100 % (см. `volume`). Переживает усыпление, перезапуск
+    /// и Ctrl+Shift+T; новая страница во вкладке получает её снова.
+    pub volume: u8,
 }
 
 impl Tab {
@@ -88,6 +92,11 @@ impl Tab {
         webview::WAKES_BEHIND || !self.is_waking()
     }
 
+    /// Звук движка выключен: кнопкой или громкостью 0 % (см. `volume::ZERO_IS_MUTE`).
+    pub fn engine_muted(&self) -> bool {
+        volume::engine_muted(self.muted, self.volume)
+    }
+
     /// Флаги самой вкладки не мешают её усыпить. Активность, звук и загрузки
     /// проверяет `App::sleep_candidates`: им нужен webview.
     pub fn may_sleep(&self) -> bool {
@@ -100,8 +109,9 @@ pub struct ClosedTab {
     pub url: String,
     pub title: String,
     pub ai: bool,
-    /// Ctrl+Shift+T возвращает вкладку вместе с «не усыплять».
+    /// Ctrl+Shift+T возвращает вкладку вместе с «не усыплять» и громкостью.
     pub no_sleep: bool,
+    pub volume: u8,
     pub index: usize,
 }
 
@@ -175,6 +185,7 @@ impl TabStore {
                 waking: None,
                 muted: false,
                 audible: false,
+                volume: volume::FULL,
             },
         );
         id
@@ -191,6 +202,7 @@ impl TabStore {
                 title: tab.title.clone(),
                 ai: tab.ai,
                 no_sleep: tab.no_sleep,
+                volume: tab.volume,
                 index,
             });
             if self.closed.len() > MAX_CLOSED {
@@ -355,5 +367,18 @@ mod tests {
         }
         assert!(s.remove(first, true).is_some());
         assert_eq!(s.pop_closed().map(|c| c.no_sleep), Some(true));
+    }
+
+    #[test]
+    fn closed_tab_remembers_volume() {
+        let mut s = store(2);
+        let ids: Vec<TabId> = s.iter().map(|t| t.id).collect();
+        // Новая вкладка — на полной громкости.
+        assert!(s.iter().all(|t| t.volume == volume::FULL));
+        if let Some(tab) = s.get_mut(ids[1]) {
+            tab.volume = 35;
+        }
+        assert!(s.remove(ids[1], true).is_some());
+        assert_eq!(s.pop_closed().map(|c| c.volume), Some(35));
     }
 }

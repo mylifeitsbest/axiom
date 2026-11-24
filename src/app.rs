@@ -355,6 +355,7 @@ impl App {
             UiCmd::ReloadTab { id } => self.reload_tab(id),
             UiCmd::DuplicateTab { id } => self.duplicate_tab(id),
             UiCmd::ToggleMute { id } => self.toggle_mute(id),
+            UiCmd::SetVolume { id, volume } => self.set_volume(id, volume),
             UiCmd::CloseOtherTabs { id } => self.close_other_tabs(id),
             UiCmd::CloseTabsRight { id } => self.close_tabs_right(id),
             UiCmd::Import { browser } => self.start_import(browser),
@@ -544,6 +545,7 @@ impl App {
                     .add(saved.url.clone(), saved.title.clone(), saved.ai, Some(i));
                 if let Some(tab) = self.tabs.get_mut(id) {
                     tab.no_sleep = saved.no_sleep;
+                    tab.volume = crate::tabs::volume::clamp(saved.volume);
                     tab.loaded = true;
                 }
                 if i == session.active {
@@ -621,7 +623,7 @@ impl App {
         if tab.webview.is_some() || tab.is_internal() {
             return Ok(());
         }
-        let (url, ai, muted) = (tab.url.clone(), tab.ai, tab.muted);
+        let (url, ai, muted) = (tab.url.clone(), tab.ai, tab.engine_muted());
         let shown = self.tabs.active == Some(id);
         // Уснувшую страницу показываем, когда она нарисуется, а пока — заглушку
         // (см. `app/waking.rs`). Новую ссылку грузим на виду, как обычно.
@@ -828,6 +830,7 @@ impl App {
                     .add(closed.url, closed.title, closed.ai, Some(closed.index));
                 if let Some(tab) = self.tabs.get_mut(id) {
                     tab.no_sleep = closed.no_sleep;
+                    tab.volume = closed.volume;
                 }
                 self.activate(id);
             }
@@ -872,6 +875,8 @@ impl App {
         }
         // Исходный код (Ctrl+U) — тоже адрес вкладки, но не страница: без истории и перевода.
         let source = crate::tabs::tools::is_source(&tab.url);
+        // Новая страница во вкладке начинает с полной громкости — даём ей громкость вкладки.
+        Self::apply_volume(tab);
         if !started {
             // Вкладка, открытая ради загрузки, страницу так и не показала — в историю её не пишем.
             if !blank && !source {
@@ -1650,6 +1655,7 @@ impl App {
                     title: t.title.clone(),
                     ai: t.ai,
                     no_sleep: t.no_sleep,
+                    volume: t.volume,
                 })
                 .collect(),
             active,
@@ -1719,6 +1725,7 @@ impl App {
                 // У спящей вкладки звука нет, но выключенный звук она помнит.
                 audible: t.audible && t.webview.is_some(),
                 muted: t.muted,
+                volume: t.volume,
             })
             .collect();
         let on_newtab = self.tabs.active_tab().is_some_and(|t| t.is_newtab());

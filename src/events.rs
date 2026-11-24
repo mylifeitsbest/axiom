@@ -6,7 +6,7 @@ use tao::event_loop::EventLoopProxy;
 
 use crate::{
     downloads::DownloadEvent,
-    tabs::{TabId, sleep::PageState},
+    tabs::{TabId, fullscreen::Owner, sleep::PageState},
     ui::hotkeys::Hotkey,
 };
 
@@ -35,6 +35,11 @@ pub enum UserEvent {
     /// Страница ответила перед усыплением: позиция прокрутки и нет ли недописанного текста.
     SleepChecked(TabId, PageState),
     FindResult(bool),
+    /// Страница развернула элемент на весь экран (видео) или свернула его.
+    Fullscreen {
+        owner: Owner,
+        on: bool,
+    },
     /// Загрузка файла началась, продвинулась или закончилась.
     Download(DownloadEvent),
     /// Адреса от второго запуска `axiom.exe <url>` (клик по ссылке в другой программе).

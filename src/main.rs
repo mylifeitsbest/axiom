@@ -17,6 +17,7 @@ mod stats;
 mod storage;
 mod system;
 mod tabs;
+mod translate;
 mod ui;
 mod update;
 

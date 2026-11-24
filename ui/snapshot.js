@@ -7,17 +7,13 @@
 // При закрытии Rust сначала показывает webview и лишь потом присылает clear.
 function createSnapshot(ax) {
   const HOSTS = { page: '#content', ai: '#aiBody' };
-  const POPUPS = { sug: '#sug', dl: '#dlp', upd: '#upp', trp: '#trp', sheet: '#sheet', onb: '#onb' };
-  // Непрозрачный лист настроек закрывает весь контент, но у него круглые углы:
-  // когда он проявился, снимок прячем, иначе в углах выглядывала бы страница.
-  const COVERS = new Set(['sheet']);
+  // Настройкам снимок не нужен: это отдельная вкладка, под ней страницы нет.
+  const POPUPS = { sug: '#sug', dl: '#dlp', upd: '#upp', trp: '#trp', onb: '#onb' };
   // Rust ждёт снимок 150 мс и наш ответ 250 мс — дольше окно не придерживаем.
   const WAIT_LIMIT = 450;
   const shots = {};
   const held = new Set();
-  const covering = new Set();
   let seq = 0;
-  let coverToken = 0;
   let open = false;
   let waiting = false;
   let waitTimer;
@@ -38,16 +34,9 @@ function createSnapshot(ax) {
       if (waiting) waitTimer = setTimeout(reveal, WAIT_LIMIT);
     }
     if (waiting) hold(reason);
-    if (COVERS.has(reason) && !covering.has(reason)) {
-      covering.add(reason);
-      const token = ++coverToken;
-      const anims = document.querySelector(POPUPS[reason]).getAnimations().map((a) => a.finished);
-      Promise.allSettled(anims).then(() => { if (token === coverToken && covering.size) document.body.classList.add('snap-covered'); });
-    }
   }
   // `last` — поверх контента больше ничего нет.
   function closing(reason, last) {
-    if (covering.delete(reason) && !covering.size) document.body.classList.remove('snap-covered');
     if (!last) return;
     open = false;
     reveal();

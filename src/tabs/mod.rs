@@ -15,6 +15,11 @@ pub type TabId = u64;
 
 const MAX_CLOSED: usize = 25;
 
+/// Внутренний адрес вкладки настроек. Своего webview у неё нет: настройкам нужен
+/// IPC, а у вкладок его нет. Пока она активна, настройки показывает интерфейс.
+pub const SETTINGS: &str = "axiom://settings";
+pub const SETTINGS_TITLE: &str = "Настройки";
+
 pub struct Tab {
     pub id: TabId,
     pub title: String,
@@ -41,8 +46,17 @@ impl Tab {
         self.url == omnibox::NEWTAB
     }
 
+    pub fn is_settings(&self) -> bool {
+        self.url == SETTINGS
+    }
+
+    /// Служебная вкладка без страницы и webview: новая вкладка или настройки.
+    pub fn is_internal(&self) -> bool {
+        self.is_newtab() || self.is_settings()
+    }
+
     pub fn is_sleeping(&self) -> bool {
-        self.webview.is_none() && !self.is_newtab()
+        self.webview.is_none() && !self.is_internal()
     }
 
     /// Флаги самой вкладки не мешают её усыпить. Активность, звук и загрузки
@@ -99,6 +113,11 @@ impl TabStore {
         self.tabs.iter().position(|t| t.id == id)
     }
 
+    /// Вкладка настроек, если она открыта (она всегда одна).
+    pub fn settings(&self) -> Option<TabId> {
+        self.tabs.iter().find(|t| t.is_settings()).map(|t| t.id)
+    }
+
     /// Добавляет вкладку без webview. `at = None` — после активной.
     pub fn add(&mut self, url: String, title: String, ai: bool, at: Option<usize>) -> TabId {
         self.next_id += 1;
@@ -132,7 +151,7 @@ impl TabStore {
     pub fn remove(&mut self, id: TabId, remember: bool) -> Option<Tab> {
         let index = self.index_of(id)?;
         let tab = self.tabs.remove(index);
-        if remember && !tab.is_newtab() {
+        if remember && !tab.is_internal() {
             self.closed.push(ClosedTab {
                 url: tab.url.clone(),
                 title: tab.title.clone(),
@@ -234,6 +253,19 @@ mod tests {
         let closed = s.pop_closed();
         assert_eq!(closed.map(|c| c.index), Some(0));
         assert!(!s.can_restore());
+    }
+
+    #[test]
+    fn settings_tab_is_internal() {
+        let mut s = store(1);
+        let id = s.add(SETTINGS.into(), SETTINGS_TITLE.into(), false, None);
+        assert_eq!(s.settings(), Some(id));
+        let tab = s.get(id);
+        assert!(tab.is_some_and(|t| t.is_internal() && !t.is_sleeping()));
+        // Закрытые настройки не возвращаются по Ctrl+Shift+T как обычная страница.
+        assert!(s.remove(id, true).is_some());
+        assert!(!s.can_restore());
+        assert_eq!(s.settings(), None);
     }
 
     #[test]

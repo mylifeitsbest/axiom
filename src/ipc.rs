@@ -150,6 +150,10 @@ pub enum UiCmd {
     SnapshotShown {
         seq: u64,
     },
+    /// Кнопка настроек, Ctrl+,: открыть вкладку настроек (или перейти на неё).
+    OpenSettings,
+    /// Лист закрытых настроек плавно ушёл: можно показывать страницу под ним.
+    SettingsLeft,
     Suggest {
         q: String,
     },
@@ -389,6 +393,8 @@ pub enum ToUi<'a> {
     Translate(crate::translate::View<'a>),
     /// Снимок страницы под окном (или «убрать снимок»).
     Snapshot(crate::tabs::snapshot::View),
+    /// Активную вкладку настроек закрыли: убрать лист с анимацией и ответить `settings_left`.
+    SettingsLeave,
 }
 
 #[cfg(test)]
@@ -437,6 +443,20 @@ mod tests {
             "a".repeat(MAX_INPUT + 1)
         );
         assert!(parse(&huge).is_err());
+    }
+
+    #[test]
+    fn settings_tab_messages() {
+        assert!(matches!(
+            parse(r#"{"cmd":"open_settings"}"#),
+            Ok(UiCmd::OpenSettings)
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"settings_left"}"#),
+            Ok(UiCmd::SettingsLeft)
+        ));
+        let out = serde_json::to_string(&ToUi::SettingsLeave).unwrap_or_default();
+        assert_eq!(out, r#"{"type":"settings_leave"}"#);
     }
 
     #[test]

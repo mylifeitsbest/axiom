@@ -81,6 +81,8 @@ input,textarea,select{font:inherit;color:inherit}
 .fav.ok img{opacity:1}
 .fav.ok b{display:none}
 .fav .i{width:12px;height:12px;stroke:#fff}
+.fav.set{background:transparent}
+.fav.set .i{width:15px;height:15px;stroke:var(--acc)}
 .tab.zz .fav{filter:grayscale(1);opacity:.45}
 .tab.ld .fav{background:transparent;border:1.5px solid var(--s3);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite}
 .tab.ld .fav>*{visibility:hidden}
@@ -299,8 +301,10 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 
 /* ---------- лист настроек ---------- */
 .main{position:relative}
+/* Лист — содержимое вкладки «Настройки»: закрывает контент и место панели ИИ (она на этой
+   вкладке спрятана), а полоса вкладок остаётся на виду и в боковой раскладке. */
 .sheet{position:absolute;top:0;left:var(--gap);right:var(--gap);bottom:var(--gap);z-index:15;display:none}
-[data-layout=side] .sheet{top:var(--gap)}
+[data-layout=side] .sheet{top:var(--gap);left:calc(var(--gap)*2 + var(--side-w))}
 .sheet.on{display:block;animation:sheetIn var(--d3) var(--e) both}
 @keyframes sheetIn{from{opacity:0;transform:translateY(10px) scale(.985)}}
 .sheet-card{display:grid;grid-template-columns:232px minmax(0,1fr);height:100%;background:var(--s1);border-radius:calc(var(--r) + 4px);overflow:hidden;box-shadow:var(--shadow)}
@@ -595,7 +599,6 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 /* На месте спрятанного webview: выше контента, ниже окон (у них z-index от 15). */
 .snap{position:fixed;z-index:10;overflow:hidden;pointer-events:none}
 .snap img{position:absolute;left:0;top:0;max-width:none;user-select:none}
-.snap-covered .snap{visibility:hidden}
 
 ::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
 @media (prefers-reduced-motion:reduce){:root{--k:0}}

@@ -31,7 +31,7 @@ use crate::{
     },
     system,
     tabs::{
-        TabId, TabStore,
+        SETTINGS, SETTINGS_TITLE, TabId, TabStore,
         fullscreen::{self, Owner},
         omnibox::{self, NEWTAB},
         sleep::{self, PageState},
@@ -41,6 +41,9 @@ use crate::{
     ui::{self, hotkeys::Hotkey},
     update::{UpdateEvent, Updater},
 };
+
+/// Дольше не ждём, пока интерфейс уберёт лист закрытых настроек.
+const SETTINGS_LEAVE_LIMIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -68,7 +71,7 @@ pub struct App {
     /// Область контента и панели ИИ от интерфейса (логические px).
     content: Option<Rect>,
     ai_rect: Option<Rect>,
-    /// Подсказки, настройки или приветствие поверх контента: webview временно прячутся.
+    /// Подсказки, загрузки или приветствие поверх контента: webview временно прячутся.
     overlay: bool,
     /// Снимок страницы на месте спрятанных webview, чтобы под окном не было пустого фона.
     snapshot: Snapshots,
@@ -92,6 +95,9 @@ pub struct App {
     translate: crate::translate::Translator,
     /// Видео или страница (F11) на весь экран.
     fullscreen: fullscreen::State,
+    /// Активную вкладку настроек закрыли, и интерфейс ещё плавно убирает их лист:
+    /// webview под ним ждут, иначе нативная страница сразу перекрыла бы анимацию.
+    settings_leaving: Option<Instant>,
 }
 
 impl App {
@@ -150,6 +156,7 @@ impl App {
             maximized: None,
             translate: crate::translate::Translator::default(),
             fullscreen: fullscreen::State::default(),
+            settings_leaving: None,
         };
         app.restore_session(open);
         Ok(app)
@@ -216,6 +223,14 @@ impl App {
             UserEvent::Snapshot(event) => {
                 let step = self.snapshot.on_event(event, &self.events);
                 self.snapshot_step(step);
+            }
+            UserEvent::SettingsLeft => {
+                if self
+                    .settings_leaving
+                    .is_some_and(|at| at.elapsed() >= SETTINGS_LEAVE_LIMIT)
+                {
+                    self.settings_left();
+                }
             }
             UserEvent::Tick => self.on_tick(),
         }
@@ -297,6 +312,8 @@ impl App {
             }
             UiCmd::AiPopOut => self.pop_out_ai(),
             UiCmd::Overlay { open } => self.set_overlay(open),
+            UiCmd::OpenSettings => self.open_settings(),
+            UiCmd::SettingsLeft => self.settings_left(),
             UiCmd::SnapshotShown { seq } => {
                 if self.snapshot.shown(seq) {
                     self.apply_layout();
@@ -534,13 +551,13 @@ impl App {
         {
             eprintln!("не удалось разбудить вкладку: {err:#}");
         }
-        let mut is_newtab = false;
+        let mut internal = false;
         let covered = self.covered();
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.last_active = Instant::now();
             tab.sleep_requested = None;
             tab.keep_alive = false;
-            is_newtab = tab.is_newtab();
+            internal = tab.is_internal();
             if let Some(webview) = &tab.webview {
                 if let Some(rect) = self.content {
                     let _ = webview.set_bounds(rect);
@@ -548,9 +565,11 @@ impl App {
                 let _ = webview.set_visible(!covered);
             }
         }
-        if is_newtab {
+        if internal {
             let _ = self.ui.focus();
         }
+        // На вкладке настроек панель ИИ спрятана, при уходе с неё — снова на месте.
+        self.apply_layout();
         if self.fullscreen.is_on() {
             self.sync_fullscreen();
         }
@@ -570,7 +589,7 @@ impl App {
         let Some(tab) = self.tabs.get(id) else {
             return Ok(());
         };
-        if tab.webview.is_some() || tab.is_newtab() {
+        if tab.webview.is_some() || tab.is_internal() {
             return Ok(());
         }
         let (url, ai) = (tab.url.clone(), tab.ai);
@@ -674,6 +693,12 @@ impl App {
             return;
         };
         let was_active = self.tabs.active == Some(id);
+        // Закрытые настройки возвращают туда, откуда их открыли.
+        let settings = self.tabs.get(id).filter(|t| t.is_settings());
+        let prefer = prefer.or(settings.and_then(|t| t.opener));
+        if was_active && settings.is_some() {
+            self.leave_settings();
+        }
         self.park_if_busy(id);
         drop(self.tabs.remove(id, remember));
         self.session_dirty = true;
@@ -690,6 +715,50 @@ impl App {
         } else {
             self.push_state();
         }
+    }
+
+    /// Кнопка настроек и Ctrl+,: вкладка настроек одна — есть, так переходим на неё,
+    /// нет — открываем рядом с активной.
+    fn open_settings(&mut self) {
+        if let Some(id) = self.tabs.settings() {
+            self.activate(id);
+            return;
+        }
+        let from = self.tabs.active;
+        let id = self
+            .tabs
+            .add(SETTINGS.into(), SETTINGS_TITLE.into(), false, None);
+        if let Some(tab) = self.tabs.get_mut(id) {
+            tab.opener = from;
+        }
+        self.activate(id);
+    }
+
+    /// Активные настройки закрываются: интерфейс плавно уберёт их лист, а webview
+    /// под ним появятся после `settings_left` (или через [`SETTINGS_LEAVE_LIMIT`]).
+    fn leave_settings(&mut self) {
+        self.settings_leaving = Some(Instant::now());
+        self.send(&ToUi::SettingsLeave);
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(SETTINGS_LEAVE_LIMIT);
+            let _ = events.send_event(UserEvent::SettingsLeft);
+        });
+    }
+
+    fn settings_left(&mut self) {
+        if self.settings_leaving.take().is_some() {
+            self.apply_layout();
+        }
+    }
+
+    fn on_settings(&self) -> bool {
+        self.tabs.active_tab().is_some_and(|t| t.is_settings())
+    }
+
+    /// Место панели ИИ. На вкладке настроек её нет: лист настроек занимает и её место.
+    fn ai_bounds(&self) -> Option<Rect> {
+        self.ai_rect.filter(|_| !self.on_settings())
     }
 
     fn restore_tab(&mut self) {
@@ -780,13 +849,14 @@ impl App {
 
     fn open_ai(&mut self, query: Option<&str>) -> Result<()> {
         let look = self.look();
+        let bounds = self.ai_bounds();
         self.ai.show(
             &self.window,
             &self.paths,
             &mut self.context,
             &self.events,
             query,
-            self.ai_rect,
+            bounds,
             look,
         )?;
         // Через раскладку: поверх страницы на весь экран панель не показываем.
@@ -935,7 +1005,7 @@ impl App {
         let Some(tab) = self.tabs.active_tab() else {
             return;
         };
-        if tab.is_newtab() {
+        if tab.is_internal() {
             return;
         }
         let (url, title) = (tab.url.clone(), tab.title.clone());
@@ -1155,7 +1225,7 @@ impl App {
                 self.tabs.active == Some(id)
                     && self.tabs.get(id).is_some_and(|t| t.webview.is_some())
             }
-            Some(Owner::Ai) => self.ai.open && self.ai.webview.is_some(),
+            Some(Owner::Ai) => self.ai.open && self.ai.webview.is_some() && !self.on_settings(),
             None => true,
         };
         if !visible && let Some(owner) = self.fullscreen.page.take() {
@@ -1199,14 +1269,14 @@ impl App {
         }
         match full {
             Some(rect) => self.ai.place(ai_full.then_some(rect), false),
-            None => self.ai.place(self.ai_rect, covered),
+            None => self.ai.place(self.ai_bounds(), covered),
         }
     }
 
     /// Webview спрятаны под окном интерфейса: окно открыто, и снимок уже
-    /// на их месте (или его не будет).
+    /// на их месте (или его не будет). Или уходит лист закрытых настроек.
     fn covered(&self) -> bool {
-        self.overlay && !self.snapshot.holding()
+        (self.overlay && !self.snapshot.holding()) || self.settings_leaving.is_some()
     }
 
     /// Окно интерфейса поверх контента открылось или закрылось.
@@ -1248,7 +1318,7 @@ impl App {
             .ai
             .webview
             .as_ref()
-            .filter(|_| self.ai.open && self.ai_rect.is_some())
+            .filter(|_| self.ai.open && self.ai_bounds().is_some())
             .and_then(|w| snapshot::target(w, Part::Ai, None));
         page.into_iter().chain(ai).collect()
     }
@@ -1468,7 +1538,7 @@ impl App {
 
     /// «Не усыплять»: вкладку не усыпят ни таймер, ни нехватка памяти, ни лимит живых вкладок.
     fn toggle_no_sleep(&mut self, id: TabId) {
-        let Some(tab) = self.tabs.get_mut(id).filter(|t| !t.is_newtab()) else {
+        let Some(tab) = self.tabs.get_mut(id).filter(|t| !t.is_internal()) else {
             return;
         };
         tab.no_sleep = !tab.no_sleep;

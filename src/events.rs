@@ -59,6 +59,8 @@ pub enum UserEvent {
     ShowFallback,
     /// Снимок страницы под окном интерфейса готов или не успел.
     Snapshot(crate::tabs::snapshot::Event),
+    /// Запасной таймер: интерфейс так и не сообщил, что лист закрытых настроек ушёл.
+    SettingsLeft,
     Tick,
 }
 

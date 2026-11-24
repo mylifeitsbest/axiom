@@ -54,9 +54,12 @@ pub fn styled<'a>(
 /// Кэш «назад-вперёд» и запасной процесс отрисовки не выключаем: без них каждый
 /// переход на другой сайт ждёт запуска нового процесса, а «Назад» грузит страницу
 /// заново — заметно медленнее, чем в Chrome.
+///
+/// `msWebOOUI`, в отличие от wry, не выключаем: без него WebView2 отказывает сайтам
+/// в полном экране (`requestFullscreen` → «not granted»), и видео не разворачивается.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
-    let mut args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    let mut args = String::from("--disable-features=msPdfOOUI,msSmartScreenProtection");
     if force_dark {
         args.push_str(" --enable-features=WebContentsForceDark");
     }
@@ -144,6 +147,7 @@ pub fn build_tab(
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
     hotkeys::install(&webview, events.clone());
     super::popups::install(&webview);
+    super::fullscreen::install(&webview, super::fullscreen::Owner::Tab(id), events.clone());
     downloads::install(&webview, Some(id), events.clone());
     enable_autofill(&webview);
     Ok(webview)

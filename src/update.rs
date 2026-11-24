@@ -9,7 +9,9 @@
 //! Windows: новый exe скачивается рядом с текущим, сверяется с SHA256SUMS.txt
 //! релиза и встаёт на его место. Работающий exe можно переименовать, но нельзя
 //! удалить, поэтому старый файл уезжает в `axiom.exe.old`, а новый процесс
-//! (`--updated`) ждёт, пока старый закроется, и убирает его.
+//! (`--updated`) ждёт, пока старый закроется. `axiom.exe.old` остаётся, пока
+//! новая версия не проработает 10 минут: если она не запускается, достаточно
+//! закрыть Axiom, удалить `axiom.exe` и переименовать `axiom.exe.old` в `axiom.exe`.
 //!
 //! Linux: Axiom стоит пакетом, обновлять его — дело apt или pacman.
 //! Показываем готовую команду.
@@ -186,7 +188,16 @@ pub enum UpdateEvent {
     /// Сколько байт скачано (только Windows).
     #[cfg_attr(not(windows), allow(dead_code))]
     Progress(u64),
-    Downloaded(Result<PathBuf, String>),
+    Downloaded(Result<Downloaded, String>),
+}
+
+/// Скачанный и проверенный exe новой версии.
+#[derive(Debug)]
+pub struct Downloaded {
+    part: PathBuf,
+    /// SHA256 из `SHA256SUMS.txt`: перед запуском сверяем ещё раз.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    sha256: String,
 }
 
 /// Что видит интерфейс: кнопка «Обновить», её панель и строка в настройках.
@@ -315,9 +326,10 @@ impl Updater {
 
     /// Новый exe скачан и проверен: ставим его на место и запускаем.
     /// `true` — новая версия запущена, этому процессу пора выйти.
-    pub fn on_downloaded(&mut self, result: Result<PathBuf, String>) -> bool {
-        let installed =
-            result.and_then(|part| install_and_launch(&part).map_err(|e| format!("{e:#}")));
+    pub fn on_downloaded(&mut self, result: Result<Downloaded, String>) -> bool {
+        let installed = result.and_then(|new| {
+            install_and_launch(&new.part, &new.sha256).map_err(|e| format!("{e:#}"))
+        });
         match installed {
             Ok(()) => {
                 self.phase = Phase::Restarting;
@@ -442,7 +454,7 @@ fn version_from_tag_url(url: &str) -> Option<Version> {
 // ---------- установка (Windows) ----------
 
 #[cfg(windows)]
-fn download(version: Version, events: &EventLoopProxy<UserEvent>) -> Result<PathBuf> {
+fn download(version: Version, events: &EventLoopProxy<UserEvent>) -> Result<Downloaded> {
     use std::fs;
 
     let exe = std::env::current_exe().context("не найден путь к axiom.exe")?;
@@ -501,11 +513,14 @@ fn download(version: Version, events: &EventLoopProxy<UserEvent>) -> Result<Path
         let _ = fs::remove_file(&part);
         return Err(err);
     }
-    Ok(part)
+    Ok(Downloaded {
+        part,
+        sha256: expected,
+    })
 }
 
 #[cfg(not(windows))]
-fn download(_version: Version, _events: &EventLoopProxy<UserEvent>) -> Result<PathBuf> {
+fn download(_version: Version, _events: &EventLoopProxy<UserEvent>) -> Result<Downloaded> {
     bail!("на этой системе Axiom обновляется пакетным менеджером")
 }
 
@@ -522,10 +537,16 @@ fn checksum_for(sums: &str, name: &str) -> Option<String> {
 
 #[cfg(windows)]
 fn verify(path: &Path, expected: &str) -> Result<()> {
+    let mut file = std::fs::File::open(path).context("скачанный файл пропал")?;
+    check(&mut file, expected)
+}
+
+/// Сумма файла совпадает с `SHA256SUMS.txt`, и это программа Windows.
+#[cfg(windows)]
+fn check(file: &mut std::fs::File, expected: &str) -> Result<()> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
 
-    let mut file = std::fs::File::open(path).context("скачанный файл пропал")?;
     let mut hasher = Sha256::new();
     let mut head = [0u8; 2];
     let mut buf = vec![0u8; 64 * 1024];
@@ -581,7 +602,7 @@ pub(crate) fn rename_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Ставит новый exe на место текущего и запускает его. При ошибке всё возвращается как было.
 #[cfg(windows)]
-fn install_and_launch(part: &Path) -> Result<()> {
+fn install_and_launch(part: &Path, sha256: &str) -> Result<()> {
     use std::fs;
 
     let exe = std::env::current_exe().context("не найден путь к axiom.exe")?;
@@ -593,22 +614,70 @@ fn install_and_launch(part: &Path) -> Result<()> {
         let _ = fs::remove_file(part);
         return Err(err).context("не удалось поставить новую версию");
     }
-    if let Err(err) = Command::new(&exe).arg(UPDATED_FLAG).spawn() {
+    let undo = || {
         let _ = fs::rename(&exe, part);
         let _ = fs::rename(&old, &exe);
         let _ = fs::remove_file(part);
+    };
+    // Между проверкой после скачивания и переименованием файл могли подменить.
+    // Сверяем его ещё раз уже на месте и держим открытым так, что ни записать,
+    // ни переименовать его нельзя, пока новая версия не запущена.
+    let locked = open_locked(&exe)
+        .context("не удалось открыть новую версию")
+        .and_then(|mut file| check(&mut file, sha256).map(|()| file));
+    let file = match locked {
+        Ok(file) => file,
+        Err(err) => {
+            undo();
+            return Err(err);
+        }
+    };
+    let spawned = Command::new(&exe).arg(UPDATED_FLAG).spawn();
+    drop(file);
+    if let Err(err) = spawned {
+        undo();
         return Err(err).context("не удалось запустить новую версию");
     }
     Ok(())
 }
 
+/// Открывает файл на чтение, разрешая другим только читать его. Антивирус
+/// может ненадолго держать свежий файл — пробуем несколько раз.
+#[cfg(windows)]
+fn open_locked(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    let mut tries = 0;
+    loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(path)
+        {
+            Ok(file) => return Ok(file),
+            Err(_) if tries < 20 => {
+                tries += 1;
+                thread::sleep(Duration::from_millis(150));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 #[cfg(not(windows))]
-fn install_and_launch(_part: &Path) -> Result<()> {
+fn install_and_launch(_part: &Path, _sha256: &str) -> Result<()> {
     bail!("на этой системе Axiom обновляется пакетным менеджером")
 }
 
-/// Новая версия только что запущена старой: ждём, пока старая закроется,
-/// и убираем её файл. Вызывается до захвата единственного экземпляра.
+/// Exe ещё запущен: Windows не даёт открыть его на запись (а переименовать даёт).
+#[cfg(windows)]
+fn running(exe: &Path) -> bool {
+    std::fs::OpenOptions::new().write(true).open(exe).is_err()
+}
+
+/// Новая версия только что запущена старой: ждём, пока старая закроется.
+/// Её exe (`axiom.exe.old`) остаётся на месте до [`cleanup`]: если новая версия
+/// не заработает, к старой можно вернуться. Вызывается до захвата единственного экземпляра.
 #[cfg(windows)]
 pub fn finish(paths: &crate::storage::Paths) {
     let Ok(exe) = std::env::current_exe() else {
@@ -616,8 +685,7 @@ pub fn finish(paths: &crate::storage::Paths) {
     };
     let old = old_path(&exe);
     let deadline = Instant::now() + Duration::from_secs(20);
-    // Пока старый процесс жив, его exe удалить нельзя.
-    while old.exists() && std::fs::remove_file(&old).is_err() && Instant::now() < deadline {
+    while old.exists() && running(&old) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
     }
     // WebView2 старого процесса закрывается чуть позже него самого. Если создать
@@ -653,14 +721,26 @@ fn webview_locks(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Остатки прошлых обновлений: `.old` от упавшего перезапуска, недокачанные файлы.
+/// Сколько новая версия должна проработать, прежде чем удалить прежний exe:
+/// если она не запускается или сразу падает, `axiom.exe.old` можно вернуть на место.
+#[cfg_attr(not(windows), allow(dead_code))]
+const KEEP_OLD: Duration = Duration::from_secs(10 * 60);
+
+/// Остатки прошлых обновлений: недокачанные файлы сразу, а прежний exe —
+/// когда эта версия проработает [`KEEP_OLD`].
 pub fn cleanup() {
     #[cfg(windows)]
     {
         let Ok(exe) = std::env::current_exe() else {
             return;
         };
-        let _ = std::fs::remove_file(old_path(&exe));
+        let old = old_path(&exe);
+        if old.exists() {
+            thread::spawn(move || {
+                thread::sleep(KEEP_OLD);
+                let _ = std::fs::remove_file(old);
+            });
+        }
         let Some(dir) = exe.parent() else {
             return;
         };
@@ -722,5 +802,49 @@ mod tests {
     fn old_file_sits_next_to_exe() {
         let exe = Path::new(r"C:\Programs\Axiom\axiom.exe");
         assert_eq!(old_path(exe), Path::new(r"C:\Programs\Axiom\axiom.exe.old"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn checked_file_cannot_be_swapped() {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!("axiom-update-lock-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let exe = dir.join("axiom.exe");
+        let body = b"MZ not really a program".to_vec();
+        let _ = fs::write(&exe, &body);
+        let sum: String = Sha256::digest(&body)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+
+        let mut locked = open_locked(&exe);
+        let checked = locked.as_mut().ok().map(|f| check(f, &sum).is_ok());
+        // Пока файл открыт для проверки и запуска, подменить его нельзя.
+        let renamed = fs::rename(&exe, dir.join("other.exe")).is_ok();
+        let written = fs::OpenOptions::new().write(true).open(&exe).is_ok();
+        drop(locked);
+        let wrong = fs::File::open(&exe).map(|mut f| check(&mut f, &"0".repeat(64)).is_err());
+        let renamed_after = fs::rename(&exe, dir.join("other.exe")).is_ok();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(checked, Some(true));
+        assert!(!renamed && !written);
+        assert!(wrong.is_ok_and(|e| e));
+        assert!(renamed_after);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_exe_is_detected() {
+        let me = std::env::current_exe().unwrap_or_default();
+        assert!(running(&me));
+        let file = std::env::temp_dir().join(format!("axiom-not-running-{}", std::process::id()));
+        let _ = std::fs::write(&file, b"MZ");
+        let idle = running(&file);
+        let _ = std::fs::remove_file(&file);
+        assert!(!idle);
     }
 }

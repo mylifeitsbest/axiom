@@ -76,6 +76,11 @@ const ASSETS: &[Asset] = &[
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/update.js"),
     },
+    Asset {
+        path: "/snapshot.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/snapshot.js"),
+    },
 ];
 
 pub fn serve(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
@@ -83,6 +88,11 @@ pub fn serve(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
         "/" | "" => "/index.html",
         p => p,
     };
+    // Снимок страницы под окном. Этот протокол есть только у webview интерфейса,
+    // поэтому сайты во вкладках снимок не запросят.
+    if let Some((mime, bytes)) = crate::tabs::snapshot::serve(path) {
+        return respond(StatusCode::OK, mime, Cow::Owned(bytes));
+    }
     let Some(asset) = ASSETS.iter().find(|a| a.path == path) else {
         return respond(
             StatusCode::NOT_FOUND,

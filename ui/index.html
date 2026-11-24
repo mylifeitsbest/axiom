@@ -79,13 +79,15 @@
   </div>
   <div class="omni" id="omni">
     <span class="omni-ic" id="omniIc"></span>
-    <input id="omniInput" type="text" spellcheck="false" autocomplete="off" placeholder="Поиск или адрес" aria-label="Адресная строка">
-    <span class="omni-view" id="omniView"></span>
-    <span class="omni-msg" id="omniMsg"></span>
-    <button class="ib sm tr" id="trBtn" title="Перевести страницу" data-i="translate" hidden></button>
-    <button class="ib sm awake" id="awakeBtn" title="Не усыплять вкладку" data-i="cup" hidden></button>
-    <button class="ib sm star" id="starBtn" title="В закладки (Ctrl+D)" data-i="star" hidden></button>
-    <button class="ib sm ds" id="dsBtn" title="Двойной поиск: DuckDuckGo + ИИ" data-i="spark"></button>
+    <span class="omni-field">
+      <input id="omniInput" type="text" spellcheck="false" autocomplete="off" placeholder="Поиск или адрес" aria-label="Адресная строка">
+      <span class="omni-view" id="omniView"></span>
+      <span class="omni-msg" id="omniMsg" role="status"></span>
+    </span>
+    <button class="ib tr" id="trBtn" title="Перевести страницу" data-i="translate" hidden></button>
+    <button class="ib awake" id="awakeBtn" title="Не усыплять вкладку" data-i="cup" aria-pressed="false" hidden></button>
+    <button class="ib star" id="starBtn" title="Добавить в закладки (Ctrl+D)" data-i="star" aria-pressed="false" hidden></button>
+    <button class="ib ds" id="dsBtn" title="Двойной поиск" data-i="spark" aria-pressed="false"></button>
   </div>
   <div class="acts" id="acts">
     <button class="upd" id="updBtn" hidden><span data-i="up"></span><span class="upd-t">Обновить</span></button>
@@ -101,9 +103,9 @@
     <button class="ib" id="setBtn" title="Настройки (Ctrl+,)" data-i="sliders"></button>
   </div>
   <div class="wc" id="wc">
-    <button data-win="minimize" title="Свернуть" data-i="min"></button>
-    <button data-win="maximize" title="Развернуть" data-i="max"></button>
-    <button data-win="close" class="close" title="Закрыть" data-i="x"></button>
+    <button data-win="minimize" title="Свернуть" data-cap="min"></button>
+    <button data-win="maximize" title="Развернуть" data-cap="max"></button>
+    <button data-win="close" class="close" title="Закрыть" data-cap="x"></button>
   </div>
   <div class="grow" id="growA" data-drag></div>
 </div>

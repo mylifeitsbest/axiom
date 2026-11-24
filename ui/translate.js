@@ -87,7 +87,7 @@ function createTranslate(ax) {
     const w = Math.min(300, innerWidth - 16);
     panel.style.width = w + 'px';
     const left = Math.min(Math.max(8, r.left + r.width / 2 - w + 30), innerWidth - 8 - w);
-    Object.assign(panel.style, { left: left + 'px', top: r.bottom + 8 + 'px' });
+    Object.assign(panel.style, { left: Math.round(left) + 'px', top: Math.round(r.bottom + 8) + 'px' });
   }
   function open() {
     if (isOpen() || btn.hidden) return;

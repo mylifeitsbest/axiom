@@ -197,7 +197,7 @@
     app.classList.toggle('no-nav', !A.showNav);
     app.classList.toggle('no-ai-btn', !A.showAiBtn);
     $('#userCss').textContent = typeof A.customCss === 'string' ? A.customCss : '';
-    $('#dsBtn').classList.toggle('on', !!B.double_search);
+    renderDs();
     place();
     dl.reposition();
     upd.reposition();
@@ -401,6 +401,8 @@
   let mode = 'url';
 
   function setIc(name) { $('#omniIc').innerHTML = icon(name); }
+  // Адрес, который строка показывает без правки: к нему возвращают Esc и потеря фокуса.
+  const shownUrl = () => { const t = activeTab(); return t && t.url !== NEWTAB ? t.url : ''; };
 
   function renderOmni() {
     const t = activeTab();
@@ -408,7 +410,8 @@
     const pageOpen = !!t && t.url !== NEWTAB;
     star.hidden = !pageOpen;
     star.classList.toggle('on', !!t?.bookmarked);
-    star.title = t?.bookmarked ? 'Убрать из закладок (Ctrl+D)' : 'В закладки (Ctrl+D)';
+    star.setAttribute('aria-pressed', String(!!t?.bookmarked));
+    star.title = t?.bookmarked ? 'В закладках — убрать (Ctrl+D)' : 'Добавить в закладки (Ctrl+D)';
     tr.render(t, S.tabs);
     if (document.activeElement === inp || mode === 'find') return;
     if (!pageOpen) {
@@ -434,30 +437,47 @@
     setIc(u.protocol === 'https:' ? 'lock' : 'globe');
   }
 
+  // Короткое сообщение поверх адреса: около полутора секунд вместе с появлением
+  // и угасанием (CSS), длинное (ошибка) — чуть дольше, чтобы успеть прочитать.
+  let msgTimer;
   function toast(text) {
     const m = $('#omniMsg');
-    m.textContent = text;
-    m.classList.remove('on');
-    void m.offsetWidth;
+    const s = String(text ?? '');
+    clearTimeout(msgTimer);
+    m.textContent = s;
     m.classList.add('on');
+    msgTimer = setTimeout(hideMsg, Math.min(3600, 1100 + Math.max(0, s.length - 30) * 40));
   }
-  $('#omniMsg').addEventListener('animationend', (e) => e.target.classList.remove('on'));
+  function hideMsg() {
+    clearTimeout(msgTimer);
+    $('#omniMsg').classList.remove('on');
+  }
 
   inp.addEventListener('focus', () => {
     omni.classList.add('focus');
-    if (mode === 'url') {
-      const t = activeTab();
-      inp.value = t && t.url !== NEWTAB ? t.url : '';
-    }
-    requestAnimationFrame(() => inp.select());
+    hideMsg();
+    if (mode === 'url') inp.value = shownUrl();
+    requestAnimationFrame(() => { if (document.activeElement === inp) inp.select(); });
   });
   inp.addEventListener('blur', () => {
+    // Фокус ушёл из окна интерфейса — на страницу или в другое окно. Поле при этом
+    // остаётся «активным» и при возврате фокуса снова выделило бы адрес и спрятало
+    // кнопки под курсором (звезда не нажималась). Снимаем фокус по-настоящему.
+    if (document.activeElement === inp) inp.blur();
+    inp.setSelectionRange(0, 0);
     omni.classList.remove('focus');
     hideSug();
     if (mode === 'find') exitFind();
     renderOmni();
   });
-  inp.addEventListener('input', () => { if (mode === 'find') find(false); else updateSug(); });
+  // Кнопки в строке срабатывают с первого клика: нажатие не уводит фокус в поле,
+  // не выделяет адрес и не прячет сами кнопки. Клик по значку слева — как по полю.
+  omni.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.target === inp) return;
+    e.preventDefault();
+    if (!e.target.closest('button')) inp.focus();
+  });
+  inp.addEventListener('input', () => { hideMsg(); if (mode === 'find') find(false); else updateSug(); });
   inp.addEventListener('keydown', onOmniKey);
 
   const looksLikeUrl = (q) => !/\s/.test(q) && (/^[a-z][a-z0-9+.-]*:\/\//i.test(q) || /^localhost(:\d+)?(\/|$)/i.test(q) || /^[^/?#]+\.[\p{L}]{2,}(:\d+)?([/?#]|$)/u.test(q)
@@ -496,7 +516,7 @@
     const r = omni.getBoundingClientRect();
     const w = Math.min(Math.max(r.width, 460), innerWidth - 16);
     const left = Math.min(Math.max(8, r.left), innerWidth - 8 - w);
-    Object.assign($('#sug').style, { left: left + 'px', top: r.bottom + 6 + 'px', width: w + 'px' });
+    Object.assign($('#sug').style, { left: Math.round(left) + 'px', top: Math.round(r.bottom + 6) + 'px', width: Math.round(w) + 'px' });
   }
   function showSug() {
     const el = $('#sug');
@@ -548,8 +568,11 @@
       const fallback = looksLikeUrl(q) ? { kind: 'go', input: q } : { kind: 'search', input: q };
       runItem(open ? sugItems[sugSel] : fallback, e.altKey);
     } else if (e.key === 'Escape') {
+      // Первый Esc возвращает исходный адрес (и закрывает подсказки), следующий — выходит из строки.
       e.preventDefault();
-      if (open) hideSug(); else inp.blur();
+      if (open) hideSug();
+      const url = shownUrl();
+      if (inp.value !== url) { inp.value = url; inp.select(); } else inp.blur();
     }
   }
   function runItem(it, newTab) {
@@ -566,10 +589,19 @@
     inp.blur();
   }
 
+  function renderDs() {
+    const b = $('#dsBtn');
+    const on = !!B.double_search;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Двойной поиск включён: DuckDuckGo + ИИ' : 'Двойной поиск выключен: только DuckDuckGo';
+  }
   $('#dsBtn').addEventListener('click', () => {
     B.double_search = !B.double_search;
-    $('#dsBtn').classList.toggle('on', B.double_search);
-    toast(B.double_search ? 'Двойной поиск включён' : 'Двойной поиск выключен');
+    renderDs();
+    // Пока в строке набирают запрос, сообщение закрыло бы текст: видно и по кнопке, и по подсказкам.
+    if (document.activeElement === inp) { if (sugQ) renderSug(); }
+    else toast(B.double_search ? 'Двойной поиск включён' : 'Двойной поиск выключен');
     panels.sync();
     saveSettings(true);
   });
@@ -583,7 +615,7 @@
     b.hidden = !t || t.url === NEWTAB;
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', String(on));
-    b.title = on ? 'Разрешить вкладке засыпать' : 'Не усыплять вкладку';
+    b.title = on ? 'Вкладка не засыпает — разрешить сон' : 'Не усыплять вкладку';
   }
   $('#awakeBtn').addEventListener('click', () => { if (S.active != null) send({ cmd: 'toggle_no_sleep', id: S.active }); });
 
@@ -617,6 +649,7 @@
   let aiTimer;
   function renderAi() {
     $('#aiBtn').classList.toggle('on', S.aiOpen);
+    $('#aiBtn').title = S.aiOpen ? 'Закрыть AI Mode (Ctrl+K)' : 'AI Mode: спросить ИИ (Ctrl+K)';
     $('#pdot').classList.toggle('on', S.aiProxy);
     $('#pdot').title = S.aiProxy ? 'Через прокси' : 'Без прокси';
     if (S.aiOpen === app.classList.contains('ai-open')) return;
@@ -672,6 +705,35 @@
     const b = e.target.closest('[data-win]');
     if (b) send({ cmd: 'window', action: b.dataset.win });
   });
+  // Значки кнопок окна нарисованы в пикселях экрана (capIcon): при смене масштаба
+  // (окно перетащили на другой монитор) их нужно нарисовать заново.
+  function renderCaps() {
+    $('[data-win=maximize]').dataset.cap = S.maximized ? 'restore' : 'max';
+    for (const b of $$('[data-cap]', $('#wc'))) b.innerHTML = capIcon(b.dataset.cap);
+    alignCaps();
+  }
+  // На 125% и 150% кнопка может стоять на дробном пикселе экрана (окно шириной 1281 px и т. п.):
+  // сдвигаем начало viewBox на эту дробь, и линии снова попадают в центры пикселей.
+  let capsQueued = false;
+  function alignCaps() {
+    if (capsQueued) return;
+    capsQueued = true;
+    requestAnimationFrame(() => {
+      capsQueued = false;
+      const d = devicePixelRatio || 1;
+      for (const svg of $$('svg.cap', $('#wc'))) {
+        const r = svg.getBoundingClientRect();
+        if (!r.width) continue;
+        const frac = (v) => +(((v * d) % 1 + 1) % 1).toFixed(3);
+        svg.setAttribute('viewBox', `${frac(r.left)} ${frac(r.top)} ${16 * d} ${16 * d}`);
+      }
+    });
+  }
+  addEventListener('resize', alignCaps);
+  new ResizeObserver(alignCaps).observe($('#wc'));
+  (function watchScale() {
+    matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener('change', () => { renderCaps(); watchScale(); }, { once: true });
+  })();
   $('#nav').addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');
     if (b) send({ cmd: b.dataset.act });
@@ -739,7 +801,7 @@
     openUpdate() { panels.close(); dl.close(); upd.open(); },
     applyAppearance,
     saveSettings,
-    refresh() { $('#dsBtn').classList.toggle('on', !!B.double_search); panels.sync(); },
+    refresh() { renderDs(); panels.sync(); },
     resetAppearance() { A = { ...DEFAULTS, aiWidth: A.aiWidth }; applyAppearance(); },
   });
 
@@ -793,9 +855,8 @@
     window(m) {
       S.maximized = !!m.maximized;
       app.classList.toggle('max', S.maximized);
-      const b = $('[data-win=maximize]');
-      b.innerHTML = icon(S.maximized ? 'restore' : 'max');
-      b.title = S.maximized ? 'Восстановить' : 'Развернуть';
+      $('[data-win=maximize]').title = S.maximized ? 'Восстановить' : 'Развернуть';
+      renderCaps();
     },
     system(m) { SYS = { ...SYS, ...(m.status || {}) }; panels.onSystem(); },
     imported(m) { panels.onImported(m); },
@@ -814,6 +875,7 @@
 
   // ---------- старт ----------
   fillIcons();
+  renderCaps();
   applyAppearance();
   render();
   send({ cmd: 'ready' });

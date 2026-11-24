@@ -28,7 +28,10 @@ html,body{margin:0;height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--t1);font:var(--fs)/1.4 var(--font);-webkit-font-smoothing:antialiased;user-select:none;cursor:default;transition:background-color var(--d3),color var(--d3)}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:default}
 input,textarea,select{font:inherit;color:inherit}
-.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+/* Значки: целые размеры (16, 18…), а толщина линии — в пикселях экрана (non-scaling-stroke):
+   у значков 12px и 26px она одна и та же и не тоньше пикселя на 100%, 125% и 150%. */
+.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5px;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.i>*{vector-effect:non-scaling-stroke}
 .grow{flex:1;align-self:stretch}
 [hidden]{display:none!important}
 
@@ -38,7 +41,6 @@ input,textarea,select{font:inherit;color:inherit}
 @keyframes slide{from{opacity:0;transform:translateX(18px)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{50%{opacity:.4}}
-@keyframes msg{0%{opacity:0;transform:translateY(calc(6px*var(--k)))}12%,85%{opacity:1;transform:none}100%{opacity:0;transform:translateY(calc(-4px*var(--k)))}}
 
 /* ---------- каркас ---------- */
 .app{display:flex;flex-direction:column;height:100vh}
@@ -63,6 +65,11 @@ input,textarea,select{font:inherit;color:inherit}
 .ib.sm{width:24px;height:24px}
 .ib.sm .i{width:14px;height:14px}
 .ib.on{color:var(--acc)}
+/* Открытая панель (ИИ, настройки) — кнопка в цвете акцента и на подложке, как включённые кнопки в адресной строке. */
+.acts .ib.on{background:color-mix(in oklab,var(--acc) 16%,transparent)}
+.acts .ib.on:hover{background:color-mix(in oklab,var(--acc) 24%,transparent);color:var(--acc)}
+/* Панель (навигация, вкладки, адресная строка, ИИ, загрузки, настройки): кнопка 28px, значок 18px. */
+.nav .ib>.i,.acts .ib>.i,.dl-ic>.i,.omni .ib>.i,.nt-btn .i{width:18px;height:18px}
 
 /* ---------- вкладки ---------- */
 .tabs{display:flex;align-items:center;gap:2px;min-width:0;flex:1 1 auto;align-self:stretch}
@@ -91,7 +98,6 @@ input,textarea,select{font:inherit;color:inherit}
 [data-layout=one] .tab:not(.on){max-width:36px}
 [data-layout=one] .tab:not(.on) .tx{display:none}
 .nt-btn{width:auto;min-width:28px;padding:0 6px;gap:7px;display:flex}
-.nt-btn .i{width:15px;height:15px}
 .nt-label{display:none}
 [data-layout=side] .tabs{flex-direction:column;align-items:stretch;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;align-self:auto}
 [data-layout=side] .tablist{flex-direction:column;align-items:stretch}
@@ -100,26 +106,30 @@ input,textarea,select{font:inherit;color:inherit}
 [data-layout=side] .nt-label{display:inline}
 
 /* ---------- адресная строка ---------- */
-.omni{position:relative;display:flex;align-items:center;gap:6px;height:30px;padding:0 3px 0 10px;background:var(--s1);border-radius:var(--r);color:var(--t2);min-width:0;flex:0 0 clamp(220px,30vw,440px);transition:flex-basis var(--d3) var(--e),box-shadow var(--d2),background-color var(--d3)}
-.omni.focus{flex-basis:clamp(300px,44vw,640px);box-shadow:0 0 0 1.5px color-mix(in oklab,var(--acc) 70%,transparent)}
+/* Ширина в целых пикселях (round): от дробной ширины строки значки и текст в ней сидели на полупикселе. */
+.omni{position:relative;display:flex;align-items:center;height:32px;padding:0 2px 0 10px;background:var(--s1);border-radius:var(--r);color:var(--t2);min-width:0;flex:0 0 clamp(220px,30vw,440px);flex-basis:clamp(220px,round(30vw,1px),440px);transition:flex-basis var(--d3) var(--e),box-shadow var(--d2),background-color var(--d3)}
+.omni.focus{flex-basis:clamp(300px,44vw,640px);flex-basis:clamp(300px,round(44vw,1px),640px);box-shadow:0 0 0 1.5px color-mix(in oklab,var(--acc) 70%,transparent)}
 .omni.nf{box-shadow:0 0 0 1.5px #e5484d}
 [data-layout=two] .omni{flex:1 1 auto;max-width:820px;margin:0 auto}
-[data-layout=side] .omni{flex:none;height:32px}
+[data-layout=side] .omni{flex:none}
 .omni-ic{display:grid;place-items:center;color:var(--t3);flex:none}
-.omni-ic .i{width:14px;height:14px}
-#omniInput{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:var(--t1);user-select:text;padding:0}
+/* Поле: ввод, а поверх него — домен (.omni-view) или короткое сообщение (.omni-msg).
+   Кнопки справа в поле не входят, поэтому текст не заходит под них, сколько бы их ни было. */
+.omni-field{position:relative;flex:1;min-width:0;align-self:stretch;display:flex;margin:0 4px 0 8px}
+#omniInput{flex:1;width:100%;min-width:0;height:100%;border:0;outline:0;background:transparent;color:var(--t1);user-select:text;padding:0}
 #omniInput::placeholder{color:var(--t3)}
-/* Справа три кнопки по 24px (не усыплять, закладка, двойной поиск): адрес не заходит под них. */
-.omni-view{position:absolute;left:30px;right:calc(3px + 3*24px + 2*6px);top:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:1px;pointer-events:none;white-space:nowrap;overflow:hidden;color:var(--t1)}
+.omni.focus #omniInput::selection{background:color-mix(in oklab,var(--acc) 34%,transparent);color:var(--t1)}
+.omni-view{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:1px;pointer-events:none;white-space:nowrap;overflow:hidden;color:var(--t1)}
 .omni-view .p{color:var(--t3);overflow:hidden;text-overflow:ellipsis;min-width:0}
-/* Кнопка перевода видна только на чужом языке: тогда справа на одну кнопку больше. */
-.omni:has(#trBtn:not([hidden])) .omni-view{right:calc(3px + 4*24px + 3*6px)}
 .omni.focus .omni-view,.omni.empty .omni-view,.omni.find .omni-view{display:none}
 .omni:not(.focus):not(.empty):not(.find) #omniInput{color:transparent}
-.omni-msg{position:absolute;inset:0 32px 0 30px;display:none;align-items:center;justify-content:center;background:var(--s1);color:var(--t1);pointer-events:none;white-space:nowrap;overflow:hidden}
-.omni-msg.on{display:flex;animation:msg calc(2600ms*max(var(--k),1)) var(--e) both}
-.ds{color:var(--t3)}
-.ds.on{color:var(--acc)}
+/* Сообщение: появляется быстро, держится около секунды и плавно гаснет (время — в app.js). */
+.omni-msg{position:absolute;inset:0;display:block;line-height:32px;text-align:center;background:var(--s1);color:var(--t1);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;visibility:hidden;transition:opacity calc(400ms*var(--k)) ease-in-out,visibility 0s calc(400ms*var(--k))}
+.omni-msg.on{opacity:1;visibility:visible;transition:opacity calc(120ms*var(--k)) var(--e)}
+/* Кнопки в строке: выключенные приглушены, включённые — в цвете акцента. */
+.omni .ib{color:var(--t3);border-radius:calc(var(--r) - 2px)}
+.omni .ib:hover{background:var(--s2);color:var(--t1)}
+.omni .ib.on{color:var(--acc)}
 .omni.find .ds{display:none}
 
 .acts{display:flex;gap:1px}
@@ -130,7 +140,8 @@ input,textarea,select{font:inherit;color:inherit}
 .wc button{width:46px;display:grid;place-items:center;color:var(--t2);transition:background-color var(--d1),color var(--d1)}
 .wc button:hover{background:var(--s1);color:var(--t1)}
 .wc .close:hover{background:#c42b1c;color:#fff}
-.wc .i{width:15px;height:15px;stroke-width:1.2}
+.wc .i.cap{stroke-linecap:butt;stroke-linejoin:miter}
+.wc .i.cap>*{vector-effect:none}
 [data-layout=side] .wc{align-self:center}
 [data-layout=side] .wc button{width:30px;height:30px;border-radius:calc(var(--r)*.7)}
 
@@ -217,7 +228,7 @@ output{min-width:34px;text-align:right;color:var(--t3);font-variant-numeric:tabu
 .btn.ghost:hover{background:var(--s2);color:var(--t1)}
 .btn.big{height:42px;padding:0 22px;font-size:14px;border-radius:var(--r)}
 .btn:disabled{opacity:.6}
-.btn .i{width:15px;height:15px}
+.btn .i{width:16px;height:16px}
 .btn.busy{pointer-events:none;color:transparent;position:relative}
 .btn.busy::after{content:"";position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-color:var(--acc-fg) var(--acc-fg) transparent transparent;animation:spin .7s linear infinite}
 .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
@@ -247,7 +258,7 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .pv .c{position:absolute;right:9px;bottom:9px;width:10px;height:10px;border-radius:50%;background:var(--acc)}
 .pn{display:flex;align-items:center;justify-content:space-between;font-size:12px;padding:0 3px 1px}
 .pn .ok{display:grid;place-items:center;width:16px;height:16px;border-radius:50%;background:var(--acc);color:var(--acc-fg);opacity:0;transform:scale(.4);transition:opacity var(--d2),transform var(--d2) var(--sp)}
-.pn .ok .i{width:11px;height:11px;stroke-width:2.4}
+.pn .ok .i{width:12px;height:12px;stroke-width:1.75px}
 .preset.on .ok{opacity:1;transform:none}
 .lcards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .lcard{display:flex;flex-direction:column;gap:10px;padding:10px;border-radius:calc(var(--r) + 2px);background:var(--bg);text-align:left;box-shadow:inset 0 0 0 1px var(--line);transition:box-shadow var(--d2),transform var(--d2) var(--e)}
@@ -402,7 +413,7 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .dots i{width:7px;height:7px;border-radius:4px;background:var(--s3);transition:width var(--d3) var(--e),background-color var(--d2)}
 .dots i.on{width:22px;background:var(--acc)}
 .done-mark{display:inline-grid;place-items:center;width:72px;height:72px;border-radius:50%;background:var(--acc);color:var(--acc-fg);animation:pop calc(600ms*var(--k)) var(--sp) both}
-.done-mark .i{width:34px;height:34px;stroke-width:2.4}
+.done-mark .i{width:34px;height:34px;stroke-width:3px}
 .onb-logo{display:inline-block;filter:drop-shadow(0 24px 40px color-mix(in oklab,var(--acc) 30%,transparent))}
 .logo-anim .lg-bg{transform-origin:center;animation:pop calc(700ms*var(--k)) var(--sp) both}
 .logo-anim .lg-mk{stroke-dasharray:1;stroke-dashoffset:1;animation:draw calc(900ms*var(--k)) calc(250ms*var(--k)) cubic-bezier(.65,0,.35,1) forwards}
@@ -410,15 +421,20 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 @keyframes draw{to{stroke-dashoffset:0}}
 
 /* ---------- звёздочка закладки ---------- */
-.star{color:var(--t3)}
-.star.on{color:var(--acc)}
+/* В закладках — звезда закрашена акцентом. */
 .star.on .i{fill:currentColor}
 .omni.focus .star,.omni.find .star{display:none}
 
 /* ---------- «не усыплять» ---------- */
-.awake{color:var(--t3)}
-.awake.on{color:var(--acc)}
+/* Включено — кружка закрашена акцентом. */
+.awake.on .i .f{fill:currentColor}
 .omni.focus .awake,.omni.find .awake{display:none}
+
+/* ---------- двойной поиск ---------- */
+/* Включён — акцентная подложка (как у переведённой страницы). */
+.omni .ds.on,.omni .tr.on{background:color-mix(in oklab,var(--acc) 16%,transparent)}
+.omni .ds.on:hover,.omni .tr.on:hover{background:color-mix(in oklab,var(--acc) 24%,transparent);color:var(--acc)}
+.ds.on .i{fill:currentColor}
 /* Метка на вкладке — точка в углу значка. Обводка цвета фона вкладки отделяет её от значка. */
 .tab.nosleep::after{content:'';position:absolute;left:20px;top:calc(50% + 3px);width:6px;height:6px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 1.5px var(--bg);pointer-events:none;animation:pop var(--d2) var(--sp) both;transition:box-shadow var(--d2)}
 .tab.nosleep:hover::after{box-shadow:0 0 0 1.5px color-mix(in oklab,var(--s1) 55%,var(--bg))}
@@ -426,10 +442,9 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .tab.nosleep.drag::after{box-shadow:0 0 0 1.5px var(--s2)}
 
 /* ---------- перевод страницы ---------- */
-.tr{position:relative;color:var(--t3)}
+.tr{position:relative}
 .tr .i{transition:transform var(--d2) var(--e)}
 .tr.on,.tr.busy{color:var(--acc)}
-.tr.on{background:color-mix(in oklab,var(--acc) 14%,transparent)}
 .tr.busy .i{transform:scale(.7)}
 .tr.busy::after{content:'';position:absolute;inset:2px;border-radius:50%;border:1.5px solid transparent;border-top-color:var(--acc);border-right-color:var(--acc);animation:spin calc(800ms*max(var(--k),.3)) linear infinite;pointer-events:none}
 .tr.in{animation:pop var(--d3) var(--sp) both}
@@ -484,7 +499,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 @keyframes dlCatch{30%{transform:translateY(2px) scale(.8)}65%{transform:translateY(-1px) scale(1.07)}}
 /* Всё скачалось: кольцо дорисовывается до конца и расходится, на месте стрелки — галочка. */
 .dl-ok{position:absolute;inset:6px;display:grid;place-items:center;border-radius:50%;background:var(--acc);color:var(--acc-fg);opacity:0;pointer-events:none}
-.dl-ok .i{width:11px;height:11px;stroke-width:2.6}
+.dl-ok .i{width:12px;height:12px;stroke-width:1.75px}
 .dl.fin .ring .rp{stroke-dasharray:100 100;opacity:1;transition:stroke-dasharray calc(320ms*var(--k)) var(--e),opacity var(--d1)}
 .dl.fin .dl-rg{animation:dlRgOut calc(460ms*var(--k)) calc(360ms*var(--k)) var(--e) both}
 .dl.fin .dl-ic .i{animation:dlIcFin calc(1300ms*var(--k)) var(--e) both}
@@ -496,7 +511,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .dl-fly{position:fixed;left:0;top:0;z-index:45;pointer-events:none}
 .dl-fly b{position:absolute;left:-12px;top:-12px;width:24px;height:24px;display:grid;place-items:center;border-radius:calc(var(--r)*.6);background:var(--f);color:#fff;font-size:9px;font-weight:700;letter-spacing:.02em;line-height:1;box-shadow:0 6px 14px -5px color-mix(in oklab,var(--f) 75%,transparent);opacity:0;will-change:transform,opacity}
 .dl-fly b.l4{font-size:7.5px;letter-spacing:0}
-.dl-fly b .i{width:13px;height:13px;stroke-width:2}
+.dl-fly b .i{width:14px;height:14px;stroke-width:1.75px}
 .dl-fly i{position:absolute;left:-56px;top:-5px;width:56px;height:10px;transform-origin:100% 50%;background:linear-gradient(90deg,transparent,var(--f));clip-path:polygon(0 50%,100% 0,100% 100%);opacity:0;will-change:transform,opacity}
 .dl.done::after{content:'';position:absolute;inset:2px;border-radius:50%;box-shadow:0 0 0 2px var(--acc);pointer-events:none;animation:dlDone calc(700ms*var(--k)) var(--e) both}
 @keyframes dlDone{from{opacity:1;transform:scale(.55)}to{opacity:0;transform:scale(1.2)}}
@@ -527,7 +542,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .dl-acts{display:flex;gap:1px;flex:none;opacity:0;transition:opacity var(--d1)}
 .dli:hover .dl-acts,.dli.st-active .dl-acts{opacity:1}
 .dlp-empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:26px 10px 30px;color:var(--t3)}
-.dlp-empty .i{width:26px;height:26px;stroke-width:1.4}
+.dlp-empty .i{width:26px;height:26px;stroke-width:1.25px}
 .dlp.anim .dli{animation:rise var(--d2) var(--e) both}
 .dlp.anim .dli:nth-child(2){animation-delay:calc(25ms*var(--k))}
 .dlp.anim .dli:nth-child(3){animation-delay:calc(50ms*var(--k))}
@@ -547,7 +562,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .upd[hidden]{display:none}
 .upd:hover,.upd.on{background:color-mix(in oklab,var(--acc) 26%,transparent)}
 .upd:active{transform:scale(.95)}
-.upd .i{width:14px;height:14px;stroke-width:2.1}
+.upd .i{width:14px;height:14px;stroke-width:1.75px}
 .upd.in{animation:pop var(--d3) var(--sp) both}
 .upd.in .i{animation:updNudge calc(700ms*var(--k)) var(--e) calc(300ms*var(--k)) 3}
 .upd.in::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;animation:updRing calc(1100ms*var(--k)) var(--e) calc(200ms*var(--k)) 2 both}
@@ -573,7 +588,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .upp-cmd code span{white-space:nowrap}
 .upp-acts{display:flex;justify-content:flex-end;gap:6px;margin-top:14px}
 .upp-acts .btn{height:30px;padding:0 13px}
-.upp-acts .btn .i{width:14px;height:14px;stroke-width:2}
+.upp-acts .btn .i{width:14px;height:14px;stroke-width:1.75px}
 .upp.on>*{animation:rise var(--d2) var(--e) both}
 .upp.on>:nth-child(2){animation-delay:calc(30ms*var(--k))}
 .upp.on>:nth-child(n+3){animation-delay:calc(60ms*var(--k))}

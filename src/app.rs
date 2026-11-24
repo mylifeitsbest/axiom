@@ -196,8 +196,10 @@ impl App {
             UserEvent::External(urls) => {
                 self.open_external(&urls);
                 self.window.set_minimized(false);
-                self.window.set_visible(true);
-                self.window.set_focus();
+                if !crate::tabs::webview::test_mode() {
+                    self.window.set_visible(true);
+                    self.window.set_focus();
+                }
             }
             UserEvent::Installed(result) => {
                 self.send(&ToUi::Installed {
@@ -1266,8 +1268,12 @@ impl App {
     fn show_window(&mut self) {
         if !self.shown {
             self.shown = true;
-            self.window.set_visible(true);
-            self.window.set_focus();
+            if crate::tabs::webview::test_mode() {
+                show_inactive(&self.window);
+            } else {
+                self.window.set_visible(true);
+                self.window.set_focus();
+            }
         }
     }
 
@@ -1623,13 +1629,31 @@ impl App {
     }
 }
 
+/// Режим автотестов: окно появляется, не становясь активным (`SW_SHOWNOACTIVATE`).
+#[cfg(windows)]
+fn show_inactive(window: &Window) {
+    use tao::platform::windows::WindowExtWindows;
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
+    }
+    // SAFETY: hwnd принадлежит живому окну tao.
+    unsafe { ShowWindow(window.hwnd(), 4) };
+}
+
+#[cfg(not(windows))]
+fn show_inactive(window: &Window) {
+    window.set_visible(true);
+}
+
 fn build_window(event_loop: &EventLoop<UserEvent>) -> Result<Window> {
     let builder = WindowBuilder::new()
         .with_title("Axiom")
         .with_inner_size(LogicalSize::new(1280.0, 820.0))
         .with_min_inner_size(LogicalSize::new(560.0, 380.0))
         .with_decorations(false)
-        .with_visible(false);
+        .with_visible(false)
+        .with_focused(!crate::tabs::webview::test_mode());
     #[cfg(windows)]
     let builder = {
         use tao::platform::windows::{IconExtWindows, WindowBuilderExtWindows};

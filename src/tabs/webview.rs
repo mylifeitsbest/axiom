@@ -63,6 +63,13 @@ pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
     if force_dark {
         args.push_str(" --enable-features=WebContentsForceDark");
     }
+    // Отладка: DevTools-протокол для автотестов интерфейса (только debug-сборка).
+    #[cfg(debug_assertions)]
+    if let Ok(port) = std::env::var("AXIOM_CDP_PORT")
+        && port.parse::<u16>().is_ok()
+    {
+        args.push_str(&format!(" --remote-debugging-port={port}"));
+    }
     if let Some(proxy) = proxy {
         let (scheme, endpoint) = match proxy {
             ProxyConfig::Http(e) => ("http", e),
@@ -74,6 +81,12 @@ pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
         ));
     }
     args
+}
+
+/// Режим автотестов (`AXIOM_CDP_PORT` в debug-сборке): открыт DevTools-порт, а окно
+/// никогда не забирает фокус, чтобы тестовая копия не перехватывала ввод пользователя.
+pub fn test_mode() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("AXIOM_CDP_PORT").is_some()
 }
 
 /// Меняет тему сайтов на лету (WebView2 хранит её в профиле, поэтому

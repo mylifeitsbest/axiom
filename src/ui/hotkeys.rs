@@ -26,6 +26,10 @@ pub enum Hotkey {
     Settings,
     Bookmark,
     Downloads,
+    /// F11: страница на весь экран.
+    Fullscreen,
+    /// Esc: только подсматриваем (см. [`Hotkey::consumes`]).
+    Escape,
 }
 
 impl Hotkey {
@@ -45,6 +49,8 @@ impl Hotkey {
             "settings" => Self::Settings,
             "bookmark" => Self::Bookmark,
             "downloads" => Self::Downloads,
+            "fullscreen" => Self::Fullscreen,
+            "escape" => Self::Escape,
             other => {
                 let n: u8 = other.strip_prefix("tab_")?.parse().ok()?;
                 if (1..=9).contains(&n) {
@@ -73,6 +79,8 @@ impl Hotkey {
             Self::Settings => "settings".into(),
             Self::Bookmark => "bookmark".into(),
             Self::Downloads => "downloads".into(),
+            Self::Fullscreen => "fullscreen".into(),
+            Self::Escape => "escape".into(),
         }
     }
 
@@ -84,13 +92,21 @@ impl Hotkey {
         )
     }
 
+    /// Забрать ли клавишу у страницы. Esc странице тоже нужен (закрыть окно,
+    /// выйти из видео), поэтому его только подсматриваем.
+    pub fn consumes(self) -> bool {
+        self != Self::Escape
+    }
+
     /// Виртуальный код клавиши Windows + модификаторы → действие.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub fn from_vk(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Self> {
         const VK_TAB: u32 = 0x09;
+        const VK_ESCAPE: u32 = 0x1B;
         const VK_LEFT: u32 = 0x25;
         const VK_RIGHT: u32 = 0x27;
         const VK_F5: u32 = 0x74;
+        const VK_F11: u32 = 0x7A;
         const VK_COMMA: u32 = 0xBC;
         let key = |c: u8| u32::from(c);
         Some(match (vk, ctrl, shift, alt) {
@@ -104,6 +120,8 @@ impl Hotkey {
             (v, true, false, false) if v == key(b'F') => Self::Find,
             (v, true, false, false) if v == key(b'R') => Self::Reload,
             (VK_F5, false, false, false) => Self::Reload,
+            (VK_F11, false, false, false) => Self::Fullscreen,
+            (VK_ESCAPE, false, false, false) => Self::Escape,
             (VK_COMMA, true, false, false) => Self::Settings,
             (v, true, false, false) if v == key(b'D') => Self::Bookmark,
             (v, true, false, false) if v == key(b'J') => Self::Downloads,
@@ -154,8 +172,10 @@ pub fn install(webview: &WebView, events: EventLoopProxy<UserEvent>) {
         // SAFETY: GetKeyState — чтение состояния клавиатуры текущего потока.
         let down = |k: i32| unsafe { GetKeyState(k) } < 0;
         if let Some(hotkey) = Hotkey::from_vk(vk, down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU)) {
-            // SAFETY: см. выше.
-            unsafe { args.SetHandled(true)? };
+            if hotkey.consumes() {
+                // SAFETY: см. выше.
+                unsafe { args.SetHandled(true)? };
+            }
             let _ = events.send_event(UserEvent::Hotkey(hotkey));
         }
         Ok(())
@@ -200,7 +220,11 @@ pub fn install_window(window: &tao::window::Window, events: EventLoopProxy<UserE
         match vk_from_keyval(keyval).and_then(|vk| Hotkey::from_vk(vk, ctrl, shift, alt)) {
             Some(hotkey) => {
                 let _ = events.send_event(UserEvent::Hotkey(hotkey));
-                glib::Propagation::Stop
+                if hotkey.consumes() {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
             }
             None => glib::Propagation::Proceed,
         }
@@ -217,6 +241,8 @@ fn vk_from_keyval(keyval: u32) -> Option<u32> {
         0xff51 => 0x25,
         0xff53 => 0x27,
         0xffc2 => 0x74,
+        0xffc8 => 0x7A,
+        0xff1b => 0x1B,
         0x2c => 0xBC,
         _ => return None,
     })
@@ -234,6 +260,7 @@ mod tests {
             Hotkey::Settings,
             Hotkey::Back,
             Hotkey::Downloads,
+            Hotkey::Fullscreen,
         ] {
             assert_eq!(Hotkey::parse(&h.name()), Some(h));
         }
@@ -260,6 +287,17 @@ mod tests {
             Some(Hotkey::Downloads)
         );
         assert_eq!(Hotkey::from_vk(u32::from(b'C'), true, false, false), None);
+        assert_eq!(
+            Hotkey::from_vk(0x7A, false, false, false),
+            Some(Hotkey::Fullscreen)
+        );
+        // Esc страница получает и сама.
+        assert_eq!(
+            Hotkey::from_vk(0x1B, false, false, false),
+            Some(Hotkey::Escape)
+        );
+        assert!(!Hotkey::Escape.consumes());
+        assert!(Hotkey::Fullscreen.consumes());
     }
 
     #[test]
@@ -272,6 +310,8 @@ mod tests {
         assert_eq!(hk(0xfe20, true, true, false), Some(Hotkey::PrevTab));
         assert_eq!(hk(0xffc2, false, false, false), Some(Hotkey::Reload));
         assert_eq!(hk(0x2c, true, false, false), Some(Hotkey::Settings));
+        assert_eq!(hk(0xffc8, false, false, false), Some(Hotkey::Fullscreen));
+        assert_eq!(hk(0xff1b, false, false, false), Some(Hotkey::Escape));
         assert_eq!(hk(0x6c1, true, false, false), None);
     }
 }

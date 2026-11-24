@@ -126,6 +126,11 @@ impl AiPanel {
                     .context("не удалось создать панель ИИ")?;
                 hotkeys::install(&webview, events.clone());
                 crate::tabs::popups::install(&webview);
+                crate::tabs::fullscreen::install(
+                    &webview,
+                    crate::tabs::fullscreen::Owner::Ai,
+                    events.clone(),
+                );
                 downloads::install(&webview, None, events.clone());
                 self.webview = Some(webview);
             }

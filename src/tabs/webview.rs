@@ -115,6 +115,8 @@ pub struct TabSpec<'a> {
     /// Для вкладок, открытых из панели ИИ: тот же прокси, что у панели.
     pub proxy: Option<ProxyConfig>,
     pub ai: bool,
+    /// Звук вкладки выключен (после пробуждения — снова).
+    pub muted: bool,
 }
 
 pub fn build_tab(
@@ -125,6 +127,9 @@ pub fn build_tab(
 ) -> Result<WebView> {
     let id = spec.id;
     let ai = spec.ai;
+    // Исходный код (Ctrl+U) открывается только во вкладке, созданной для него браузером:
+    // сайты сами на `view-source:` перейти не могут.
+    let source = super::tools::is_source(spec.url);
     let (title_tx, load_tx, open_tx) = (events.clone(), events.clone(), events.clone());
 
     let builder = WebViewBuilder::new_with_web_context(context)
@@ -135,7 +140,10 @@ pub fn build_tab(
         .with_devtools(true)
         .with_hotkeys_zoom(true)
         .with_initialization_script(super::sleep::DRAFT_TRACKER)
-        .with_navigation_handler(|url| omnibox::is_navigable(&url))
+        .with_initialization_script(super::links::TRACKER)
+        .with_navigation_handler(move |url| {
+            omnibox::is_navigable(&url) || (source && super::tools::is_source(&url))
+        })
         .with_document_title_changed_handler(move |title| {
             let _ = title_tx.send_event(UserEvent::TabTitle(id, title));
         })
@@ -158,10 +166,14 @@ pub fn build_tab(
     let builder = downloads::attach(builder, events);
 
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
-    hotkeys::install(&webview, events.clone());
+    hotkeys::install_tab(&webview, events.clone());
     super::popups::install(&webview);
     super::fullscreen::install(&webview, super::fullscreen::Owner::Tab(id), events.clone());
     downloads::install(&webview, Some(id), events.clone());
+    super::tools::watch_audio(&webview, id, events.clone());
+    if spec.muted {
+        super::tools::set_muted(&webview, true);
+    }
     enable_autofill(&webview);
     Ok(webview)
 }

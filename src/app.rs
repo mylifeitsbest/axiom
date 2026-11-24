@@ -1,5 +1,6 @@
 //! Состояние браузера и обработка событий главного цикла.
 
+mod tab_actions;
 mod translation;
 
 use std::{
@@ -179,15 +180,14 @@ impl App {
             UserEvent::Hotkey(hotkey) => self.on_hotkey(hotkey)?,
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
             UserEvent::TabLoad { id, started, url } => self.on_load(id, started, url),
-            UserEvent::OpenTab { url, ai, from } => {
-                if omnibox::is_navigable(&url) {
-                    let id = self.tabs.add(url.clone(), display_title(&url), ai, None);
-                    if let Some(tab) = self.tabs.get_mut(id) {
-                        tab.opener = from;
-                    }
-                    self.activate(id);
-                }
-            }
+            UserEvent::OpenTab { url, ai, from } => self.open_from_page(url, ai, from),
+            UserEvent::PageTab {
+                url,
+                ai,
+                from,
+                background,
+            } => self.add_page_tab(url, ai, from, background),
+            UserEvent::TabAudio { id, playing } => self.on_tab_audio(id, playing),
             UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
             UserEvent::Fullscreen { owner, on } => self.on_page_fullscreen(owner, on),
@@ -316,6 +316,11 @@ impl App {
             }
             UiCmd::ToggleBookmark => self.toggle_bookmark(),
             UiCmd::ToggleNoSleep { id } => self.toggle_no_sleep(id),
+            UiCmd::ReloadTab { id } => self.reload_tab(id),
+            UiCmd::DuplicateTab { id } => self.duplicate_tab(id),
+            UiCmd::ToggleMute { id } => self.toggle_mute(id),
+            UiCmd::CloseOtherTabs { id } => self.close_other_tabs(id),
+            UiCmd::CloseTabsRight { id } => self.close_tabs_right(id),
             UiCmd::Import { browser } => self.start_import(browser),
             UiCmd::Install => {
                 let events = self.events.clone();
@@ -469,6 +474,7 @@ impl App {
                     self.leave_fullscreen();
                 }
             }
+            _ if hotkey.is_page_tool() => self.page_hotkey(hotkey),
             Hotkey::Reload | Hotkey::Back | Hotkey::Forward => {
                 let Some(id) = active else { return Ok(()) };
                 let Some(tab) = self.tabs.get(id) else {
@@ -573,7 +579,7 @@ impl App {
         if tab.webview.is_some() || tab.is_newtab() {
             return Ok(());
         }
-        let (url, ai) = (tab.url.clone(), tab.ai);
+        let (url, ai, muted) = (tab.url.clone(), tab.ai, tab.muted);
         let spec = TabSpec {
             id,
             url: &url,
@@ -582,6 +588,7 @@ impl App {
             look: self.look(),
             proxy: if ai { self.ai.proxy_config() } else { None },
             ai,
+            muted,
         };
         let webview = if ai {
             let context = self.ai.context(&self.paths, &mut self.context);
@@ -592,6 +599,8 @@ impl App {
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.webview = Some(webview);
             tab.loading = true;
+            // Звук прежней страницы до усыпления к новой не относится.
+            tab.audible = false;
         }
         Ok(())
     }
@@ -717,10 +726,10 @@ impl App {
         let title: String = title.chars().take(300).collect();
         // Адрес мог смениться без перезагрузки (history.pushState).
         if let Some(url) = tab.webview.as_ref().and_then(|w| w.url().ok())
-            && omnibox::is_navigable(&url)
+            && (omnibox::is_navigable(&url) || crate::tabs::tools::is_source(&url))
             && url != "about:blank"
         {
-            tab.url = url;
+            tab.url = crate::tabs::tools::keep_source(&tab.url, url);
         }
         if !title.trim().is_empty() {
             tab.title = title;
@@ -737,12 +746,14 @@ impl App {
         };
         tab.loading = started;
         let blank = url == "about:blank";
-        if omnibox::is_navigable(&url) && !blank {
-            tab.url = url;
+        if (omnibox::is_navigable(&url) || crate::tabs::tools::is_source(&url)) && !blank {
+            tab.url = crate::tabs::tools::keep_source(&tab.url, url);
         }
+        // Исходный код (Ctrl+U) — тоже адрес вкладки, но не страница: без истории и перевода.
+        let source = crate::tabs::tools::is_source(&tab.url);
         if !started {
             // Вкладка, открытая ради загрузки, страницу так и не показала — в историю её не пишем.
-            if !blank {
+            if !blank && !source {
                 self.history.record(&tab.url, &tab.title);
             }
             if let (Some(y), Some(webview)) = (tab.scroll.take(), &tab.webview) {
@@ -754,7 +765,9 @@ impl App {
             self.mirror_search(id);
         }
         self.push_state();
-        self.translate_load(id, started);
+        if !source {
+            self.translate_load(id, started);
+        }
     }
 
     /// Двойной поиск работает и для поиска внутри самой страницы DuckDuckGo:
@@ -1568,6 +1581,9 @@ impl App {
                 ai: t.ai,
                 bookmarked: self.bookmarks.contains(&t.url),
                 no_sleep: t.no_sleep,
+                // У спящей вкладки звука нет, но выключенный звук она помнит.
+                audible: t.audible && t.webview.is_some(),
+                muted: t.muted,
             })
             .collect();
         let on_newtab = self.tabs.active_tab().is_some_and(|t| t.is_newtab());

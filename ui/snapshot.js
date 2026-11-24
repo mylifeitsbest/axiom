@@ -7,7 +7,7 @@
 // При закрытии Rust сначала показывает webview и лишь потом присылает clear.
 function createSnapshot(ax) {
   const HOSTS = { page: '#content', ai: '#aiBody' };
-  const POPUPS = { sug: '#sug', dl: '#dlp', upd: '#upp', trp: '#trp', sheet: '#sheet', onb: '#onb' };
+  const POPUPS = { sug: '#sug', dl: '#dlp', upd: '#upp', trp: '#trp', tabm: '#tabm', sheet: '#sheet', onb: '#onb' };
   // Непрозрачный лист настроек закрывает весь контент, но у него круглые углы:
   // когда он проявился, снимок прячем, иначе в углах выглядывала бы страница.
   const COVERS = new Set(['sheet']);

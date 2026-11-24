@@ -84,6 +84,9 @@
   // ---------- перевод страниц (ui/translate.js) ----------
   const tr = createTranslate({ esc, send, speed, setOverlay, toast: (t) => toast(t) });
 
+  // ---------- меню вкладки (ui/tabmenu.js) ----------
+  const tm = createTabMenu({ send, ms, setOverlay, NEWTAB, tabs: () => S.tabs, canRestore: () => S.canRestore });
+
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
 
@@ -286,7 +289,7 @@
         el.className = 'tab in';
         el.dataset.id = t.id;
         el.setAttribute('role', 'tab');
-        el.innerHTML = `<span class="favslot"></span><span class="tt"></span><button class="tx" title="Закрыть (Ctrl+W)">${icon('x')}</button>`;
+        el.innerHTML = `<span class="favslot"></span><span class="tt"></span><button class="ta" hidden></button><button class="tx" title="Закрыть (Ctrl+W)">${icon('x')}</button>`;
         el.addEventListener('animationend', () => el.classList.remove('in'), { once: true });
         tabEls.set(t.id, el);
       }
@@ -297,6 +300,7 @@
       const title = t.title || (t.url === NEWTAB ? 'Новая вкладка' : t.url);
       el.querySelector('.tt').textContent = title;
       el.title = t.sleeping ? `${title} — спит` : t.no_sleep ? `${title} — не засыпает` : title;
+      renderTabSound(el, t);
       const key = parseUrl(t.url)?.origin || t.url;
       const slot = el.querySelector('.favslot');
       if (slot.dataset.key !== key) { slot.dataset.key = key; slot.innerHTML = favHtml(t.url); }
@@ -304,6 +308,21 @@
       if (el !== want) list.insertBefore(el, want);
       prev = el;
     }
+  }
+
+  // Значок звука: динамик, пока страница играет звук, перечёркнутый — пока звук выключен.
+  // Клик по нему (и Ctrl+M) выключает и включает звук. На узкой вкладке он вместо фавиконки.
+  function renderTabSound(el, t) {
+    const b = el.querySelector('.ta');
+    const state = t.muted ? 'mute' : t.audible ? 'vol' : '';
+    el.classList.toggle('snd', !!state);
+    el.classList.toggle('muted', !!t.muted);
+    if (b.dataset.s === state) return;
+    b.dataset.s = state;
+    b.hidden = !state;
+    b.innerHTML = state ? icon(state) : '';
+    b.title = t.muted ? 'Включить звук (Ctrl+M)' : 'Выключить звук (Ctrl+M)';
+    b.setAttribute('aria-label', b.title);
   }
 
   function flip(mutate) {
@@ -327,13 +346,14 @@
     if (e.button === 1) { e.preventDefault(); send({ cmd: 'close_tab', id }); return; }
     if (e.button !== 0) return;
     const onClose = !!e.target.closest('.tx');
+    const onSound = !!e.target.closest('.ta');
     const vertical = app.dataset.layout === 'side';
     const start = vertical ? e.clientY : e.clientX;
     let dragging = false;
     el.setPointerCapture(e.pointerId);
     const move = (ev) => {
       const p = vertical ? ev.clientY : ev.clientX;
-      if (!dragging && !onClose && Math.abs(p - start) > 5) { dragging = true; el.classList.add('drag'); }
+      if (!dragging && !onClose && !onSound && Math.abs(p - start) > 5) { dragging = true; el.classList.add('drag'); }
       if (!dragging) return;
       let before = null;
       for (const s of $$('.tab:not(.out)', $('#tablist'))) {
@@ -353,6 +373,8 @@
         send({ cmd: 'move_tab', id, to: order.indexOf(id) });
       } else if (onClose) {
         send({ cmd: 'close_tab', id });
+      } else if (onSound) {
+        send({ cmd: 'toggle_mute', id });
       } else {
         send({ cmd: 'activate_tab', id });
       }
@@ -362,6 +384,12 @@
     el.addEventListener('pointercancel', up);
   });
   $('#tablist').addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
+  // Правый клик по вкладке — её меню (ui/tabmenu.js).
+  $('#tablist').addEventListener('contextmenu', (e) => {
+    const el = e.target.closest('.tab');
+    e.preventDefault();
+    if (el && !el.classList.contains('out')) tm.open(+el.dataset.id, e.clientX, e.clientY);
+  });
   $('#newTabBtn').addEventListener('click', () => send({ cmd: 'new_tab' }));
 
   // ---------- контент и новая вкладка ----------
@@ -421,7 +449,8 @@
     omni.classList.remove('empty');
     inp.value = t.url;
     const u = parseUrl(t.url);
-    if (!u) { view.textContent = t.url; setIc('globe'); return; }
+    // Адрес без хоста (исходный код страницы, view-source:) показываем целиком.
+    if (!u || !u.host) { view.textContent = t.url; setIc('globe'); return; }
     if (isDdg(u)) {
       view.innerHTML = `<span class="h">${esc(u.searchParams.get('q'))}</span>`;
       setIc('search');
@@ -691,7 +720,15 @@
     if (mod && c === 'KeyF') return 'find';
     if (mod && c === 'KeyD') return 'bookmark';
     if (mod && c === 'KeyJ') return 'downloads';
+    if ((mod && e.shiftKey && c === 'KeyR') || (c === 'F5' && (mod || e.shiftKey))) return 'hard_reload';
     if ((mod && c === 'KeyR') || c === 'F5') return 'reload';
+    if ((c === 'F12' && !mod && !e.altKey && !e.shiftKey) || (mod && e.shiftKey && c === 'KeyI')) return 'devtools';
+    if (mod && !e.shiftKey && c === 'KeyU') return 'view_source';
+    if (mod && !e.shiftKey && c === 'KeyP') return 'print';
+    if (mod && !e.shiftKey && c === 'KeyM') return 'mute';
+    if (mod && (c === 'Equal' || c === 'NumpadAdd')) return 'zoom_in';
+    if (mod && (c === 'Minus' || c === 'NumpadSubtract')) return 'zoom_out';
+    if (mod && !e.shiftKey && (c === 'Digit0' || c === 'Numpad0')) return 'zoom_reset';
     if (c === 'F11' && !mod && !e.altKey && !e.shiftKey) return 'fullscreen';
     if (mod && c === 'Comma') return 'settings';
     if (e.altKey && c === 'ArrowLeft') return 'back';
@@ -713,6 +750,7 @@
     if (e.key === 'Escape' && panels.isOpen() && document.activeElement !== inp) { e.preventDefault(); panels.close(); }
   }, true);
   function hotkey(a) {
+    tm.close();
     if (a !== 'settings' && panels.isOpen()) panels.close();
     if (a !== 'downloads' && dl.isOpen()) dl.close();
     if (upd.isOpen()) upd.close();
@@ -751,6 +789,7 @@
     renderAwake();
     renderAi();
     snap.sync();
+    tm.sync();
   }
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
   let firstSettings = true;

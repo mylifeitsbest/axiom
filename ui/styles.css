@@ -425,6 +425,35 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .tab.nosleep.on::after{box-shadow:0 0 0 1.5px var(--s1)}
 .tab.nosleep.drag::after{box-shadow:0 0 0 1.5px var(--s2)}
 
+/* ---------- звук на вкладке ---------- */
+.ta{width:18px;height:18px;margin-right:-3px;border-radius:5px;display:grid;place-items:center;color:var(--t2);flex:none;transition:background-color var(--d1),color var(--d1)}
+.ta:not([hidden]){animation:pop var(--d2) var(--sp) both}
+.ta .i{width:14px;height:14px}
+.ta:hover{background:var(--s3);color:var(--t1)}
+.tab.muted .ta{color:var(--t3)}
+.tab.muted .ta:hover{color:var(--t1)}
+/* Узкая неактивная вкладка (одна строка): значок звука вместо фавиконки — по нему и выключают звук. */
+[data-layout=one] .tab.snd:not(.on) .fav{display:none}
+[data-layout=one] .tab.snd:not(.on) .ta{order:-1;width:16px;height:16px;margin:0}
+/* Вкладка, чьё меню открыто (ui/tabmenu.js). */
+.tab.ctx:not(.on){background:color-mix(in oklab,var(--s1) 55%,transparent);color:var(--t1)}
+
+/* ---------- меню вкладки ---------- */
+.dlp.tabm{min-width:236px;max-height:calc(100vh - 16px);overflow-y:auto;transform-origin:top left}
+.dlp.tabm.up{transform-origin:bottom left}
+.tm-i{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px 0 9px;border-radius:calc(var(--r)*.7);color:var(--t1);text-align:left;white-space:nowrap;flex:none;transition:background-color var(--d1)}
+.tm-i.on{background:var(--s2)}
+.tm-i:disabled{color:var(--t3)}
+.tm-ic{display:grid;place-items:center;width:16px;flex:none;color:var(--t2)}
+.tm-ic .i{width:15px;height:15px}
+.tm-i:disabled .tm-ic{color:var(--t3)}
+.tm-t{flex:1}
+.tm-k{margin-left:20px;color:var(--t3);font-size:calc(var(--fs) - 1.5px)}
+.tm-ok{display:grid;color:var(--acc)}
+.tm-ok .i{width:14px;height:14px;stroke-width:2.2}
+.tm-sep{display:block;flex:none;height:1px;margin:4px 9px;background:var(--line)}
+.tabm.anim .tm-i{animation:rise var(--d2) var(--e) both}
+
 /* ---------- перевод страницы ---------- */
 .tr{position:relative;color:var(--t3)}
 .tr .i{transition:transform var(--d2) var(--e)}

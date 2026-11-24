@@ -89,6 +89,11 @@ pub enum Edge {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SettingsIn {
     pub appearance: Map<String, Value>,
+    /// Неизвестная система — DuckDuckGo; свой адрес проверяют настройки.
+    #[serde(default, deserialize_with = "crate::tabs::omnibox::lenient_engine")]
+    pub search_engine: crate::tabs::omnibox::Engine,
+    #[serde(default)]
+    pub search_custom: String,
     pub double_search: bool,
     pub ai_proxy: String,
     pub sleep_minutes: u32,
@@ -268,6 +273,11 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
                 return Err(IpcError::Invalid("appearance"));
             }
             short(&settings.ai_proxy, 512, "proxy")?;
+            short(
+                &settings.search_custom,
+                crate::tabs::omnibox::MAX_TEMPLATE,
+                "search",
+            )?;
         }
         UiCmd::TranslatePrefs { prefs } if !prefs.is_valid() => {
             return Err(IpcError::Invalid("translate"));
@@ -464,6 +474,32 @@ mod tests {
             parse(r#"{"cmd":"translate"}"#),
             Ok(UiCmd::Translate)
         ));
+    }
+
+    #[test]
+    fn parses_search_settings() {
+        use crate::tabs::omnibox::Engine;
+        let save = |extra: &str| {
+            parse(&format!(
+                r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+            ))
+        };
+        let engine = |extra: &str| match save(extra) {
+            Ok(UiCmd::SaveSettings { settings }) => Some(settings.search_engine),
+            _ => None,
+        };
+        assert_eq!(engine(r#","search_engine":"bing""#), Some(Engine::Bing));
+        // Старый интерфейс без поля и незнакомая система — DuckDuckGo.
+        assert_eq!(engine(""), Some(Engine::DuckDuckGo));
+        assert_eq!(
+            engine(r#","search_engine":"altavista""#),
+            Some(Engine::DuckDuckGo)
+        );
+        let long = format!(
+            r#","search_engine":"custom","search_custom":"https://a.b/?q=%s{}""#,
+            "x".repeat(crate::tabs::omnibox::MAX_TEMPLATE)
+        );
+        assert!(save(&long).is_err());
     }
 
     #[test]

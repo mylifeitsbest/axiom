@@ -4,7 +4,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{ipc::SettingsIn, storage};
+use crate::{
+    ipc::SettingsIn,
+    storage,
+    tabs::omnibox::{self, Engine, Search},
+};
 
 pub const FILE: &str = "settings.json";
 const MAX_SLEEP_MINUTES: u32 = 24 * 60;
@@ -44,7 +48,13 @@ impl ThemeColors {
 pub struct Settings {
     /// Тема, раскладка, шрифты, свой CSS — всё, что настраивает интерфейс.
     pub appearance: Map<String, Value>,
-    /// Запрос из адресной строки уходит и в DuckDuckGo, и в AI Mode.
+    /// Поисковая система адресной строки.
+    #[serde(deserialize_with = "omnibox::lenient_engine")]
+    pub search_engine: Engine,
+    /// Свой адрес поиска с `%s` на месте запроса (для `custom`). Хранится,
+    /// даже когда выбрана другая система, чтобы к нему можно было вернуться.
+    pub search_custom: String,
+    /// Запрос из адресной строки уходит и в поисковую систему, и в AI Mode.
     pub double_search: bool,
     /// Прокси только для панели ИИ: `http://host:port` или `socks5://host:port`.
     pub ai_proxy: String,
@@ -69,6 +79,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             appearance: Map::new(),
+            search_engine: Engine::DuckDuckGo,
+            search_custom: String::new(),
             double_search: true,
             ai_proxy: String::new(),
             sleep_minutes: 5,
@@ -96,6 +108,9 @@ impl Settings {
     /// Применяет присланные интерфейсом значения. Прокси проверяется отдельно.
     pub fn apply(&mut self, incoming: SettingsIn) {
         self.appearance = incoming.appearance;
+        self.search_engine = incoming.search_engine;
+        self.search_custom = incoming.search_custom.trim().to_string();
+        self.fix_search();
         self.double_search = incoming.double_search;
         self.ai_proxy = incoming.ai_proxy.trim().to_string();
         self.sleep_minutes = incoming.sleep_minutes.min(MAX_SLEEP_MINUTES);
@@ -105,7 +120,31 @@ impl Settings {
         self.check_updates = incoming.check_updates;
     }
 
+    /// Куда уходит поиск из адресной строки.
+    pub fn search(&self) -> Search<'_> {
+        Search {
+            engine: self.search_engine,
+            custom: &self.search_custom,
+        }
+    }
+
+    /// Поисковый запрос, если `url` — страница результатов любой системы или своего адреса.
+    pub fn query(&self, url: &str) -> Option<String> {
+        omnibox::search_query(url, &self.search_custom)
+    }
+
+    /// Свой адрес — только http(s) и с `%s`; без годного адреса — DuckDuckGo.
+    fn fix_search(&mut self) {
+        if !omnibox::valid_template(&self.search_custom) {
+            self.search_custom.clear();
+        }
+        if self.search_engine == Engine::Custom && self.search_custom.is_empty() {
+            self.search_engine = Engine::DuckDuckGo;
+        }
+    }
+
     fn sanitized(mut self) -> Self {
+        self.fix_search();
         self.sleep_minutes = self.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.live_tabs = self.live_tabs.min(MAX_LIVE_TABS);
         self.translate = self.translate.sanitized();
@@ -118,5 +157,59 @@ impl Settings {
             self.colors = ThemeColors::default();
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn incoming(engine: &str, custom: &str) -> serde_json::Result<SettingsIn> {
+        serde_json::from_value(serde_json::json!({
+            "appearance": {},
+            "double_search": true,
+            "ai_proxy": "",
+            "sleep_minutes": 5,
+            "live_tabs": 3,
+            "search_engine": engine,
+            "search_custom": custom,
+        }))
+    }
+
+    #[test]
+    fn applies_search_engine() -> serde_json::Result<()> {
+        let mut s = Settings::default();
+        s.apply(incoming("yandex", "")?);
+        assert_eq!(s.search_engine, Engine::Yandex);
+
+        s.apply(incoming("custom", " https://example.com/?q=%s ")?);
+        assert_eq!(s.search_engine, Engine::Custom);
+        assert_eq!(s.search().custom, "https://example.com/?q=%s");
+        assert_eq!(
+            s.query("https://example.com/?q=rust").as_deref(),
+            Some("rust")
+        );
+
+        // Свой адрес без %s или не http(s) — откат на DuckDuckGo.
+        for bad in ["https://example.com/", "javascript:alert(%s)", ""] {
+            s.apply(incoming("custom", bad)?);
+            assert_eq!(s.search_engine, Engine::DuckDuckGo, "{bad}");
+            assert!(s.search_custom.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_engine_keeps_other_settings() -> serde_json::Result<()> {
+        let file =
+            r#"{"search_engine":"altavista","search_custom":"ftp://x/%s","sleep_minutes":30}"#;
+        let s = serde_json::from_str::<Settings>(file)?.sanitized();
+        assert_eq!(s.search_engine, Engine::DuckDuckGo);
+        assert!(s.search_custom.is_empty());
+        assert_eq!(s.sleep_minutes, 30);
+        // Старый файл без поисковой системы.
+        let old = serde_json::from_str::<Settings>(r#"{"double_search":false}"#)?;
+        assert_eq!(old.search_engine, Engine::DuckDuckGo);
+        Ok(())
     }
 }

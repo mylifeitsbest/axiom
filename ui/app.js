@@ -17,7 +17,9 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clamp = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : d);
   const parseUrl = (u) => { try { return new URL(u); } catch { return null; } };
-  const isDdg = (u) => u && /(^|\.)duckduckgo\.com$/.test(u.hostname) && u.searchParams.has('q');
+  // Страница результатов любой поисковой системы (searchQueryOf — в settings.js).
+  const searchQ = (u) => (u ? searchQueryOf(u.href, B.search_custom) : null);
+  const isDdg = (u) => searchQ(u) != null;
 
   // ---------- темы ----------
   const PRESETS = {
@@ -45,7 +47,7 @@
   // ---------- состояние ----------
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: [], maximized: false };
   let A = { ...DEFAULTS };
-  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true };
+  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true, search_engine: 'duckduckgo', search_custom: '' };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -229,6 +231,8 @@
       cmd: 'save_settings',
       settings: {
         appearance: A,
+        search_engine: String(B.search_engine || 'duckduckgo'),
+        search_custom: String(B.search_custom || ''),
         double_search: !!B.double_search,
         ai_proxy: String(B.ai_proxy || ''),
         sleep_minutes: Math.round(clamp(B.sleep_minutes, 0, 1440, 5)),
@@ -423,7 +427,7 @@
     const u = parseUrl(t.url);
     if (!u) { view.textContent = t.url; setIc('globe'); return; }
     if (isDdg(u)) {
-      view.innerHTML = `<span class="h">${esc(u.searchParams.get('q'))}</span>`;
+      view.innerHTML = `<span class="h">${esc(searchQ(u))}</span>`;
       setIc('search');
       return;
     }
@@ -481,7 +485,7 @@
     if (!q) { hideSug(); return; }
     const items = [];
     if (looksLikeUrl(q)) items.push({ kind: 'go', ic: 'globe', title: q, sub: 'Перейти', input: q });
-    items.push({ kind: 'search', ic: 'search', title: q, sub: B.double_search ? 'DuckDuckGo + ИИ' : 'DuckDuckGo', input: q });
+    items.push({ kind: 'search', ic: 'search', title: q, sub: B.double_search ? `${searchEngineName(B)} + ИИ` : searchEngineName(B), input: q });
     for (const h of sugHist.slice(0, 7)) {
       items.push({ kind: h.kind, ic: h.kind === 'bookmark' ? 'star' : 'clock', title: h.title || h.url, sub: h.url.replace(/^https?:\/\/(www\.)?/, ''), input: h.url });
     }
@@ -632,7 +636,7 @@
   function toggleAi() {
     if (S.aiOpen) { send({ cmd: 'ai', open: false }); return; }
     let q = document.activeElement === inp && mode === 'url' ? inp.value.trim() : '';
-    if (!q) { const u = parseUrl(activeTab()?.url || ''); if (isDdg(u)) q = u.searchParams.get('q') || ''; }
+    if (!q) { const u = parseUrl(activeTab()?.url || ''); if (isDdg(u)) q = searchQ(u) || ''; }
     send({ cmd: 'ai', open: true, query: q || null });
   }
   $('#aiBtn').addEventListener('click', toggleAi);
@@ -758,7 +762,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {

@@ -51,7 +51,9 @@ def init():
         # hits — итоги за день по версии и системе. Флаги приходят от браузера:
         # dau/wau/mau — «первая отметка за день/неделю/месяц», installs — новая
         # установка, updates — первая отметка после обновления, vdau — первая
-        # отметка за день на этой версии.
+        # отметка за день на этой версии, imports — перенесли закладки и историю
+        # из другого браузера (один раз на профиль), imports_old — переносили
+        # ещё до счётчика, браузер нашёл это в профиле при обновлении.
         con.execute(
             """CREATE TABLE IF NOT EXISTS hits(
                 day TEXT, v TEXT, os TEXT,
@@ -67,6 +69,9 @@ def init():
             con.execute("ALTER TABLE hits ADD COLUMN vdau INTEGER DEFAULT 0")
             # Старые браузеры флага vd не шлют: для них он равен d.
             con.execute("UPDATE hits SET vdau = dau")
+        for col in ("imports", "imports_old"):
+            if col not in cols:
+                con.execute(f"ALTER TABLE hits ADD COLUMN {col} INTEGER DEFAULT 0")
         # recent — то же по десятиминуткам за двое суток: «сейчас», часы, лента.
         con.execute(
             """CREATE TABLE IF NOT EXISTS recent(
@@ -75,6 +80,10 @@ def init():
                 updates INTEGER DEFAULT 0,
                 PRIMARY KEY(slot, v))"""
         )
+        rcols = {r[1] for r in con.execute("PRAGMA table_info(recent)")}
+        for col in ("imports", "imports_old"):
+            if col not in rcols:
+                con.execute(f"ALTER TABLE recent ADD COLUMN {col} INTEGER DEFAULT 0")
     con.close()
 
 
@@ -106,7 +115,7 @@ def record(payload):
     if not isinstance(os_, str) or os_ not in OSES:
         return False
     flag = lambda k: 1 if payload.get(k) is True else 0
-    d, new, up = flag("d"), flag("new"), flag("up")
+    d, new, up, im, imo = flag("d"), flag("new"), flag("up"), flag("im"), flag("imo")
     # До 0.4.0 браузер не слал vd; тогда «первый раз сегодня на этой версии» = d.
     vd = flag("vd") if "vd" in payload else d
 
@@ -124,22 +133,25 @@ def record(payload):
         con, "SELECT COUNT(*) FROM recent WHERE slot=?", (slot,)) >= MAX_ROWS_PER_SLOT
     with con:
         con.execute(
-            """INSERT INTO hits(day, v, os, pings, dau, wau, mau, installs, updates, vdau)
-               VALUES(?,?,?,1,?,?,?,?,?,?)
+            """INSERT INTO hits(day, v, os, pings, dau, wau, mau, installs, updates, vdau,
+                                imports, imports_old)
+               VALUES(?,?,?,1,?,?,?,?,?,?,?,?)
                ON CONFLICT(day, v, os) DO UPDATE SET
                  pings=pings+1, dau=dau+excluded.dau, wau=wau+excluded.wau,
                  mau=mau+excluded.mau, installs=installs+excluded.installs,
-                 updates=updates+excluded.updates, vdau=vdau+excluded.vdau""",
-            (day, v, os_, d, flag("w"), flag("m"), new, up, vd),
+                 updates=updates+excluded.updates, vdau=vdau+excluded.vdau,
+                 imports=imports+excluded.imports, imports_old=imports_old+excluded.imports_old""",
+            (day, v, os_, d, flag("w"), flag("m"), new, up, vd, im, imo),
         )
         if not slot_full:
             con.execute(
-                """INSERT INTO recent(slot, v, pings, installs, updates)
-                   VALUES(?,?,1,?,?)
+                """INSERT INTO recent(slot, v, pings, installs, updates, imports, imports_old)
+                   VALUES(?,?,1,?,?,?,?)
                    ON CONFLICT(slot, v) DO UPDATE SET
                      pings=pings+1, installs=installs+excluded.installs,
-                     updates=updates+excluded.updates""",
-                (slot, v, new, up),
+                     updates=updates+excluded.updates, imports=imports+excluded.imports,
+                     imports_old=imports_old+excluded.imports_old""",
+                (slot, v, new, up, im, imo),
             )
         con.execute("DELETE FROM recent WHERE slot<?", (slot_key(now - RECENT_KEEP),))
     con.close()
@@ -177,6 +189,9 @@ def dashboard():
         "inst_all": q1(con, "SELECT SUM(installs) FROM hits"),
         "upd_today": q1(con, "SELECT SUM(updates) FROM hits WHERE day=?", (t,)),
         "upd_all": q1(con, "SELECT SUM(updates) FROM hits"),
+        "imp_today": q1(con, "SELECT SUM(imports) FROM hits WHERE day=?", (t,)),
+        "imp_all": q1(con, "SELECT SUM(imports + imports_old) FROM hits"),
+        "imp_old": q1(con, "SELECT SUM(imports_old) FROM hits"),
         "week_start": week_start,
     }
 
@@ -194,10 +209,11 @@ def dashboard():
     s["hours"] = [(h, hours.get(h.strftime("%Y-%m-%dT%H"), 0)) for h in
                   (top - timedelta(hours=i) for i in range(23, -1, -1))]
 
-    # Лента: установки и обновления за двое суток, свежие сверху.
+    # Лента: установки, обновления и переезды за двое суток, свежие сверху.
     s["feed"] = con.execute(
-        """SELECT slot, v, installs, updates FROM recent
-           WHERE installs>0 OR updates>0 ORDER BY slot DESC, v DESC LIMIT 30""").fetchall()
+        """SELECT slot, v, installs, updates, imports, imports_old FROM recent
+           WHERE installs>0 OR updates>0 OR imports>0 OR imports_old>0
+           ORDER BY slot DESC, v DESC LIMIT 30""").fetchall()
 
     # Версии: сколько людей на ней сегодня и сколько всего на неё обновились.
     vers = {}
@@ -312,10 +328,10 @@ def chart_hours(hours):
 
 def feed_html(feed):
     if not feed:
-        return ('<div class="feed-empty">Пока ничего. Здесь появятся новые установки и '
-                'обновления — через минуту после того, как они случатся.</div>')
+        return ('<div class="feed-empty">Пока ничего. Здесь появятся новые установки, '
+                'обновления и переезды — через минуту после того, как они случатся.</div>')
     items = []
-    for slot, v, inst, upd in feed:
+    for slot, v, inst, upd, imp, imp_old in feed:
         when = f'<time data-utc="{escape(slot)}:00Z" data-fmt="feed">{escape(slot[11:])}</time>'
         if inst:
             items.append(
@@ -327,6 +343,18 @@ def feed_html(feed):
                 f'<li><span class="dot d-upd"></span>{when}<span class="what">'
                 f'{upd} {plural(upd, "обновился", "обновились", "обновились")} до {escape(v)}'
                 f'</span></li>')
+        if imp:
+            items.append(
+                f'<li><span class="dot d-imp"></span>{when}<span class="what">'
+                f'{imp} {plural(imp, "человек перенёс", "человека перенесли", "человек перенесли")}'
+                f' закладки и историю из другого браузера</span>'
+                f'<span class="ver">{escape(v)}</span></li>')
+        if imp_old:
+            items.append(
+                f'<li><span class="dot d-imp"></span>{when}<span class="what">'
+                f'{imp_old} {plural(imp_old, "человек переезжал", "человека переезжали", "человек переезжали")}'
+                f' раньше — нашлось в профиле</span>'
+                f'<span class="ver">{escape(v)}</span></li>')
     return f'<ul class="feed">{"".join(items)}</ul>'
 
 
@@ -352,6 +380,8 @@ def render(s):
     small = "".join([
         tile(f'+{s["inst_today"]}', "Новые установки сегодня", f'всего за всё время: {s["inst_all"]}'),
         tile(s["upd_today"], "Обновились сегодня", f'всего за всё время: {s["upd_all"]}'),
+        tile(s["imp_all"], "Переехали за всё время",
+             f'перенесли закладки и историю; сегодня +{s["imp_today"]}'),
     ])
 
     vrows = "".join(
@@ -370,7 +400,7 @@ def render(s):
 <style>
   :root {{ color-scheme: dark;
     --bg:#0e1016; --surface:#171a23; --line:#232735; --ink:#e7e9f0; --ink2:#b5b9c8;
-    --muted:#8b90a3; --axis:#383c4a; --old:#3987e5; --new:#d95926; --upd:#199e70; }}
+    --muted:#8b90a3; --axis:#383c4a; --old:#3987e5; --new:#d95926; --upd:#199e70; --imp:#a274e8; }}
   * {{ box-sizing:border-box; }}
   body {{ margin:0; background:var(--bg); color:var(--ink);
     font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }}
@@ -378,7 +408,7 @@ def render(s):
   h1 {{ font-size:20px; margin:0 0 2px; }}
   .top-sub {{ color:var(--muted); font-size:13px; margin-bottom:22px; }}
   .tiles {{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }}
-  .tiles.small {{ grid-template-columns:repeat(2,1fr); margin-top:12px; }}
+  .tiles.small {{ grid-template-columns:repeat(3,1fr); margin-top:12px; }}
   .tile {{ background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }}
   .tile .l {{ color:var(--ink2); font-size:13px; font-weight:600; }}
   .tile .n {{ font-size:34px; font-weight:700; letter-spacing:-.5px; line-height:1.15; margin:4px 0 2px;
@@ -409,7 +439,7 @@ def render(s):
   .feed .what {{ flex:1; }}
   .feed .ver {{ color:var(--muted); font-size:12px; }}
   .dot {{ width:8px; height:8px; border-radius:50%; flex:none; }}
-  .d-new {{ background:var(--new); }} .d-upd {{ background:var(--upd); }}
+  .d-new {{ background:var(--new); }} .d-upd {{ background:var(--upd); }} .d-imp {{ background:var(--imp); }}
   .feed-empty {{ color:var(--muted); font-size:14px; }}
   .grid {{ display:grid; grid-template-columns:3fr 2fr; gap:16px; }}
   table {{ width:100%; border-collapse:collapse; background:var(--surface);
@@ -423,7 +453,8 @@ def render(s):
   summary {{ cursor:pointer; color:var(--muted); font-size:13px; }}
   details ul {{ padding-left:18px; margin:10px 0 0; }}
   details li {{ margin:6px 0; }}
-  @media (max-width:700px) {{ .tiles {{ grid-template-columns:repeat(2,1fr); }} .grid {{ grid-template-columns:1fr; }} }}
+  @media (max-width:700px) {{ .tiles {{ grid-template-columns:repeat(2,1fr); }}
+    .tiles.small {{ grid-template-columns:1fr; }} .grid {{ grid-template-columns:1fr; }} }}
 </style></head><body><div class="wrap">
   <h1>Axiom — сколько людей пользуется</h1>
   <div class="top-sub">Обновлено в <time data-utc="{utc_iso(now)}" data-fmt="hm">{now:%H:%M} UTC</time>.
@@ -433,7 +464,8 @@ def render(s):
   <div class="tiles small">{small}</div>
 
   <h2>Что происходило</h2>
-  <p class="hint">Новые установки и обновления за последние двое суток, с точностью до 10 минут.</p>
+  <p class="hint">Новые установки, обновления и переезды из других браузеров за последние двое суток,
+    с точностью до 10 минут.</p>
   <div class="panel">{feed_html(s["feed"])}</div>
 
   <h2>По часам, последние сутки</h2>
@@ -468,6 +500,13 @@ def render(s):
       старой версии, тоже попадёт в счёт.</li>
     <li>«Людей сегодня» по версиям в сумме может быть больше, чем «Сегодня»: тот, кто обновился
       днём, был сегодня на двух версиях.</li>
+    <li>«Переехали» — сколько людей перенесли в Axiom закладки или историю из другого браузера.
+      Каждый считается один раз, повторный импорт не добавляет. Какой это был браузер и что именно
+      перенесли, не отправляется.</li>
+    <li>Кто импортировал до появления этого счётчика, попадает в «за всё время», когда обновится:
+      браузер один раз смотрит в профиль (импортированные закладки лежат в папках, а история бывает
+      старше самого Axiom). В «сегодня» такие не идут. Найдено так: {s["imp_old"]}. Кто импортировал
+      и больше не открывает Axiom, не посчитается.</li>
   </ul></details>
 </div>
 <script>

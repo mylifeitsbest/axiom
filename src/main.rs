@@ -12,6 +12,7 @@ mod downloads;
 mod events;
 mod instance;
 mod ipc;
+mod reports;
 mod settings;
 mod stats;
 mod storage;
@@ -68,7 +69,7 @@ fn run() -> Result<()> {
     let paths = storage::Paths::resolve()?;
     // До GTK и до первых потоков: переменные читают драйвер и процессы WebKit.
     #[cfg(target_os = "linux")]
-    system::gpu::apply(settings::Settings::load(&paths).gpu);
+    let gpu = system::gpu::apply(settings::Settings::load(&paths).gpu);
     // Профиль уже открывала более новая версия: адреса — ей, а профиль не трогаем.
     if !updated && !handed_off && system::handoff::to_newer(&paths, &urls) {
         return Ok(());
@@ -81,6 +82,11 @@ fn run() -> Result<()> {
     let Some(server) = instance::claim(&paths, &urls) else {
         return Ok(());
     };
+    // Журнал и отчёты об ошибках — первым делом: дальше всё, что пишется в stderr,
+    // попадает в `axiom.log`, а вылет оставит отчёт.
+    reports::start(&paths.root);
+    #[cfg(target_os = "linux")]
+    eprintln!("{gpu}");
     update::cleanup();
     stats::start(&paths.root);
     system::started(&paths);
@@ -114,6 +120,8 @@ fn run() -> Result<()> {
             if let Some(registration) = &registration {
                 registration.release();
             }
+            // Закрылись сами: следующий запуск не примет это за вылет.
+            reports::finish();
             *control_flow = ControlFlow::Exit;
         }
     });
@@ -167,5 +175,7 @@ fn report_fatal(err: &anyhow::Error) {
         use std::io::Write;
         let _ = storage::create_private(&paths.root.join("last-error.log"))
             .and_then(|mut file| file.write_all(text.as_bytes()));
+        // Окна не будет, и следующий запуск может упасть так же: отчёт — сразу.
+        reports::fatal(&text, settings::Settings::load(&paths).crash_reports);
     }
 }

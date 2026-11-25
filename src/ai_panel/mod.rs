@@ -150,6 +150,7 @@ impl AiPanel {
                     events.clone(),
                 );
                 downloads::install(&webview, None, events.clone());
+                crate::reports::watch(&webview, crate::reports::Source::Ai);
                 self.webview = Some(webview);
                 self.query = query.map(String::from);
             }

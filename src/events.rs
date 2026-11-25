@@ -86,6 +86,8 @@ pub enum UserEvent {
         id: TabId,
         url: String,
     },
+    /// «Сообщить о проблеме»: отчёт отправлен, отложен или не принят (фоновый поток).
+    Reported(crate::reports::Outcome),
     Tick,
 }
 

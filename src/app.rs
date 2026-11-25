@@ -118,6 +118,7 @@ impl App {
         just_updated: bool,
     ) -> Result<Self> {
         let mut settings = Settings::load(&paths);
+        crate::reports::set_auto(settings.crash_reports);
         let mut updater = Updater::new();
         updater.set_beta(settings.beta_channel(crate::update::Version::current().is_beta()));
         let history = History::load(&paths);
@@ -260,6 +261,7 @@ impl App {
             UserEvent::Waking(id, event) => self.on_waking(id, event),
             UserEvent::AppLink(event) => self.on_app_link(event),
             UserEvent::Untracked { id, url } => self.load_untracked(id, url),
+            UserEvent::Reported(outcome) => self.on_reported(outcome),
             UserEvent::Tick => self.on_tick(),
         }
         Ok(Flow::Continue)
@@ -492,8 +494,28 @@ impl App {
             UiCmd::AppLink { id, open, always } => self.answer_app_link(id, open, always),
             UiCmd::Zoom { step } => self.zoom_from_bubble(step),
             UiCmd::ZoomBubble { rect, radius } => self.set_zoom_bubble(rect, radius),
+            UiCmd::ReportInfo => self.send(&ToUi::ReportInfo {
+                log: crate::reports::log_size(),
+            }),
+            // Человек сам нажал «Отправить»: уходит и при выключенных автоматических отчётах.
+            UiCmd::Report { text, log } => {
+                crate::reports::send_user(&text, log, self.events.clone());
+            }
         }
         Ok(Flow::Continue)
+    }
+
+    fn on_reported(&self, outcome: crate::reports::Outcome) {
+        use crate::reports::Outcome;
+        let text = match outcome {
+            Outcome::Sent => "Спасибо! Отчёт отправлен разработчику",
+            Outcome::Queued => "Нет связи с сервером — отчёт уйдёт позже сам",
+            Outcome::Failed => "Не удалось отправить отчёт",
+        };
+        self.send(&ToUi::Reported {
+            done: outcome != Outcome::Failed,
+        });
+        self.send(&ToUi::Toast { text });
     }
 
     fn on_hotkey(&mut self, hotkey: Hotkey) -> Result<()> {
@@ -1221,6 +1243,7 @@ impl App {
         };
         let engine = incoming.search_engine;
         self.settings.apply(incoming);
+        crate::reports::set_auto(self.settings.crash_reports);
         let beta = self
             .settings
             .beta_channel(crate::update::Version::current().is_beta());
@@ -1511,6 +1534,7 @@ impl App {
 
     fn on_tick(&mut self) {
         self.updater.tick(self.settings.check_updates, &self.events);
+        crate::reports::tick();
         // Страховка: webview страницы на весь экран мог пропасть без нашего ведома.
         if self.fullscreen.is_on() {
             self.sync_fullscreen();
@@ -1914,6 +1938,7 @@ fn build_ui(
     // зарегистрированный — интерфейс создаётся раньше вкладок.
     let builder = downloads::attach(builder, events);
     let ui = tab_webview::build_child(builder, window).context("не удалось создать интерфейс")?;
+    crate::reports::watch(&ui, crate::reports::Source::Ui);
     tab_webview::fill_window(&ui, full_bounds(window));
     Ok(ui)
 }

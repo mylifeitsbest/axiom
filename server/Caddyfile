@@ -3,9 +3,18 @@
 # это DNS, который указывает на IP сервера, отдельный домен не нужен).
 __DOMAIN__ {
 	encode gzip
-	# Пинг — меньше 200 байт; большие тела не пропускаем дальше Caddy.
-	request_body {
-		max_size 4KB
+	# Отчёт об ошибке — до 64 КБ (сам stats.py больше не примет).
+	handle /r {
+		request_body {
+			max_size 80KB
+		}
+		reverse_proxy 127.0.0.1:8787
 	}
-	reverse_proxy 127.0.0.1:8787
+	# Пинг — меньше 200 байт; большие тела не пропускаем дальше Caddy.
+	handle {
+		request_body {
+			max_size 4KB
+		}
+		reverse_proxy 127.0.0.1:8787
+	}
 }

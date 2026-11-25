@@ -59,9 +59,10 @@ fn plan(mode: Gpu, nvidia: bool, wayland: bool) -> Vec<&'static str> {
 }
 
 /// Ставит переменные для выбранного режима. Вызывается из `main` до GTK и до
-/// первых потоков: окружение в этот момент никто не читает.
+/// первых потоков: окружение в этот момент никто не читает. Возвращает строку для
+/// журнала: его ещё нет, `main` запишет её, когда журнал откроется.
 #[cfg(target_os = "linux")]
-pub fn apply(mode: Gpu) {
+pub fn apply(mode: Gpu) -> String {
     use std::path::Path;
     let nvidia = Path::new("/proc/driver/nvidia/version").exists()
         || Path::new("/sys/module/nvidia").exists();
@@ -75,8 +76,8 @@ pub fn apply(mode: Gpu) {
             set.push(var);
         }
     }
-    // В журнал: по отчёту видно, с какими обходами работала копия.
-    eprintln!("отрисовка: {mode:?}, nvidia={nvidia}, wayland={wayland}, заданы: {set:?}");
+    // По отчёту видно, с какими обходами работала копия.
+    format!("отрисовка: {mode:?}, nvidia={nvidia}, wayland={wayland}, заданы: {set:?}")
 }
 
 #[cfg(test)]

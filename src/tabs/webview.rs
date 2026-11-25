@@ -117,6 +117,8 @@ pub struct TabSpec<'a> {
     pub ai: bool,
     /// Звук вкладки выключен (после пробуждения — снова): кнопкой или громкостью 0 %.
     pub muted: bool,
+    /// Масштаб страницы (1.0 — 100 %).
+    pub zoom: f64,
 }
 
 pub fn build_tab(
@@ -185,8 +187,12 @@ pub fn build_tab(
     super::fullscreen::install(&webview, super::fullscreen::Owner::Tab(id), events.clone());
     downloads::install(&webview, Some(id), events.clone());
     super::tools::watch_audio(&webview, id, events.clone());
+    super::zoom::watch(&webview, id, events.clone());
     if spec.muted {
         super::tools::set_muted(&webview, true);
+    }
+    if !super::zoom::same(spec.zoom, 1.0) {
+        super::zoom::set(&webview, spec.zoom);
     }
     enable_autofill(&webview);
     Ok(webview)

@@ -13,6 +13,7 @@ pub mod tracking;
 pub mod volume;
 pub mod waking;
 pub mod webview;
+pub mod zoom;
 
 use std::time::Instant;
 
@@ -61,6 +62,9 @@ pub struct Tab {
     /// Громкость вкладки, 0–100 % (см. `volume`). Переживает усыпление, перезапуск
     /// и Ctrl+Shift+T; новая страница во вкладке получает её снова.
     pub volume: u8,
+    /// Масштаб страницы (1.0 — 100 %). Новая страница во вкладке получает масштаб
+    /// своего сайта (см. `storage::zoom`), адрес без сайта — оставляет этот.
+    pub zoom: f64,
 }
 
 impl Tab {
@@ -186,6 +190,7 @@ impl TabStore {
                 muted: false,
                 audible: false,
                 volume: volume::FULL,
+                zoom: 1.0,
             },
         );
         id

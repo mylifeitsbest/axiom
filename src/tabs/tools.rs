@@ -1,5 +1,5 @@
-//! Инструменты страницы во вкладке: звук, масштаб, печать, исходный код,
-//! инструменты разработчика и перезагрузка без кэша.
+//! Инструменты страницы во вкладке: звук, печать, исходный код,
+//! инструменты разработчика и перезагрузка без кэша. Масштаб — в `zoom`.
 //!
 //! WebView2 умеет всё это сам, но только по своим сочетаниям и только когда фокус
 //! в странице. Здесь те же действия по команде браузера: из интерфейса, из меню
@@ -11,54 +11,6 @@ use wry::WebView;
 
 use super::TabId;
 use crate::events::UserEvent;
-
-/// Ступени масштаба, как у Chrome: по ним же ходит Ctrl+колёсико в WebView2.
-const ZOOM_STEPS: [f64; 17] = [
-    0.25,
-    1.0 / 3.0,
-    0.5,
-    2.0 / 3.0,
-    0.75,
-    0.8,
-    0.9,
-    1.0,
-    1.1,
-    1.25,
-    1.5,
-    1.75,
-    2.0,
-    2.5,
-    3.0,
-    4.0,
-    5.0,
-];
-const MIN_ZOOM: f64 = 0.25;
-const MAX_ZOOM: f64 = 5.0;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Zoom {
-    In,
-    Out,
-    Reset,
-}
-
-/// Следующая ступень масштаба. Масштаб между ступенями (колёсико тачпада)
-/// округляется к ближайшей ступени в нужную сторону.
-pub fn next_zoom(current: f64, zoom: Zoom) -> f64 {
-    const EPS: f64 = 0.001;
-    match zoom {
-        Zoom::Reset => 1.0,
-        Zoom::In => ZOOM_STEPS
-            .into_iter()
-            .find(|&s| s > current + EPS)
-            .unwrap_or(MAX_ZOOM),
-        Zoom::Out => ZOOM_STEPS
-            .into_iter()
-            .rev()
-            .find(|&s| s < current - EPS)
-            .unwrap_or(MIN_ZOOM),
-    }
-}
 
 const SOURCE: &str = "view-source:";
 
@@ -165,30 +117,6 @@ pub fn print(webview: &WebView) {
     let _ = webview.print();
 }
 
-// ---------- масштаб ----------
-
-#[cfg(windows)]
-pub fn zoom(webview: &WebView, step: Zoom) {
-    use wry::WebViewExtWindows;
-    let mut current = 1.0;
-    // SAFETY: контроллер принадлежит живому webview, указатель на локальную переменную.
-    if unsafe { webview.controller().ZoomFactor(&mut current) }.is_err() {
-        current = 1.0;
-    }
-    let _ = webview.zoom(next_zoom(current, step));
-}
-
-#[cfg(target_os = "linux")]
-pub fn zoom(webview: &WebView, step: Zoom) {
-    use gtk::glib::prelude::*;
-    use wry::WebViewExtUnix;
-    let current = webview.webview().property::<f64>("zoom-level");
-    let _ = webview.zoom(next_zoom(current, step));
-}
-
-#[cfg(not(any(windows, target_os = "linux")))]
-pub fn zoom(_webview: &WebView, _step: Zoom) {}
-
 // ---------- звук ----------
 
 /// Выключает или включает звук страницы. Состояние хранит вкладка (`Tab::muted`):
@@ -271,22 +199,6 @@ pub fn watch_audio(_webview: &WebView, _id: TabId, _events: EventLoopProxy<UserE
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn zoom_steps_like_chrome() {
-        assert_eq!(next_zoom(1.0, Zoom::In), 1.1);
-        assert_eq!(next_zoom(1.0, Zoom::Out), 0.9);
-        assert_eq!(next_zoom(1.75, Zoom::Reset), 1.0);
-        // Между ступенями (тачпад) — к ближайшей ступени в нужную сторону.
-        assert_eq!(next_zoom(1.17, Zoom::In), 1.25);
-        assert_eq!(next_zoom(1.17, Zoom::Out), 1.1);
-        // Почти ступень (погрешность double) — считается ступенью.
-        assert_eq!(next_zoom(1.0999999, Zoom::In), 1.25);
-        // За краями дальше не идём.
-        assert_eq!(next_zoom(5.0, Zoom::In), 5.0);
-        assert_eq!(next_zoom(0.25, Zoom::Out), 0.25);
-        assert_eq!(next_zoom(0.3, Zoom::Out), 0.25);
-    }
 
     #[test]
     fn source_only_for_pages() {

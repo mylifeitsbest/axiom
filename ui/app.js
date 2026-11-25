@@ -74,6 +74,8 @@
   });
   const overlayReasons = new Set();
   function setOverlay(reason, on) {
+    // Под другим окном страница спрятана — окошку масштаба там нечего показывать.
+    if (on) zm.close();
     const before = overlayReasons.size > 0;
     if (on) overlayReasons.add(reason); else overlayReasons.delete(reason);
     const after = overlayReasons.size > 0;
@@ -81,6 +83,15 @@
     if (before !== after) send({ cmd: 'overlay', open: after });
     if (!on) snap.closing(reason, !after);
   }
+
+  // ---------- масштаб страницы (ui/zoom.js) ----------
+  const zm = createZoom({
+    send, speed,
+    // Открыта страница с живым webview: только её масштаб и меняется.
+    isPage: () => { const t = activeTab(); return isPage(t) && !t.sleeping; },
+    // Место страницы: правее неё — панель ИИ (тоже нативный webview) или край окна.
+    page: () => $('#content').getBoundingClientRect(),
+  });
 
   // ---------- загрузки (ui/downloads.js) ----------
   const dl = createDownloads({ esc, send, ms, speed, setOverlay });
@@ -1032,6 +1043,7 @@
     renderTabs();
     renderContent();
     renderOmni();
+    zm.render(activeTab());
     renderAwake();
     renderAi();
     renderSettings();
@@ -1094,6 +1106,7 @@
     // Закрыли активную вкладку настроек: лист уходит плавно, потом Rust покажет страницу.
     settings_leave() { panels.leave(() => send({ cmd: 'settings_left' })); },
     app_link(m) { xap.onRequest(m); },
+    zoom(m) { zm.onZoom(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

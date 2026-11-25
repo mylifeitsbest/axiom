@@ -87,6 +87,11 @@ const ASSETS: &[Asset] = &[
         bytes: include_bytes!("../../ui/translate.js"),
     },
     Asset {
+        path: "/zoom.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/zoom.js"),
+    },
+    Asset {
         path: "/snapshot.js",
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/snapshot.js"),

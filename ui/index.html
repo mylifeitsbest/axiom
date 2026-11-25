@@ -75,6 +75,8 @@
 
   <div class="dlp xap" id="xap" role="dialog" aria-label="Открыть приложение"></div>
 
+  <div class="dlp zmp" id="zmp" role="dialog" aria-label="Масштаб страницы"></div>
+
   <div class="edge n" data-edge="n"></div><div class="edge s" data-edge="s"></div>
   <div class="edge e" data-edge="e"></div><div class="edge w" data-edge="w"></div>
   <div class="edge ne" data-edge="ne"></div><div class="edge nw" data-edge="nw"></div>
@@ -99,6 +101,7 @@
       <span class="omni-view" id="omniView"></span>
       <span class="omni-msg" id="omniMsg" role="status"></span>
     </span>
+    <button class="ib zm" id="zoomBtn" title="Масштаб" data-i="zoomIn" hidden></button>
     <button class="ib tr" id="trBtn" title="Перевести страницу" data-i="translate" hidden></button>
     <button class="ib awake" id="awakeBtn" title="Не усыплять вкладку" data-i="cup" aria-pressed="false" hidden></button>
     <button class="ib star" id="starBtn" title="Добавить в закладки (Ctrl+D)" data-i="star" aria-pressed="false" hidden></button>
@@ -130,6 +133,7 @@
 <script src="downloads.js"></script>
 <script src="update.js"></script>
 <script src="translate.js"></script>
+<script src="zoom.js"></script>
 <script src="snapshot.js"></script>
 <script src="newtab.js"></script>
 <script src="tabmenu.js"></script>

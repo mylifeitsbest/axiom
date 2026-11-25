@@ -589,7 +589,9 @@ fn post(url: &str, report: &Report) -> Posted {
         .unwrap_or(0);
     match code {
         200..=299 if written => Posted::Ok,
-        400..=499 if code != 408 && code != 429 => Posted::Rejected,
+        // 404 и 413 — сервер или Caddy ещё не обновлены (нет `/r`, лимит 4 КБ):
+        // отчёт ждёт, а не теряется. 408 и 429 — просьба подождать.
+        400..=499 if !matches!(code, 404 | 408 | 413 | 429) => Posted::Rejected,
         _ => Posted::Later,
     }
 }

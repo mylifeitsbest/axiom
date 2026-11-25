@@ -345,6 +345,8 @@ mod gtk_place {
 
     /// Место webview и размер контейнера, для которого оно посчитано.
     type Entry = (glib::WeakRef<gtk::Widget>, Place, Option<(i32, i32)>);
+    /// То же с живым виджетом — на время одной перекладки.
+    type Placed = (gtk::Widget, Place, Option<(i32, i32)>);
 
     thread_local! {
         static PLACES: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
@@ -366,7 +368,7 @@ mod gtk_place {
 
     pub fn relayout(parent: &gtk::Allocation) {
         // Сначала список, потом размещение: size_allocate не должен застать занятый RefCell.
-        let items: Vec<(gtk::Widget, Place, Option<(i32, i32)>)> = PLACES.with(|p| {
+        let items: Vec<Placed> = PLACES.with(|p| {
             let mut p = p.borrow_mut();
             p.retain(|(w, _, _)| w.upgrade().is_some());
             p.iter()

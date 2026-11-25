@@ -29,8 +29,13 @@ pub fn is_ui_origin(url: &str) -> bool {
     url.starts_with(ORIGIN)
 }
 
+/// Картинки извне — только фавиконки сайтов (`<origin>/favicon.ico`): интерфейс
+/// других картинок из сети не грузит, а свой CSS человека (тоже часть интерфейса)
+/// не сможет ничего унести на чужой сервер под видом картинки по другому адресу.
+/// Свой CSS ещё и чистится перед применением (`applyUserCss` в `ui/app.js`).
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                   img-src 'self' https: http: data:; font-src 'self'; connect-src 'none'; \
+                   img-src 'self' data: https://*:*/favicon.ico http://*:*/favicon.ico; \
+                   font-src 'self'; connect-src 'none'; \
                    base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 struct Asset {
@@ -161,6 +166,22 @@ mod tests {
         assert!(is_ui_origin(&url()));
         assert!(!is_ui_origin("https://evil.example/axiom.localhost/"));
         assert!(!is_ui_origin("https://axiom.localhost.evil.example/"));
+    }
+
+    #[test]
+    fn images_only_favicons() {
+        let img = CSP
+            .split(';')
+            .map(str::trim)
+            .find(|d| d.starts_with("img-src"))
+            .unwrap_or_default();
+        // Ни `https:` целиком, ни `*`: из сети — только /favicon.ico.
+        for source in img.split_whitespace().skip(1) {
+            assert!(
+                matches!(source, "'self'" | "data:") || source.ends_with("/favicon.ico"),
+                "{source}"
+            );
+        }
     }
 
     #[test]

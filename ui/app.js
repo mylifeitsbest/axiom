@@ -190,8 +190,79 @@
     return 0.299 * (n >> 16 & 255) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255) > 150 ? '#0b0b10' : '#ffffff';
   }
 
+  // ---------- свой CSS ----------
+  // Свой CSS действует на сам интерфейс, где есть адреса плиток и заголовки вкладок.
+  // Картинка по селектору атрибута (`.tab[title^="Банк"] { background: url(https://…) }`)
+  // выдала бы их чужому серверу, поэтому всё, что может что-то загрузить, вырезаем:
+  // url() (кроме data:), image-set, cross-fade, src(), @import, @font-face и т. п.
+  const CSS_LOADS = /(?<![\w-])(?:-[a-z]+-)?(?:url|src|image|image-set|cross-fade|element|paint)\(/g;
+  // Экранирование (`\75rl(`) для разбора CSS — те же буквы: раскрываем его до проверки.
+  function cssPlain(s) {
+    return String(s).replace(/\\(?:([0-9a-f]{1,6})[ \t\r\n\f]?|([\s\S]))/gi, (_, hex, ch) => {
+      if (!hex) return /[\r\n\f]/.test(ch) ? '' : ch;
+      const n = parseInt(hex, 16);
+      return n > 0 && n <= 0x10ffff && (n < 0xd800 || n > 0xdfff) ? String.fromCodePoint(n) : '�';
+    }).toLowerCase();
+  }
+  function cssLoads(text) {
+    const s = cssPlain(text);
+    if (/@import|@font-face|@namespace/.test(s)) return true;
+    for (const m of s.matchAll(CSS_LOADS)) {
+      // url(data:…) ничего не загружает.
+      if (m[0] === 'url(' && /^\s*["']?\s*data:/.test(s.slice(m.index + m[0].length))) continue;
+      return true;
+    }
+    return false;
+  }
+  // Убирает из правил всё, что может что-то загрузить. true — что-то убрано.
+  function cleanRules(owner) {
+    let cut = false;
+    const rules = owner.cssRules;
+    for (let i = rules.length - 1; i >= 0; i--) {
+      const r = rules[i];
+      if (r instanceof CSSImportRule || r instanceof CSSFontFaceRule || r.constructor.name === 'CSSNamespaceRule') {
+        owner.deleteRule(i);
+        cut = true;
+        continue;
+      }
+      if (r.style) {
+        for (const name of [...r.style]) {
+          if (cssLoads(r.style.getPropertyValue(name))) { r.style.removeProperty(name); cut = true; }
+        }
+      }
+      if (r.cssRules) cut = cleanRules(r) || cut;
+      else if (!r.style && cssLoads(r.cssText)) { owner.deleteRule(i); cut = true; }
+    }
+    return cut;
+  }
+  let cssCut = false;
+  // Разбираем CSS браузером и применяем уже очищенный разбор, без повторного чтения текста.
+  // Разобрать не вышло (старый движок) — применяем как есть, только если он ничего не грузит.
+  function applyUserCss(text) {
+    const css = typeof text === 'string' ? text : '';
+    const style = $('#userCss');
+    const adopt = 'adoptedStyleSheets' in document;
+    let sheet = null;
+    cssCut = false;
+    if (css.trim() && adopt && typeof CSSStyleSheet === 'function') {
+      try {
+        sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+        cssCut = cleanRules(sheet);
+      } catch { sheet = null; cssCut = false; }
+    }
+    if (sheet) {
+      style.textContent = '';
+      document.adoptedStyleSheets = [sheet];
+      return;
+    }
+    if (adopt) document.adoptedStyleSheets = [];
+    cssCut = cssLoads(css);
+    style.textContent = cssCut ? '' : css;
+  }
+
   function applyAppearance() {
-    const mode = A.mode === 'system' ? (darkScheme.matches ? 'dark' : 'light') : (A.mode === 'light' ? 'light' : 'dark');
+    const mode =A.mode === 'system' ? (darkScheme.matches ? 'dark' : 'light') : (A.mode === 'light' ? 'light' : 'dark');
     root.dataset.mode = mode;
     root.dataset.oled = String(!!A.oled && mode === 'dark');
     const st = root.style;
@@ -209,7 +280,7 @@
     st.setProperty('--font', A.font === 'custom' && custom ? `"${custom}",${FONTS.system}` : (FONTS[A.font] || FONTS.system));
     app.classList.toggle('no-nav', !A.showNav);
     app.classList.toggle('no-ai-btn', !A.showAiBtn);
-    $('#userCss').textContent = typeof A.customCss === 'string' ? A.customCss : '';
+    applyUserCss(A.customCss);
     renderDs();
     place();
     dl.reposition();
@@ -859,6 +930,7 @@
     get B() { return B; },
     PRESETS, ACCENTS,
     esc, send, toast, swap, ms, speed, setOverlay, copyText, setA, mergeAppearance,
+    cssLoads, cssCut: () => cssCut,
     system: () => SYS,
     update: () => upd.state(),
     translate: tr,

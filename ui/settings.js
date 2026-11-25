@@ -164,6 +164,7 @@ function createPanels(ax) {
         </div>
         <h4>Свой CSS</h4>
         <div class="card pad"><textarea data-key="customCss" spellcheck="false" placeholder=".tab.on { box-shadow: inset 0 -2px var(--acc) }"></textarea>
+          <small class="css-cut" id="cssCut" hidden>Загрузки извне (url(), @import, шрифты) не применяются</small>
           <div class="btns"><button class="btn" data-act="copy">Скопировать тему</button><button class="btn" data-act="import-toggle">Вставить тему</button><button class="btn ghost" data-act="reset">Сбросить всё</button></div>
           <div class="import-box" hidden><textarea id="themeJson" spellcheck="false" placeholder='{"accent":"#ff7aa2","radius":14}'></textarea><div class="btns"><button class="btn primary" data-act="import-apply">Применить</button></div></div>
         </div>`,
@@ -299,6 +300,7 @@ function createPanels(ax) {
       syncImportList(sys.browsers || []);
       const pv = $('#pvw');
       if (pv) pv.dataset.l = ax.A.layout;
+      $('#cssCut').hidden = !ax.cssCut();
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
       $('#forceDarkRow').hidden = sys.platform !== 'windows';
       ax.translate.syncSheet();
@@ -484,13 +486,17 @@ function createPanels(ax) {
     let obj;
     try { obj = JSON.parse($('#themeJson').value); } catch { ax.toast('Это не JSON'); return; }
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { ax.toast('Нужен объект темы'); return; }
-    // Чужой CSS с загрузкой извне мог бы выдать заголовки вкладок через селекторы атрибутов.
-    const external = typeof obj.customCss === 'string' && /url\s*\(|@import|image-set|src\s*\(|\\/i.test(obj.customCss);
+    // Чужой CSS с загрузкой извне мог бы выдать заголовки вкладок через селекторы атрибутов:
+    // такой не берём вовсе (а при применении любого CSS загрузки и так вырезаются).
+    const css = typeof obj.customCss === 'string' && obj.customCss.trim() ? obj.customCss : '';
+    const external = !!css && ax.cssLoads(css);
     if (external) delete obj.customCss;
     ax.swap(() => { ax.mergeAppearance(obj); });
     ax.saveSettings();
     $('.import-box', sheet).hidden = true;
-    ax.toast(external ? 'Тема применена без своего CSS: в нём загрузка извне' : 'Тема применена');
+    // Свой CSS меняет вид самого браузера: о нём стоит знать, даже если он безобиден.
+    ax.toast(external ? 'Тема применена без своего CSS: в нём загрузка извне'
+      : css ? 'Тема применена вместе со своим CSS — проверьте его, если тема не ваша' : 'Тема применена');
   }
 
   // ---------- перенос из других браузеров ----------

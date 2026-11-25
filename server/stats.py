@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Тихий сборщик статистики Axiom.
 
-Принимает короткие пинги от браузеров (`POST /p`) и показывает приватную панель
-(`GET /d/<ключ>`). Хранит только агрегаты в SQLite — ни IP, ни идентификаторов.
+Принимает короткие пинги от браузеров (`POST /p`) и отчёты об ошибках (`POST /r`),
+показывает приватную панель (`GET /d/<ключ>`, отчёт — `/d/<ключ>/r/<номер>`).
+Пинги хранятся только агрегатами в SQLite; ни IP, ни идентификаторов в базе нет
+(IP живёт лишь в памяти ограничителя частоты, и то в виде хэша с солью).
 Зависимостей нет: всё из стандартной библиотеки, запускается на голой Ubuntu.
 
 Переменные окружения:
@@ -12,11 +14,15 @@
   AXIOM_STATS_KEY   секрет в адресе панели: /d/<ключ>. Без него панель закрыта.
 """
 
+import hashlib
 import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +35,19 @@ KEY = os.environ.get("AXIOM_STATS_KEY", "")
 VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
 OSES = {"windows", "linux", "macos", "other"}
 MAX_BODY = 512
+
+# Отчёты об ошибках: вылет, упавший процесс страницы, «Сообщить о проблеме».
+REPORT_KINDS = {"crash": "вылет", "renderer": "упал процесс", "user": "от человека"}
+REPORT_VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}(-beta\.\d{1,9})?")
+MAX_REPORT_BODY = 64 * 1024
+MAX_REPORT_TEXT = 16 * 1024
+MAX_REPORTS = 2000  # больше — самые старые удаляются: база не растёт без предела
+REPORTS_KEEP = timedelta(days=90)
+
+# Ограничение частоты по IP: (запросов, за секунд). Браузер пингует раз в час,
+# а отчёты шлёт редко — больше бывает только у накрутки.
+LIMITS = {"/p": (30, 3600), "/r": (20, 3600)}
+MAX_BUCKETS = 50_000
 # Строк (версия × ОС) за день. Поддельные версии иначе раздували бы базу без предела.
 MAX_ROWS_PER_DAY = 200
 # То же для десятиминутных ячеек «последних двух суток».
@@ -74,6 +93,13 @@ def init():
                 pings INTEGER DEFAULT 0, installs INTEGER DEFAULT 0,
                 updates INTEGER DEFAULT 0,
                 PRIMARY KEY(slot, v))"""
+        )
+        # reports — отчёты об ошибках как есть (браузер уже вычистил личное).
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS reports(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at TEXT NOT NULL, kind TEXT NOT NULL, v TEXT NOT NULL, os TEXT NOT NULL,
+                text TEXT NOT NULL DEFAULT '', log TEXT NOT NULL DEFAULT '')"""
         )
     con.close()
 
@@ -146,13 +172,99 @@ def record(payload):
     return True
 
 
+def check_report(payload):
+    """Проверить отчёт об ошибке. Вернуть кортеж для базы или None."""
+    if not isinstance(payload, dict):
+        return None
+    kind, v, os_ = payload.get("kind"), payload.get("version"), payload.get("os")
+    text, log = payload.get("text", ""), payload.get("log", "")
+    if not isinstance(kind, str) or kind not in REPORT_KINDS:
+        return None
+    if not isinstance(v, str) or not REPORT_VERSION_RE.fullmatch(v):
+        return None
+    if not isinstance(os_, str) or os_ not in OSES:
+        return None
+    if not isinstance(text, str) or not isinstance(log, str):
+        return None
+    if len(text) > MAX_REPORT_TEXT or len(log) > MAX_REPORT_BODY:
+        return None
+    # Пустой отчёт ни о чём не говорит; NUL в тексте — только мусор.
+    if not text.strip() and not log.strip():
+        return None
+    return kind, v, os_, text.replace("\0", ""), log.replace("\0", "")
+
+
+def store_report(report):
+    kind, v, os_, text, log = report
+    now = utcnow()
+    con = db()
+    with con:
+        cur = con.execute(
+            "INSERT INTO reports(at, kind, v, os, text, log) VALUES(?,?,?,?,?,?)",
+            (now.strftime("%Y-%m-%dT%H:%M:%SZ"), kind, v, os_, text, log))
+        con.execute("DELETE FROM reports WHERE at<?",
+                    ((now - REPORTS_KEEP).strftime("%Y-%m-%dT%H:%M:%SZ"),))
+        con.execute(
+            "DELETE FROM reports WHERE id NOT IN (SELECT id FROM reports ORDER BY id DESC LIMIT ?)",
+            (MAX_REPORTS,))
+    con.close()
+    return cur.lastrowid
+
+
+# ---------- ограничение частоты ----------
+
+class Limiter:
+    """Ведро с жетонами на каждый IP: `rate` запросов за `per` секунд, с запасом
+    на всплеск того же размера. IP хранится только хэшем с солью этого процесса."""
+
+    def __init__(self, rate, per, clock=time.monotonic):
+        self.rate, self.per, self.clock = rate, per, clock
+        self.salt = secrets.token_bytes(16)
+        self.buckets = {}
+        self.lock = threading.Lock()
+
+    def allow(self, ip):
+        key = hashlib.blake2s(ip.encode(), key=self.salt, digest_size=12).digest()
+        now = self.clock()
+        with self.lock:
+            tokens, at = self.buckets.get(key, (self.rate, now))
+            tokens = min(self.rate, tokens + (now - at) * self.rate / self.per)
+            ok = tokens >= 1
+            self.buckets[key] = (tokens - 1 if ok else tokens, now)
+            if len(self.buckets) > MAX_BUCKETS:
+                self._prune(now)
+            return ok
+
+    def _prune(self, now):
+        # Полные вёдра ничего не помнят — их можно забыть.
+        full = [k for k, (t, at) in self.buckets.items()
+                if t + (now - at) * self.rate / self.per >= self.rate]
+        for k in full:
+            del self.buckets[k]
+        if len(self.buckets) > MAX_BUCKETS:
+            self.buckets.clear()
+
+
+LIMITERS = {path: Limiter(*limit) for path, limit in LIMITS.items()}
+
+
+def client_ip(peer, forwarded):
+    """IP клиента. За Caddy прямой собеседник — 127.0.0.1, а настоящий адрес — последний
+    в X-Forwarded-For (его дописывает сам Caddy). Остальным заголовок не верим."""
+    if peer in ("127.0.0.1", "::1") and forwarded:
+        last = forwarded.split(",")[-1].strip()
+        if last:
+            return last
+    return peer
+
+
 # ---------- панель ----------
 
 def ver_key(v):
     return tuple(int(x) for x in v.split("."))
 
 
-def dashboard():
+def dashboard(nonce=""):
     con = db()
     now = utcnow()
     t = day_key(now)
@@ -211,8 +323,15 @@ def dashboard():
     s["oses"] = con.execute(
         """SELECT os, SUM(dau) a FROM hits WHERE day=? GROUP BY os
            HAVING a>0 ORDER BY a DESC""", (t,)).fetchall()
+    # Отчёты об ошибках: свежие сверху и сколько каких пришло за сутки.
+    s["reports"] = con.execute(
+        """SELECT id, at, kind, v, os, substr(text, 1, 2000) FROM reports
+           ORDER BY id DESC LIMIT 30""").fetchall()
+    s["reports_day"] = dict(con.execute(
+        "SELECT kind, COUNT(*) FROM reports WHERE at>=? GROUP BY kind",
+        ((now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),)).fetchall())
     con.close()
-    return render(s)
+    return render(s, nonce)
 
 
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
@@ -330,7 +449,112 @@ def feed_html(feed):
     return f'<ul class="feed">{"".join(items)}</ul>'
 
 
-def render(s):
+def first_line(text):
+    """О чём отчёт: первая непустая строка, кроме служебной «Axiom 0.5.4 · система · движок»."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines and lines[0].startswith("Axiom ") and " · " in lines[0]:
+        lines = lines[1:]
+    return lines[0] if lines else ""
+
+
+def report_href(id_):
+    return f"/d/{escape(KEY)}/r/{int(id_)}"
+
+
+def reports_html(rows):
+    if not rows:
+        return ('<div class="panel feed-empty">Отчётов пока нет. Сюда придут вылеты, упавшие '
+                'процессы страниц и сообщения из «Сообщить о проблеме».</div>')
+    trs = []
+    for id_, at, kind, v, os_, text in rows:
+        line = first_line(text)
+        if len(line) > 140:
+            line = line[:139] + "…"
+        href = report_href(id_)
+        trs.append(
+            f'<tr><td><a href="{href}"><time data-utc="{escape(at)}" data-fmt="feed">'
+            f'{escape(at[:16].replace("T", " "))}</time></a></td>'
+            f'<td><span class="kind k-{escape(kind)}">{escape(REPORT_KINDS.get(kind, kind))}</span></td>'
+            f'<td>{escape(v)}</td><td>{escape(os_)}</td>'
+            f'<td class="line"><a href="{href}">{escape(line) or "—"}</a></td></tr>')
+    return ('<table class="reps"><thead><tr><th>когда</th><th>что</th><th>версия</th>'
+            f'<th>система</th><th>о чём</th></tr></thead><tbody>{"".join(trs)}</tbody></table>')
+
+
+def reports_hint(day):
+    parts = []
+    for kind, forms in (("crash", ("вылет", "вылета", "вылетов")),
+                        ("renderer", ("упавший процесс", "упавших процесса", "упавших процессов")),
+                        ("user", ("сообщение", "сообщения", "сообщений"))):
+        n = day.get(kind, 0)
+        if n:
+            parts.append(f"{n} {plural(n, *forms)}")
+    tail = ("За сутки: " + ", ".join(parts) + ".") if parts else "За сутки — ни одного."
+    return ("Вылеты, упавшие процессы страниц и «Сообщить о проблеме», 30 последних. "
+            "Адреса страниц и личные данные браузер вычищает ещё до отправки. " + tail)
+
+
+REPORT_CSS = """
+  :root { color-scheme: dark; --bg:#0e1016; --surface:#171a23; --line:#232735; --ink:#e7e9f0;
+    --ink2:#b5b9c8; --muted:#8b90a3; --acc:#3987e5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:28px 20px 64px; }
+  a { color:#86b6ef; text-decoration:none; } a:hover { text-decoration:underline; }
+  h1 { font-size:20px; margin:14px 0 2px; }
+  .top-sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted);
+    margin:26px 0 8px; font-weight:600; }
+  pre { margin:0; background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px; font:12.5px/1.55 ui-monospace,"Cascadia Code",Consolas,monospace;
+    white-space:pre-wrap; word-break:break-word; color:var(--ink2); }
+  pre.text { color:var(--ink); }
+  .nav { display:flex; justify-content:space-between; margin-top:22px; font-size:14px; }
+  .muted { color:var(--muted); }
+"""
+
+
+def report_page(id_, nonce=""):
+    """Один отчёт целиком. Всё, что прислал браузер, — только через escape()."""
+    con = db()
+    row = con.execute(
+        "SELECT id, at, kind, v, os, text, log FROM reports WHERE id=?", (id_,)).fetchone()
+    older = con.execute("SELECT MAX(id) FROM reports WHERE id<?", (id_,)).fetchone()[0]
+    newer = con.execute("SELECT MIN(id) FROM reports WHERE id>?", (id_,)).fetchone()[0]
+    con.close()
+    if not row:
+        return None
+    _, at, kind, v, os_, text, log = row
+    what = REPORT_KINDS.get(kind, kind)
+    log_html = (f'<pre class="log">{escape(log)}</pre>' if log.strip()
+                else '<p class="muted">Журнал не приложен.</p>')
+    nav = (f'<a href="{report_href(newer)}">← новее</a>' if newer else "<span></span>") + \
+          (f'<a href="{report_href(older)}">старше →</a>' if older else "<span></span>")
+    return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axiom — отчёт №{int(id_)}</title>
+<style>{REPORT_CSS}</style></head><body><div class="wrap">
+  <a href="/d/{escape(KEY)}">← Вся статистика</a>
+  <h1>Отчёт №{int(id_)}: {escape(what)}</h1>
+  <div class="top-sub"><time data-utc="{escape(at)}">{escape(at.replace("T", " "))}</time>
+    · версия {escape(v)} · {escape(os_)}</div>
+  <h2>Что случилось</h2>
+  <pre class="text">{escape(text) or "—"}</pre>
+  <h2>Журнал</h2>
+  {log_html}
+  <div class="nav">{nav}</div>
+</div>
+<script nonce="{escape(nonce)}">
+for (const el of document.querySelectorAll("[data-utc]")) {{
+  const d = new Date(el.dataset.utc);
+  if (!isNaN(d)) el.textContent = d.toLocaleString("ru-RU");
+}}
+</script>
+</body></html>"""
+
+
+def render(s, nonce=""):
     def tile(n, label, sub, accent=False):
         cls = "tile accent" if accent else "tile"
         return (f'<div class="{cls}"><div class="l">{label}</div><div class="n">{n}</div>'
@@ -419,6 +643,17 @@ def render(s):
   tr+tr td {{ border-top:1px solid #1d212c; }}
   td:not(:first-child),th:not(:first-child) {{ text-align:right; font-variant-numeric:tabular-nums; }}
   .muted {{ color:#6b7083; }}
+  .reps td,.reps th {{ text-align:left; }}
+  .reps td {{ vertical-align:top; }}
+  .reps time {{ color:var(--muted); font-size:13px; white-space:nowrap; font-variant-numeric:tabular-nums; }}
+  .reps .line {{ width:55%; word-break:break-word; }}
+  .reps a {{ color:var(--ink); text-decoration:none; }}
+  .reps a:hover {{ text-decoration:underline; }}
+  .kind {{ display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; white-space:nowrap;
+    background:#232735; color:var(--ink2); }}
+  .k-crash {{ background:#4a1f1a; color:#ffb4a3; }}
+  .k-renderer {{ background:#3d3315; color:#f1d48a; }}
+  .k-user {{ background:#16324f; color:#9cc8f5; }}
   details {{ margin-top:30px; color:var(--ink2); font-size:14px; }}
   summary {{ cursor:pointer; color:var(--muted); font-size:13px; }}
   details ul {{ padding-left:18px; margin:10px 0 0; }}
@@ -435,6 +670,10 @@ def render(s):
   <h2>Что происходило</h2>
   <p class="hint">Новые установки и обновления за последние двое суток, с точностью до 10 минут.</p>
   <div class="panel">{feed_html(s["feed"])}</div>
+
+  <h2>Отчёты</h2>
+  <p class="hint">{reports_hint(s["reports_day"])}</p>
+  {reports_html(s["reports"])}
 
   <h2>По часам, последние сутки</h2>
   <p class="hint">Сколько браузеров было открыто в каждый час. Открытый браузер отмечается раз в час,
@@ -468,9 +707,12 @@ def render(s):
       старой версии, тоже попадёт в счёт.</li>
     <li>«Людей сегодня» по версиям в сумме может быть больше, чем «Сегодня»: тот, кто обновился
       днём, был сегодня на двух версиях.</li>
+    <li>Отчёты об ошибках браузер шлёт сам, когда вылетел или упал процесс страницы (если человек
+      не выключил это в настройках), и по кнопке «Сообщить о проблеме». Адреса страниц, пути с именем
+      пользователя, почту и токены он вычищает ещё до отправки. Хранятся 90 дней, не больше {MAX_REPORTS}.</li>
   </ul></details>
 </div>
-<script>
+<script nonce="{escape(nonce)}">
 (() => {{
   const pad = n => String(n).padStart(2, "0");
   const hm = d => pad(d.getHours()) + ":" + pad(d.getMinutes());
@@ -505,38 +747,74 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass  # не пишем лог доступа — там были бы IP
 
-    def _send(self, code, body=b"", ctype="text/plain; charset=utf-8"):
+    def _send(self, code, body=b"", ctype="text/plain; charset=utf-8", nonce=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if nonce is not None:
+            # Панель показывает присланный кем угодно текст: даже если escape() где-то
+            # пропустят, чужой скрипт не выполнится. Ключ в адресе не уйдёт в Referer.
+            self.send_header(
+                "Content-Security-Policy",
+                f"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def drain(self, length, cap=1 << 20):
+        left = min(length, cap)
+        while left > 0:
+            chunk = self.rfile.read(min(left, 65536))
+            if not chunk:
+                break
+            left -= len(chunk)
+
     def do_POST(self):
-        if self.path != "/p":
+        path = self.path
+        if path not in LIMITERS:
             return self._send(404, b"not found")
+        limit = MAX_BODY if path == "/p" else MAX_REPORT_BODY
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             return self._send(400, b"bad")
-        if length <= 0 or length > MAX_BODY:
+        # Тело дочитываем и при отказе: закрытый с непрочитанными данными сокет
+        # даёт клиенту RST вместо ответа.
+        if length > limit:
+            self.drain(length)
+            return self._send(413, b"too large")
+        raw = self.rfile.read(length) if length > 0 else b""
+        ip = client_ip(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
+        if not LIMITERS[path].allow(ip):
+            return self._send(429, b"too many")
+        if not raw:
             return self._send(400, b"bad")
-        raw = self.rfile.read(length)
         try:
             payload = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             return self._send(400, b"bad")
-        if not isinstance(payload, dict) or not record(payload):
+        if path == "/p":
+            ok = isinstance(payload, dict) and record(payload)
+        else:
+            report = check_report(payload)
+            ok = report is not None and bool(store_report(report))
+        if not ok:
             return self._send(400, b"bad")
         self._send(204)
 
     def do_GET(self):
         if self.path == "/health":
             return self._send(200, b"ok")
-        if KEY and hmac.compare_digest(self.path.rstrip("/").encode(), f"/d/{KEY}".encode()):
-            return self._send(200, dashboard().encode("utf-8"),
-                              "text/html; charset=utf-8")
+        m = re.fullmatch(r"/d/([^/?#]+)(?:/r/(\d{1,12}))?/?", self.path)
+        if KEY and m and hmac.compare_digest(m[1].encode(), KEY.encode()):
+            nonce = secrets.token_urlsafe(16)
+            page = dashboard(nonce) if m[2] is None else report_page(int(m[2]), nonce)
+            if page is not None:
+                return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8", nonce)
         self._send(404, b"not found")
 
     do_HEAD = do_GET

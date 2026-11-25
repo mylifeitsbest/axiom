@@ -79,6 +79,8 @@ pub struct Settings {
     pub translate: crate::translate::Prefs,
     /// Убирать метки слежки (`utm_*`, `fbclid`, `gclid`…) из открываемых адресов.
     pub strip_tracking: bool,
+    /// Отправлять разработчику отчёт, если Axiom вылетит (см. `reports`).
+    pub crash_reports: bool,
 }
 
 impl Default for Settings {
@@ -98,6 +100,7 @@ impl Default for Settings {
             beta: None,
             translate: crate::translate::Prefs::default(),
             strip_tracking: true,
+            crash_reports: true,
         }
     }
 }
@@ -129,6 +132,9 @@ impl Settings {
         // Интерфейс без этого переключателя поле не шлёт — тогда не трогаем.
         if let Some(on) = incoming.strip_tracking {
             self.strip_tracking = on;
+        }
+        if let Some(on) = incoming.crash_reports {
+            self.crash_reports = on;
         }
         // Переключатель есть не у всех: у кого его нет, приходит null.
         if let Some(on) = incoming.beta {

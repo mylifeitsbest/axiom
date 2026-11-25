@@ -32,7 +32,8 @@ impl IpcError {
             Self::TooLarge(_) | Self::Invalid("appearance") => {
                 Some("Свой CSS слишком большой — настройки не сохранены")
             }
-            Self::Invalid("input" | "query") => Some("Слишком длинный текст"),
+            Self::Invalid("input" | "query" | "report") => Some("Слишком длинный текст"),
+            Self::Invalid("report_empty") => Some("Опишите, что не работает"),
             Self::Invalid("proxy") => Some("Слишком длинный адрес прокси"),
             _ => None,
         }
@@ -107,6 +108,9 @@ pub struct SettingsIn {
     /// Убирать метки слежки из адресов. Нет поля — не менять.
     #[serde(default)]
     pub strip_tracking: Option<bool>,
+    /// Отправлять отчёты об ошибках. Нет поля — не менять.
+    #[serde(default)]
+    pub crash_reports: Option<bool>,
     /// Бета-версии. Нет поля или null — не менять.
     #[serde(default)]
     pub beta: Option<bool>,
@@ -266,6 +270,13 @@ pub enum UiCmd {
         #[serde(default)]
         always: bool,
     },
+    /// Открыли «Сообщить о проблеме»: сколько журнала уйдёт вместе с отчётом.
+    ReportInfo,
+    /// «Отправить»: что не работает и приложить ли журнал (его читает Rust, не интерфейс).
+    Report {
+        text: String,
+        log: bool,
+    },
 }
 
 /// Разбирает и проверяет сообщение интерфейса.
@@ -328,6 +339,12 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         }
         UiCmd::SetVolume { volume, .. } if *volume > crate::tabs::volume::FULL => {
             return Err(IpcError::Invalid("volume"));
+        }
+        UiCmd::Report { text, .. } => {
+            short(text, crate::reports::MAX_USER_TEXT, "report")?;
+            if text.trim().is_empty() {
+                return Err(IpcError::Invalid("report_empty"));
+            }
         }
         _ => {}
     }
@@ -470,6 +487,14 @@ pub enum ToUi<'a> {
         link: &'a str,
         /// Показать «Всегда разрешать для этого сайта».
         remember: bool,
+    },
+    /// Сколько байт журнала уйдёт с «Сообщить о проблеме».
+    ReportInfo {
+        log: usize,
+    },
+    /// «Сообщить о проблеме» отправлен (`done`: форму можно очистить) или нет.
+    Reported {
+        done: bool,
     },
 }
 
@@ -675,6 +700,50 @@ mod tests {
             Ok(UiCmd::AppLink { always: false, .. })
         ));
         assert!(parse(r#"{"cmd":"app_link","open":true}"#).is_err());
+    }
+
+    #[test]
+    fn parses_bug_report() {
+        assert!(matches!(
+            parse(r#"{"cmd":"report","text":"вкладка не грузится","log":true}"#),
+            Ok(UiCmd::Report { text, log: true }) if text == "вкладка не грузится"
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"report_info"}"#),
+            Ok(UiCmd::ReportInfo)
+        ));
+        // Журнал читает Rust: интерфейс передаёт только «приложить или нет».
+        assert!(parse(r#"{"cmd":"report","text":"x"}"#).is_err());
+        assert!(parse(r#"{"cmd":"report","text":"x","log":"C:\\axiom.log"}"#).is_err());
+        let empty = parse(r#"{"cmd":"report","text":"  \n ","log":false}"#);
+        assert!(matches!(&empty, Err(e) if e.user_text() == Some("Опишите, что не работает")));
+        let long = format!(
+            r#"{{"cmd":"report","text":"{}","log":false}}"#,
+            "a".repeat(crate::reports::MAX_USER_TEXT + 1)
+        );
+        assert!(matches!(parse(&long), Err(e) if e.user_text() == Some("Слишком длинный текст")));
+        let out = serde_json::to_string(&ToUi::Reported { done: true }).unwrap_or_default();
+        assert_eq!(out, r#"{"type":"reported","done":true}"#);
+    }
+
+    #[test]
+    fn crash_reports_setting_is_optional() {
+        let save = |extra: &str| match parse(&format!(
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+        )) {
+            Ok(UiCmd::SaveSettings { settings }) => Some(settings.crash_reports),
+            _ => None,
+        };
+        assert_eq!(save(""), Some(None));
+        assert_eq!(save(r#","crash_reports":false"#), Some(Some(false)));
+        let mut s = crate::settings::Settings::default();
+        assert!(s.crash_reports, "по умолчанию включено");
+        if let Ok(UiCmd::SaveSettings { settings }) = parse(
+            r#"{"cmd":"save_settings","settings":{"appearance":{},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3,"crash_reports":false}}"#,
+        ) {
+            s.apply(settings);
+        }
+        assert!(!s.crash_reports);
     }
 
     #[test]

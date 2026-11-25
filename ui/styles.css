@@ -483,6 +483,12 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .pick .ok{display:none;color:var(--acc)}
 .pick .ok .i{width:15px;height:15px}
 .pick.done .ok{display:inline-flex}
+/* «Сообщить о проблеме»: форма раскрывается под строкой с кнопкой. */
+.bug-box{padding:14px 0 16px;border-top:1px solid var(--line)}
+.bug-box[hidden]{display:none}
+.sheet .bug-box textarea{min-height:96px;font:inherit;font-size:calc(var(--fs) + 1px);line-height:1.5}
+.bug-log{display:flex;align-items:center;gap:14px;margin-top:12px;cursor:pointer}
+.bug-log .sl b{font-size:calc(var(--fs) + 1px)}
 .keys{padding:6px 20px}
 .krow{display:flex;align-items:center;justify-content:space-between;min-height:46px;color:var(--t2);font-size:calc(var(--fs) + 1px)}
 .krow+.krow{border-top:1px solid var(--line)}

@@ -22,6 +22,40 @@ cd /root/axiom-stats && sudo bash deploy.sh
 Адрес панели секретный (ключ прямо в ссылке) — никому не давать. База лежит в
 `/var/lib/axiom-stats/stats.db`.
 
+## Отчёты об ошибках
+
+Кроме пингов, браузер шлёт сюда отчёты (`POST /r`, JSON до 64 КБ):
+
+```
+{"kind": "crash" | "renderer" | "user", "version": "0.5.4", "os": "windows",
+ "text": "что случилось", "log": "конец журнала axiom.log"}
+```
+
+`crash` — вылет (паника, жёсткое завершение, ошибка запуска), `renderer` — упал
+процесс страницы, интерфейса или GPU, `user` — «Сообщить о проблеме» в настройках.
+Адреса страниц, пути с именем пользователя, почту и токены браузер вычищает ещё до
+отправки. Хранятся 90 дней, не больше 2000 штук, без IP. На панели — раздел
+«Отчёты», каждый отчёт целиком — по ссылке `/d/<ключ>/r/<номер>`.
+
+С одного IP принимается не больше 30 пингов и 20 отчётов в час (за Caddy адрес
+берётся из `X-Forwarded-For`, его ставит сам Caddy).
+
+Обновить только сборщик (база и ключ сохраняются, таблица отчётов создаётся при
+запуске):
+
+```
+ssh root@IP 'mkdir -p /root/axiom-stats'
+scp server/* root@IP:/root/axiom-stats/
+ssh root@IP 'cd /root/axiom-stats && bash deploy.sh'
+```
+
+или вручную: `stats.py` → `/opt/axiom-stats/stats.py`, Caddyfile с подставленным
+доменом → `/etc/caddy/Caddyfile`, затем `systemctl restart axiom-stats` и
+`systemctl reload caddy`. Caddyfile менять обязательно: без него Caddy не пропустит
+отчёт длиннее 4 КБ.
+
+Тесты: `python3 -m unittest discover -s server -v`.
+
 ## Проверка
 
 ```

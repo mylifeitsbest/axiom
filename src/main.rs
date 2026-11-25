@@ -12,6 +12,7 @@ mod downloads;
 mod events;
 mod instance;
 mod ipc;
+mod reports;
 mod settings;
 mod stats;
 mod storage;
@@ -78,6 +79,9 @@ fn run() -> Result<()> {
     let Some(server) = instance::claim(&paths, &urls) else {
         return Ok(());
     };
+    // Журнал и отчёты об ошибках — первым делом: дальше всё, что пишется в stderr,
+    // попадает в `axiom.log`, а вылет оставит отчёт.
+    reports::start(&paths.root);
     update::cleanup();
     stats::start(&paths.root);
     system::started(&paths);
@@ -111,6 +115,8 @@ fn run() -> Result<()> {
             if let Some(registration) = &registration {
                 registration.release();
             }
+            // Закрылись сами: следующий запуск не примет это за вылет.
+            reports::finish();
             *control_flow = ControlFlow::Exit;
         }
     });
@@ -162,5 +168,7 @@ fn report_fatal(err: &anyhow::Error) {
     eprintln!("{text}");
     if let Ok(paths) = storage::Paths::resolve() {
         let _ = std::fs::write(paths.root.join("last-error.log"), &text);
+        // Окна не будет, и следующий запуск может упасть так же: отчёт — сразу.
+        reports::fatal(&text, settings::Settings::load(&paths).crash_reports);
     }
 }

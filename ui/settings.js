@@ -220,6 +220,15 @@ function createPanels(ax) {
           ${row('Проверять автоматически', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии', toggle('data-bkey', 'check_updates'))}
           ${row('Бета-версии', 'Исправления и новинки сразу, не дожидаясь выхода версии. Возможны ошибки. Выключите — со следующей версии вернётесь на обычные', toggle('data-bkey', 'beta'), 'id="betaRow" hidden data-kw="бета тест beta ранние сборки"')}
         </div>
+        <div class="card">
+          ${row('Отправлять отчёты об ошибках', 'Автоматически отправлять разработчику отчёт, если Axiom вылетит. Без адресов страниц и личных данных.', toggle('data-bkey', 'crash_reports'), 'data-kw="отчёт ошибка вылет краш crash баг падение"')}
+          <div class="srow" data-kw="баг ошибка отчёт проблема жалоба не работает"><span class="sl"><b>Сообщить о проблеме</b><small>Что-то сломалось или ведёт себя странно — расскажите, это уйдёт разработчику</small></span><span class="sc"><button class="btn" data-act="bug-open" id="bugOpen">Сообщить о проблеме</button></span></div>
+          <div class="bug-box" id="bugBox" hidden>
+            <textarea id="bugText" maxlength="4000" placeholder="Что не работает?"></textarea>
+            <label class="bug-log"><input type="checkbox" class="tg" id="bugLog" checked><span class="sl"><b>Приложить журнал</b><small id="bugLogNote">Последние записи Axiom о его работе</small></span></label>
+            <div class="btns"><button class="btn primary" data-act="bug-send" id="bugSend">Отправить</button><button class="btn ghost" data-act="bug-cancel">Отмена</button></div>
+          </div>
+        </div>
         <div class="note">${icon('monitor')}<span id="sysNote"></span></div>
         <div class="about">${logoSvg(44, 'about')}<span><b>Axiom</b><small id="verNote"></small></span></div>`,
       keys: `<div class="card keys">${KEYS.map(([k, v]) => `<div class="krow"><span>${v}</span><span>${kbd(k)}</span></div>`).join('')}</div>`,
@@ -476,8 +485,49 @@ function createPanels(ax) {
         if (ax.update()?.latest) ax.openUpdate();
         else ax.send({ cmd: 'update_check' });
         break;
+      case 'bug-open': toggleBug(); break;
+      case 'bug-cancel': toggleBug(false); break;
+      case 'bug-send': sendBug(); break;
       default: break;
     }
+  }
+
+  // ---------- «Сообщить о проблеме» ----------
+  // Журнал читает и чистит Rust: интерфейс знает только, сколько его уйдёт.
+  function toggleBug(on) {
+    const box = $('#bugBox');
+    box.hidden = on === undefined ? !box.hidden : !on;
+    if (box.hidden) return;
+    ax.send({ cmd: 'report_info' });
+    // Форма целиком на виду, с кнопкой «Отправить».
+    requestAnimationFrame(() => {
+      $('#bugText')?.focus({ preventScroll: true });
+      box.scrollIntoView({ block: 'nearest', behavior: ax.speed() ? 'smooth' : 'auto' });
+    });
+  }
+  function sendBug() {
+    const input = $('#bugText');
+    const text = input.value.trim();
+    // Ctrl+Enter, пока отчёт ещё уходит, не шлёт его второй раз.
+    if ($('#bugSend').classList.contains('busy')) return;
+    if (!text) { ax.toast('Опишите, что не работает'); input.focus(); return; }
+    $('#bugSend').classList.add('busy');
+    ax.send({ cmd: 'report', text, log: $('#bugLog').checked });
+  }
+  const size = (n) => (n < 1024 ? `${n} Б` : `${Math.max(1, Math.round(n / 1024))} КБ`);
+  function onReportInfo(m) {
+    const note = $('#bugLogNote');
+    if (!note) return;
+    const n = Math.max(0, +m.log || 0);
+    note.textContent = n
+      ? `${size(n)} — последние записи Axiom о его работе, без адресов страниц и личных данных`
+      : 'Журнал пока пуст';
+  }
+  function onReported(m) {
+    $('#bugSend')?.classList.remove('busy');
+    if (!m.done || !built) return;
+    $('#bugText').value = '';
+    toggleBug(false);
   }
 
   function applyProxy(scope) {
@@ -537,6 +587,7 @@ function createPanels(ax) {
     sheet.addEventListener('keydown', (e) => {
       if (e.target.id === 'proxyIn' && e.key === 'Enter') applyProxy(sheet);
       if (e.target.id === 'seCustomIn' && e.key === 'Enter') applyCustomSearch();
+      if (e.target.id === 'bugText' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendBug();
     });
     // Пузырёк над ползунком держится, пока бегунок тянут, даже если мышь ушла с ползунка.
     sheet.addEventListener('pointerdown', (e) => {
@@ -791,5 +842,5 @@ function createPanels(ax) {
     return many;
   }
 
-  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon };
+  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon, onReportInfo, onReported };
 }

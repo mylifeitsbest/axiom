@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 /// Куда слать. В debug-сборке адрес можно подменить (`AXIOM_STATS_URL=...`),
 /// чтобы проверить всё на локальном сервере. В release менять нельзя.
-const STATS_URL: &str = "https://179-254-172-240.sslip.io";
+pub(crate) const STATS_URL: &str = "https://179-254-172-240.sslip.io";
 
 /// Как часто отмечаться, пока браузер открыт.
 const EVERY: Duration = Duration::from_secs(60 * 60);
@@ -183,7 +183,7 @@ fn buckets(now: u64) -> (String, String, String) {
 }
 
 /// Григорианская дата из числа дней с 1970-01-01 (алгоритм Хиннанта).
-fn civil(z: i64) -> (i64, u32, u32) {
+pub(crate) fn civil(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -196,7 +196,7 @@ fn civil(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-fn os_name() -> &'static str {
+pub(crate) fn os_name() -> &'static str {
     if cfg!(windows) {
         "windows"
     } else if cfg!(target_os = "linux") {
@@ -216,7 +216,8 @@ fn now_secs() -> u64 {
 }
 
 /// Базовый адрес. В debug его можно подменить локальным сервером.
-fn base_url() -> String {
+/// Им же пользуются отчёты об ошибках (`reports`).
+pub(crate) fn base_url() -> String {
     #[cfg(debug_assertions)]
     if let Ok(url) = std::env::var("AXIOM_STATS_URL") {
         let url = url.trim_end_matches('/');
@@ -249,7 +250,7 @@ fn send(body: &str) -> Result<(), ()> {
     }
 }
 
-fn curl() -> Command {
+pub(crate) fn curl() -> Command {
     #[cfg(windows)]
     let mut cmd = {
         use std::{os::windows::process::CommandExt, path::PathBuf};

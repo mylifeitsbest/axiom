@@ -474,6 +474,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn page_keeps_fields_private() {
+        // Подсказки полей пароля и скрытые поля в перевод не уходят — и перед отправкой тоже.
+        assert!(PAGE.contains(r#"input[type="password" i],input[type="hidden" i]"#));
+        assert!(PAGE.contains("if (el.closest(SKIP_ATTR)) return [];"));
+        // Значение поля переводится только у кнопок.
+        assert!(PAGE.contains("/^(submit|button|reset)$/i.test(el.type)"));
+    }
+
+    #[test]
     fn prefs_validation() {
         assert!(Prefs::default().is_valid());
         let bad_target = Prefs {

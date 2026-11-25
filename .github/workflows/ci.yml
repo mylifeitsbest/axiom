@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Ручной запуск на любой ветке: проверить код для Linux до слияния в main.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

@@ -124,6 +124,8 @@ impl App {
         let window = build_window(event_loop)?;
         #[cfg(target_os = "linux")]
         crate::ui::hotkeys::install_window(&window, events.clone());
+        // Папку движок создал бы и сам, но на Linux — с открытыми правами.
+        let _ = crate::storage::private_dir(&paths.webview_data());
         let mut context = WebContext::new(Some(paths.webview_data()));
         let force_dark = settings.force_dark;
         let ui_look = Look {

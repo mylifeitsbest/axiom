@@ -161,6 +161,8 @@ fn report_fatal(err: &anyhow::Error) {
     let text = format!("Axiom не смог запуститься: {err:#}");
     eprintln!("{text}");
     if let Ok(paths) = storage::Paths::resolve() {
-        let _ = std::fs::write(paths.root.join("last-error.log"), &text);
+        use std::io::Write;
+        let _ = storage::create_private(&paths.root.join("last-error.log"))
+            .and_then(|mut file| file.write_all(text.as_bytes()));
     }
 }

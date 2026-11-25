@@ -80,8 +80,11 @@ impl AiPanel {
             return shared;
         }
         let key = proxy::data_key(&self.proxy_raw);
-        self.context
-            .get_or_insert_with(|| WebContext::new(Some(paths.ai_data(&key))))
+        self.context.get_or_insert_with(|| {
+            let dir = paths.ai_data(&key);
+            let _ = crate::storage::private_dir(&dir);
+            WebContext::new(Some(dir))
+        })
     }
 
     /// Запрос, ответ на который сейчас в панели. Панель без webview (уснула,

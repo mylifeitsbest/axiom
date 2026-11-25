@@ -5,6 +5,7 @@ mod app_links;
 mod tab_actions;
 mod translation;
 mod waking;
+mod zoom;
 
 use std::{
     path::Path,
@@ -105,6 +106,8 @@ pub struct App {
     settings_leaving: Option<Instant>,
     /// Ссылки на приложения: окошко «Открыть?» и запомненные разрешения.
     app_links: app_links::State,
+    /// Масштаб по сайтам и окошко масштаба.
+    zoom: zoom::State,
 }
 
 impl App {
@@ -120,6 +123,7 @@ impl App {
         let history = History::load(&paths);
         let bookmarks = Bookmarks::load(&paths);
         let downloads = Downloads::load(&paths);
+        let zoom = zoom::State::load(&paths);
         let events = event_loop.create_proxy();
         let window = build_window(event_loop)?;
         #[cfg(target_os = "linux")]
@@ -169,6 +173,7 @@ impl App {
             fullscreen: fullscreen::State::default(),
             settings_leaving: None,
             app_links: app_links::State::default(),
+            zoom,
         };
         app.sync_tracking();
         app.restore_session(open);
@@ -214,6 +219,7 @@ impl App {
                 self.add_page_tab(url, ai, from, background);
             }
             UserEvent::TabAudio { id, playing } => self.on_tab_audio(id, playing),
+            UserEvent::TabZoom(id, event) => self.on_tab_zoom(id, event),
             UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
             UserEvent::Fullscreen { owner, on } => self.on_page_fullscreen(owner, on),
@@ -301,6 +307,7 @@ impl App {
                 self.content = Some(to_rect(content));
                 self.ai_rect = ai.map(to_rect);
                 self.apply_layout();
+                self.sync_zoom_hole();
             }
             UiCmd::Navigate { input } => self.navigate(&input)?,
             UiCmd::NewTab { input } => self.new_tab(input.as_deref()),
@@ -483,6 +490,8 @@ impl App {
             UiCmd::TranslateOriginal => self.translate_original(),
             UiCmd::TranslatePrefs { prefs } => self.translate_prefs(prefs),
             UiCmd::AppLink { id, open, always } => self.answer_app_link(id, open, always),
+            UiCmd::Zoom { step } => self.zoom_from_bubble(step),
+            UiCmd::ZoomBubble { rect, radius } => self.set_zoom_bubble(rect, radius),
         }
         Ok(Flow::Continue)
     }
@@ -614,6 +623,8 @@ impl App {
         self.ai_follow_tab();
         // На вкладке настроек панель ИИ спрятана, при уходе с неё — снова на месте.
         self.apply_layout();
+        // Вырез под окошком масштаба — только у страницы на экране.
+        self.sync_zoom_hole();
         if self.fullscreen.is_on() {
             self.sync_fullscreen();
         }
@@ -637,6 +648,8 @@ impl App {
             return Ok(());
         }
         let (url, ai, muted) = (tab.url.clone(), tab.ai, tab.engine_muted());
+        // Масштаб сайта мог поменяться в другой вкладке, пока эта спала.
+        let zoom = self.zoom.for_url(&url).unwrap_or(tab.zoom);
         let shown = self.tabs.active == Some(id);
         // Уснувшую страницу показываем, когда она нарисуется, а пока — заглушку
         // (см. `app/waking.rs`). Новую ссылку грузим на виду, как обычно.
@@ -650,6 +663,7 @@ impl App {
             proxy: if ai { self.ai.proxy_config() } else { None },
             ai,
             muted,
+            zoom,
         };
         let webview = if ai {
             let context = self.ai.context(&self.paths, &mut self.context);
@@ -662,6 +676,7 @@ impl App {
             tab.loading = true;
             tab.loaded = true;
             tab.waking = None;
+            tab.zoom = zoom;
             // Звук прежней страницы до усыпления к новой не относится.
             tab.audible = false;
         }
@@ -908,6 +923,8 @@ impl App {
             }
         }
         self.session_dirty = true;
+        // Страница другого сайта — со своим масштабом.
+        self.sync_page_zoom(id, started);
         if started {
             self.mirror_search(id, &prev);
         } else {
@@ -1366,6 +1383,7 @@ impl App {
                 let _ = webview.focus();
             }
         }
+        self.sync_zoom_hole();
     }
 
     // ---------- раскладка и окно ----------
@@ -1517,6 +1535,7 @@ impl App {
         if let Err(err) = self.history.save_if_dirty(&self.paths) {
             eprintln!("история не сохранена: {err:#}");
         }
+        self.zoom.save_if_dirty(&self.paths);
     }
 
     /// Через сколько бездействия усыплять фоновые вкладки и спрятанную панель ИИ:
@@ -1710,6 +1729,7 @@ impl App {
         self.save_session();
         let _ = self.history.save_all(&self.paths);
         let _ = self.downloads.save_if_dirty(&self.paths);
+        self.zoom.save_if_dirty(&self.paths);
         self.persist_settings();
     }
 
@@ -1762,6 +1782,7 @@ impl App {
                 audible: t.audible && t.webview.is_some(),
                 muted: t.muted,
                 volume: t.volume,
+                zoom: crate::tabs::zoom::percent(t.zoom),
             })
             .collect();
         let on_newtab = self.tabs.active_tab().is_some_and(|t| t.is_newtab());

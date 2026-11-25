@@ -5,11 +5,7 @@ use super::{App, display_title};
 use crate::{
     events::UserEvent,
     ipc::ToUi,
-    tabs::{
-        Tab, TabId, links, omnibox, script,
-        tools::{self, Zoom},
-        volume,
-    },
+    tabs::{Tab, TabId, links, omnibox, script, tools, volume, zoom::Zoom},
     ui::hotkeys::Hotkey,
 };
 
@@ -23,6 +19,9 @@ impl App {
             Hotkey::ViewSource => return self.view_source(id),
             Hotkey::Mute => return self.toggle_mute(id),
             Hotkey::HardReload => return self.reload_tab_with(id, true),
+            Hotkey::ZoomIn => return self.zoom_tab(id, Zoom::In),
+            Hotkey::ZoomOut => return self.zoom_tab(id, Zoom::Out),
+            Hotkey::ZoomReset => return self.zoom_tab(id, Zoom::Reset),
             _ => {}
         }
         let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) else {
@@ -35,9 +34,6 @@ impl App {
                 let _ = webview.focus();
                 tools::print(webview);
             }
-            Hotkey::ZoomIn => tools::zoom(webview, Zoom::In),
-            Hotkey::ZoomOut => tools::zoom(webview, Zoom::Out),
-            Hotkey::ZoomReset => tools::zoom(webview, Zoom::Reset),
             _ => {}
         }
     }
@@ -79,12 +75,14 @@ impl App {
         let Some(tab) = self.tabs.get(id) else {
             return;
         };
-        let (url, title, ai, volume) = (tab.url.clone(), tab.title.clone(), tab.ai, tab.volume);
+        let (url, title, ai) = (tab.url.clone(), tab.title.clone(), tab.ai);
+        let (volume, zoom) = (tab.volume, tab.zoom);
         let at = self.tabs.index_of(id).map(|i| i + 1);
         let copy = self.tabs.add(url, title, ai, at);
-        // Копия той же страницы звучит так же.
+        // Копия той же страницы звучит и выглядит так же.
         if let Some(tab) = self.tabs.get_mut(copy) {
             tab.volume = volume;
+            tab.zoom = zoom;
         }
         self.activate(copy);
     }

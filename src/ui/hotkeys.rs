@@ -300,13 +300,19 @@ pub fn install_window(window: &tao::window::Window, events: EventLoopProxy<UserE
         let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
         let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
         let alt = state.contains(gdk::ModifierType::MOD1_MASK);
-        // Клавиша в первой (латинской) раскладке: Ctrl+T работает и на русской.
-        let keyval = keymap
-            .as_ref()
-            .and_then(|k| k.translate_keyboard_state(u32::from(event.hardware_keycode()), state, 0))
-            .map(|(keyval, ..)| keyval)
-            .unwrap_or_else(|| *event.keyval());
-        match vk_from_keyval(keyval).and_then(|vk| Hotkey::from_vk(vk, ctrl, shift, alt)) {
+        // Клавиша в текущей раскладке, а если она не латинская — в первой латинской:
+        // Ctrl+T работает и на русской, даже когда русская раскладка в списке первая.
+        let code = u32::from(event.hardware_keycode());
+        let in_group = |group: i32| {
+            keymap
+                .as_ref()?
+                .translate_keyboard_state(code, state, group)
+                .map(|(keyval, ..)| keyval)
+        };
+        let vk = std::iter::once(*event.keyval())
+            .chain((0..4).filter_map(in_group))
+            .find_map(vk_from_keyval);
+        match vk.and_then(|vk| Hotkey::from_vk(vk, ctrl, shift, alt)) {
             Some(hotkey) => {
                 let _ = events.send_event(UserEvent::Hotkey(hotkey));
                 if hotkey.consumes() {

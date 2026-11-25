@@ -217,6 +217,17 @@ pub enum UiCmd {
         id: u64,
         volume: u8,
     },
+    /// Кнопки окошка масштаба: −, + и «Сбросить» для активной вкладки.
+    Zoom {
+        step: crate::tabs::zoom::Zoom,
+    },
+    /// Окошко масштаба показалось (где оно и радиус углов, CSS px) или спряталось (`null`):
+    /// под ним в странице прорезается вырез.
+    ZoomBubble {
+        rect: Option<Rect>,
+        #[serde(default)]
+        radius: f64,
+    },
     CloseOtherTabs {
         id: u64,
     },
@@ -332,6 +343,14 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::SetVolume { volume, .. } if *volume > crate::tabs::volume::FULL => {
             return Err(IpcError::Invalid("volume"));
         }
+        UiCmd::ZoomBubble { rect, radius } => {
+            if let Some(rect) = rect {
+                rect.validate()?;
+            }
+            if !(0.0..=64.0).contains(radius) {
+                return Err(IpcError::Invalid("radius"));
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -367,6 +386,8 @@ pub struct TabView<'a> {
     pub muted: bool,
     /// Громкость вкладки, 0–100.
     pub volume: u8,
+    /// Масштаб страницы в процентах (100 — без масштаба).
+    pub zoom: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -462,6 +483,12 @@ pub enum ToUi<'a> {
     Snapshot(crate::tabs::snapshot::View),
     /// Активную вкладку настроек закрыли: убрать лист с анимацией и ответить `settings_left`.
     SettingsLeave,
+    /// Масштаб активной вкладки поменяли: показать окошко масштаба.
+    Zoom {
+        id: u64,
+        /// В процентах.
+        zoom: u16,
+    },
     /// Сайт просит открыть приложение; `id = 0` — закрыть окошко.
     AppLink {
         id: u64,
@@ -661,6 +688,38 @@ mod tests {
             "x".repeat(crate::tabs::omnibox::MAX_TEMPLATE)
         );
         assert!(save(&long).is_err());
+    }
+
+    #[test]
+    fn parses_zoom_commands() {
+        use crate::tabs::zoom::Zoom;
+        assert!(matches!(
+            parse(r#"{"cmd":"zoom","step":"in"}"#),
+            Ok(UiCmd::Zoom { step: Zoom::In })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"zoom","step":"reset"}"#),
+            Ok(UiCmd::Zoom { step: Zoom::Reset })
+        ));
+        // Масштаб задаёт только Rust: число вместо ступени — отказ.
+        assert!(parse(r#"{"cmd":"zoom","step":"5"}"#).is_err());
+        assert!(parse(r#"{"cmd":"zoom","level":5}"#).is_err());
+        let bubble =
+            parse(r#"{"cmd":"zoom_bubble","rect":{"x":600,"y":44,"w":220,"h":46},"radius":12}"#);
+        assert!(
+            matches!(bubble, Ok(UiCmd::ZoomBubble { rect: Some(r), radius }) if r.w == 220.0 && radius == 12.0)
+        );
+        assert!(matches!(
+            parse(r#"{"cmd":"zoom_bubble","rect":null}"#),
+            Ok(UiCmd::ZoomBubble { rect: None, .. })
+        ));
+        assert!(
+            parse(r#"{"cmd":"zoom_bubble","rect":{"x":0,"y":0,"w":-1,"h":4},"radius":12}"#)
+                .is_err()
+        );
+        assert!(parse(r#"{"cmd":"zoom_bubble","rect":null,"radius":1000}"#).is_err());
+        let out = serde_json::to_string(&ToUi::Zoom { id: 3, zoom: 125 }).unwrap_or_default();
+        assert_eq!(out, r#"{"type":"zoom","id":3,"zoom":125}"#);
     }
 
     #[test]

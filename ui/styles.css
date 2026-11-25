@@ -623,6 +623,22 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .trp.on>*{animation:rise var(--d2) var(--e) both}
 .trp.on>:nth-child(n+2){animation-delay:calc(30ms*var(--k))}
 
+/* ---------- масштаб страницы (ui/zoom.js) ---------- */
+.zm.in{animation:pop var(--d3) var(--sp) both}
+.omni.focus .zm,.omni.find .zm{display:none}
+/* Окошко лежит в вырезе страницы (см. zoom.js): само не сдвигается и не просвечивает —
+   под ним в вырезе фон интерфейса, а не страница. Появляется только содержимое. */
+.dlp.zmp,.dlp.zmp.on{flex-direction:row;align-items:center;gap:6px;padding:5px 5px 5px 13px;transform:none;transition:none;box-shadow:var(--shadow),inset 0 0 0 1px var(--line)}
+.zmp-v{min-width:46px;font-weight:650;color:var(--t1);font-size:calc(var(--fs) + 1px);font-variant-numeric:tabular-nums;white-space:nowrap}
+.zmp-pm{display:flex;gap:2px}
+.zmp .ib{width:28px;height:28px}
+.zmp .ib:hover{background:var(--s2)}
+.zmp .ib:disabled{color:var(--t3);background:none;opacity:.5;transform:none}
+.zmp .btn{height:28px;padding:0 11px}
+.zmp.anim>*{animation:rise var(--d2) var(--e) both}
+.zmp.anim>:nth-child(2){animation-delay:calc(25ms*var(--k))}
+.zmp.anim>:nth-child(3){animation-delay:calc(50ms*var(--k))}
+
 /* ---------- ссылки на приложения (ui/applink.js) ---------- */
 .xap{padding:12px 6px 10px;transform-origin:top left}
 .xap .trp-head{align-items:flex-start}

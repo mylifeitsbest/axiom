@@ -39,6 +39,8 @@ pub enum UserEvent {
         from: Option<TabId>,
         background: bool,
     },
+    /// Масштаб страницы: WebView2 поменял его сам или Ctrl+колёсико на Linux.
+    TabZoom(TabId, crate::tabs::zoom::Event),
     /// Страница вкладки начала или перестала играть звук.
     TabAudio {
         id: TabId,

@@ -5,6 +5,7 @@ pub mod bookmarks;
 pub mod history;
 pub mod import;
 pub mod session;
+pub mod zoom;
 
 use std::{
     fs,

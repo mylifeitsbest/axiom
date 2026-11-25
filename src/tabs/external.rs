@@ -4,6 +4,9 @@
 //! Сайт открывает приложение только по клику и только после «Открыть» в окошке
 //! Axiom (или сразу, если для этого сайта и схемы выбрали «Всегда разрешать»
 //! и на странице только что был настоящий клик, см. [`INPUT_PROBE`]).
+//! «Всегда разрешать» — только если движок сам назвал, кто просит (`InitiatingOrigin`,
+//! фрейм нового окна): иначе просить мог чужой фрейм на странице, и на WebKitGTK
+//! и старом WebView2 остаётся только окошко.
 //! Без клика — молча ничего. Опасные схемы ([`NEVER`]) не открываются никогда,
 //! окна для них нет. Ссылку, набранную в адресной строке, открываем сразу:
 //! человек сам её написал и нажал Enter, второй вопрос ничего бы не добавил,
@@ -130,7 +133,9 @@ pub enum Gesture {
 pub struct Request {
     pub tab: TabId,
     pub url: String,
-    /// Origin страницы (`https://example.com`), если движок его сообщил.
+    /// Origin страницы (`https://example.com`) или адрес фрейма, если движок их сообщил.
+    /// Только по нему можно «Всегда разрешать»: адрес вкладки — не обязательно тот,
+    /// кто просит (реклама или виджет во фрейме).
     pub origin: Option<String>,
     pub gesture: Gesture,
 }
@@ -145,8 +150,13 @@ pub struct Request {
 pub const INPUT_PROBE: &str =
     "typeof window.__axiomInputAgo === 'function' ? window.__axiomInputAgo() : -1";
 
-/// Клик по ссылке и запрос приходят почти сразу; с запасом на медленную страницу.
-pub const INPUT_FRESH_MS: f64 = 3000.0;
+/// Клик по ссылке и запрос приходят почти сразу: от нажатия до ответа страницы
+/// на [`INPUT_PROBE`] — обычно десятки, на тяжёлой странице сотни миллисекунд.
+/// Секунда — с запасом на это и ровно столько, сколько блокировщик всплывающих
+/// окон Firefox считал окно «открытым по клику» (`dom.disable_open_click_delay`).
+/// Дольше — и сайт с «Всегда разрешать» мог бы открыть программу сам, через
+/// пару секунд после любого клика по странице. Не успел — просто покажем окошко.
+pub const INPUT_FRESH_MS: f64 = 1000.0;
 
 #[derive(Debug)]
 pub enum Event {
@@ -260,8 +270,15 @@ pub fn on_navigation(tab: TabId, url: &str, events: &EventLoopProxy<UserEvent>) 
 }
 
 /// `<a target=_blank href="tg://…">` и `window.open("tg://…")`: окно не открываем,
-/// а спрашиваем, как о ссылке в самой вкладке. `gesture` — по клику ли.
-pub fn on_new_window(tab: TabId, url: String, gesture: bool, events: &EventLoopProxy<UserEvent>) {
+/// а спрашиваем, как о ссылке в самой вкладке. `gesture` — по клику ли, `frame` —
+/// адрес фрейма, который просит окно (если движок его сообщил).
+pub fn on_new_window(
+    tab: TabId,
+    url: String,
+    gesture: bool,
+    frame: Option<String>,
+    events: &EventLoopProxy<UserEvent>,
+) {
     if classify(&url, Source::Site).is_none() {
         return;
     }
@@ -271,7 +288,7 @@ pub fn on_new_window(tab: TabId, url: String, gesture: bool, events: &EventLoopP
         Event::Request(Request {
             tab,
             url,
-            origin: None,
+            origin: frame,
             gesture,
         }),
     );

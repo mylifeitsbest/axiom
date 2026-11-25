@@ -164,8 +164,8 @@ pub fn build_tab(
                     from: Some(id),
                 });
             } else if !omnibox::is_navigable(&url) {
-                let gesture = super::popups::user_initiated(&url);
-                super::external::on_new_window(id, url, gesture, &open_tx);
+                let (gesture, frame) = super::popups::request(&url);
+                super::external::on_new_window(id, url, gesture, frame, &open_tx);
             }
             NewWindowResponse::Deny
         });

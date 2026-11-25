@@ -86,10 +86,7 @@ impl App {
         match event {
             Event::Request(request) => self.check_app_link(request),
             Event::Checked { request, raw } => {
-                // Ответ страницы — число миллисекунд с последнего клика (или -1).
-                let ago = raw.trim().parse::<f64>().unwrap_or(-1.0);
-                let clicked = (0.0..=external::INPUT_FRESH_MS).contains(&ago);
-                self.decide_app_link(request, clicked);
+                self.decide_app_link(request, clicked_just_now(&raw));
             }
             Event::NoApp { tab, scheme } => {
                 let quiet = self
@@ -170,11 +167,11 @@ impl App {
             self.send(&ToUi::Toast { text: &text });
             return;
         };
-        let site = request
-            .origin
-            .as_deref()
-            .and_then(web_origin)
-            .or_else(|| web_origin(&tab_url));
+        // Запомнить «Всегда разрешать» можно только для сайта, который назвал движок.
+        // Адрес вкладки — не обязательно тот, кто просит: это мог быть чужой фрейм.
+        let site = request.origin.as_deref().and_then(web_origin);
+        // В окошке — кто просит, а если движок не сказал, то страница во вкладке.
+        let shown = site.clone().or_else(|| web_origin(&tab_url));
         if clicked
             && let Some(site) = &site
             && self.link_perms().allows(site, &scheme)
@@ -188,7 +185,7 @@ impl App {
         }
         self.app_links.next_id += 1;
         let id = self.app_links.next_id;
-        let shown_site = site.as_deref().map(display_host).unwrap_or_default();
+        let shown_site = shown.as_deref().map(display_host).unwrap_or_default();
         let shown_link: String = link.chars().take(300).collect();
         let remember = clicked && site.is_some();
         self.send(&ToUi::AppLink {
@@ -266,6 +263,12 @@ impl App {
     }
 }
 
+/// Ответ страницы на `INPUT_PROBE` — число миллисекунд с последнего клика (или -1).
+fn clicked_just_now(raw: &str) -> bool {
+    let ago = raw.trim().parse::<f64>().unwrap_or(-1.0);
+    (0.0..=external::INPUT_FRESH_MS).contains(&ago)
+}
+
 /// `https://example.com:8443` — origin веб-страницы; остальное запомнить нельзя.
 fn web_origin(url: &str) -> Option<String> {
     let url = Url::parse(url).ok()?;
@@ -307,5 +310,21 @@ mod tests {
         assert_eq!(web_origin("null"), None);
         assert_eq!(display_host("https://example.com"), "example.com");
         assert_eq!(display_host("http://127.0.0.1:8765"), "127.0.0.1:8765");
+        // Адрес фрейма, открывшего окно, тоже сводится к его сайту.
+        assert_eq!(
+            web_origin("https://widget.example/frame.html?x=1").as_deref(),
+            Some("https://widget.example")
+        );
+    }
+
+    #[test]
+    fn fresh_click_is_within_a_second() {
+        assert!(clicked_just_now("0"));
+        assert!(clicked_just_now(" 420.5 "));
+        assert!(clicked_just_now("1000"));
+        assert!(!clicked_just_now("1500"));
+        assert!(!clicked_just_now("2999"));
+        assert!(!clicked_just_now("-1"));
+        assert!(!clicked_just_now("null"));
     }
 }

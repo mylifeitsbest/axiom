@@ -146,10 +146,12 @@ pub fn build_tab(
         // (WebView2 и так ставит скрипты во фреймы; WebKitGTK — только с `false`.)
         .with_initialization_script_for_main_only(super::volume::SCRIPT, false)
         .with_navigation_handler(move |url| {
-            // Не веб-адрес — ссылка на приложение (`mailto:`, `tg:`…): решает external.
+            // `data:` — только набранный человеком; не страница вовсе — ссылка
+            // на приложение (`mailto:`, `tg:`…): решает external.
             omnibox::is_navigable(&url)
+                || omnibox::take_typed(id, &url)
                 || (source && super::tools::is_source(&url))
-                || super::external::on_navigation(id, &url, &nav_tx)
+                || (!omnibox::is_page(&url) && super::external::on_navigation(id, &url, &nav_tx))
         })
         .with_document_title_changed_handler(move |title| {
             let _ = title_tx.send_event(UserEvent::TabTitle(id, title));
@@ -166,9 +168,9 @@ pub fn build_tab(
                     ai,
                     from: Some(id),
                 });
-            } else if !omnibox::is_navigable(&url) {
-                let gesture = super::popups::user_initiated(&url);
-                super::external::on_new_window(id, url, gesture, &open_tx);
+            } else if !omnibox::is_page(&url) {
+                let (gesture, frame) = super::popups::request(&url);
+                super::external::on_new_window(id, url, gesture, frame, &open_tx);
             }
             NewWindowResponse::Deny
         });

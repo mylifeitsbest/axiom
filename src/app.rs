@@ -429,13 +429,19 @@ impl App {
             }
             UiCmd::DownloadShow { id } => self.download_action(id, downloads::reveal),
             UiCmd::DownloadCancel { id } => {
-                if !downloads::cancel(id) {
+                // Программа под видом обычного файла уже скачана: «Удалить» удаляет её.
+                if let Some(event) = self.downloads.answer_disguised(id, false) {
+                    self.on_download(event);
+                } else if !downloads::cancel(id) {
                     self.send(&ToUi::Toast {
                         text: "Эту загрузку нельзя отменить",
                     });
                 }
             }
-            UiCmd::DownloadKeep { id } => downloads::keep(id),
+            UiCmd::DownloadKeep { id } => match self.downloads.answer_disguised(id, true) {
+                Some(event) => self.on_download(event),
+                None => downloads::keep(id),
+            },
             UiCmd::DownloadRemove { id } => {
                 if self.downloads.remove(id) {
                     self.push_downloads();
@@ -662,7 +668,7 @@ impl App {
         if self.open_typed_app(input) {
             return Ok(());
         }
-        let Some(target) = omnibox::resolve(input) else {
+        let Some(target) = omnibox::resolve_typed(input) else {
             return Ok(());
         };
         let Some(id) = self.tabs.active else {
@@ -670,6 +676,10 @@ impl App {
         };
         let prev = self.tabs.get(id).map(|t| t.url.clone()).unwrap_or_default();
         let url = self.untracked(target.into_url(self.settings.search()));
+        // `data:` вкладка откроет, только если его набрал человек — это он.
+        if url.starts_with("data:") {
+            omnibox::allow_typed(id);
+        }
         self.load_in_tab(id, url)?;
         self.mirror_search(id, &prev);
         Ok(())
@@ -723,7 +733,7 @@ impl App {
             return;
         }
         let url = input
-            .and_then(omnibox::resolve)
+            .and_then(omnibox::resolve_typed)
             .map(|t| self.untracked(t.into_url(self.settings.search())))
             .unwrap_or_else(|| NEWTAB.to_string());
         let title = if url == NEWTAB {
@@ -731,7 +741,11 @@ impl App {
         } else {
             display_title(&url)
         };
+        let typed_data = url.starts_with("data:");
         let id = self.tabs.add(url, title, false, None);
+        if typed_data {
+            omnibox::allow_typed(id);
+        }
         self.ai_search_new_tab(id, input);
         self.activate(id);
     }
@@ -1063,6 +1077,7 @@ impl App {
                 at: d.at,
                 exists: d.status != Status::Done || d.path.exists(),
                 ask: d.ask,
+                disguised: d.disguised,
             })
             .collect();
         self.send(&ToUi::Downloads {
@@ -1146,7 +1161,15 @@ impl App {
         let from = self.tabs.active;
         for arg in args {
             let path = std::path::Path::new(arg);
-            let url = if path.is_absolute() && path.exists() {
+            let file = path.is_absolute() && path.exists();
+            // `mailto:`, `tg:` и другие ссылки на приложения — как набранные в адресной
+            // строке: открываются программой (опасные схемы — нет), а не ищутся.
+            // Windows сама передаёт Axiom только веб-адреса и файлы, такие ссылки
+            // приходят от программы, которая запустила `axiom.exe` с ней.
+            if !file && self.open_typed_app(arg) {
+                continue;
+            }
+            let url = if file {
                 Url::from_file_path(path).ok().map(String::from)
             } else {
                 omnibox::resolve(arg).map(|t| self.untracked(t.into_url(self.settings.search())))

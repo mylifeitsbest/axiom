@@ -6,7 +6,11 @@
   // Код, поля ввода, редактируемое и помеченное «не переводить» не трогаем.
   const SKIP = 'script,style,noscript,template,code,pre,kbd,samp,var,textarea,input,svg,math,iframe,object,canvas,'
     + '[translate="no"],.notranslate,[contenteditable]:not([contenteditable="false"])';
-  const SKIP_ATTR = 'head,svg,[translate="no"],.notranslate';
+  // Подсказки полей пароля («Пароль от рабочей почты») и скрытые поля в Google не уходят.
+  const SKIP_ATTR = 'head,svg,[translate="no"],.notranslate,input[type="password" i],input[type="hidden" i]';
+  // Подпись картинки — такой же текст страницы, её видно без картинки и читает экранный
+  // диктор. Но у украшений, спрятанных от диктора, её не показывают никому — не берём.
+  const SKIP_ALT = '[aria-hidden="true"],[role="presentation"],[role="none"]';
   const ATTRS = '[title],[placeholder],[alt],input[type=submit][value],input[type=button][value],input[type=reset][value]';
   // Строчные теги: их текст переводится вместе с абзацем, чтобы не рвать фразу.
   const INLINE = new Set(['A', 'ABBR', 'B', 'BDI', 'BDO', 'BIG', 'CITE', 'DATA', 'DEL', 'DFN', 'EM', 'FONT', 'I', 'INS',
@@ -58,8 +62,11 @@
   }
 
   function attrsOf(el) {
+    // Проверяется и перед отправкой: поле могло стать полем пароля после обхода.
+    if (el.closest(SKIP_ATTR)) return [];
     const list = [];
     for (const a of ['title', 'placeholder', 'alt']) if (el.hasAttribute(a)) list.push(a);
+    if (list.includes('alt') && el.closest(SKIP_ALT)) list.splice(list.indexOf('alt'), 1);
     if (el.tagName === 'INPUT' && /^(submit|button|reset)$/i.test(el.type) && el.hasAttribute('value')) list.push('value');
     return list.filter((a) => {
       const v = el.getAttribute(a);

@@ -1,10 +1,15 @@
 //! Разбор ввода адресной строки: адрес или поиск в выбранной поисковой системе.
 
-use std::net::Ipv4Addr;
+use std::{
+    net::Ipv4Addr,
+    sync::{Mutex, PoisonError},
+    time::{Duration, Instant},
+};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use url::{Url, form_urlencoded};
 
+use super::TabId;
 use crate::ipc::MAX_INPUT;
 
 /// Внутренний адрес новой вкладки. Такая вкладка не создаёт webview вообще.
@@ -275,13 +280,81 @@ pub fn ai_url(query: &str) -> String {
         .unwrap_or_else(|_| AI_HOME.to_string())
 }
 
-/// Разрешённые схемы для навигации внутри вкладки.
-pub fn is_navigable(url: &str) -> bool {
-    let scheme = url.split(':').next().unwrap_or("").to_ascii_lowercase();
+/// Ввод адресной строки — его набрал человек. Как [`resolve`], но `data:` здесь
+/// адрес, а не поиск: со страниц и из других программ такие адреса не открываются
+/// (см. [`is_navigable`]), а человек может открыть набранный сам.
+pub fn resolve_typed(input: &str) -> Option<Target> {
+    let s = input.trim();
+    if scheme(s) == "data"
+        && s.len() <= MAX_INPUT
+        && let Ok(u) = Url::parse(s)
+    {
+        return Some(Target::Url(u.into()));
+    }
+    resolve(input)
+}
+
+fn scheme(url: &str) -> String {
+    url.split(':').next().unwrap_or("").to_ascii_lowercase()
+}
+
+/// Адрес страницы, а не ссылка на приложение: такие схемы браузер открывает сам.
+pub fn is_page(url: &str) -> bool {
     matches!(
-        scheme.as_str(),
+        scheme(url).as_str(),
         "http" | "https" | "about" | "data" | "blob" | "file"
     )
+}
+
+/// Обработчик навигации спрашивают и о фреймах (WebKitGTK), а не только о переходе
+/// всей вкладки (WebView2).
+const SEES_FRAMES: bool = cfg!(not(windows));
+
+/// Куда вкладка переходит сама: по ссылкам, скриптам и фреймам страниц.
+///
+/// `about:` — только `about:blank`. `data:` со страницы — готовая фишинговая
+/// страница под «пустым» адресом, поэтому на Windows вкладка открывает его,
+/// только если человек набрал его сам (см. [`allow_typed`]). WebKitGTK спрашивает
+/// и о фреймах, где `data:` и `about:srcdoc` — обычное дело, а отличить фрейм от
+/// всей вкладки обработчик не может: там они проходят, как раньше.
+pub fn is_navigable(url: &str) -> bool {
+    match scheme(url).as_str() {
+        "http" | "https" | "blob" | "file" => true,
+        "about" => is_blank(url) || (SEES_FRAMES && url.eq_ignore_ascii_case("about:srcdoc")),
+        "data" => SEES_FRAMES,
+        _ => false,
+    }
+}
+
+/// `about:blank`, в том числе с `#…` или `?…` (так Chromium помечает заблокированное).
+fn is_blank(url: &str) -> bool {
+    url.get(..11)
+        .is_some_and(|head| head.eq_ignore_ascii_case("about:blank"))
+        && matches!(url.as_bytes().get(11), None | Some(b'#' | b'?'))
+}
+
+/// Сколько набранный `data:` ждёт, пока вкладка по нему перейдёт.
+const TYPED_FOR: Duration = Duration::from_secs(10);
+
+/// Вкладка, которой можно один раз перейти по набранному в адресной строке `data:`.
+static TYPED: Mutex<Option<(TabId, Instant)>> = Mutex::new(None);
+
+/// Человек набрал `data:` для вкладки `tab`: её следующий переход по `data:` — его.
+pub fn allow_typed(tab: TabId) {
+    *TYPED.lock().unwrap_or_else(PoisonError::into_inner) = Some((tab, Instant::now()));
+}
+
+/// Переход вкладки `tab` по `url` — это набранный человеком `data:` (разрешение одноразовое).
+pub fn take_typed(tab: TabId, url: &str) -> bool {
+    if scheme(url) != "data" {
+        return false;
+    }
+    let mut typed = TYPED.lock().unwrap_or_else(PoisonError::into_inner);
+    let ok = typed.is_some_and(|(t, at)| t == tab && at.elapsed() < TYPED_FOR);
+    if ok {
+        *typed = None;
+    }
+    ok
 }
 
 fn host_part(s: &str) -> &str {
@@ -560,7 +633,41 @@ mod tests {
     #[test]
     fn navigable_schemes() {
         assert!(is_navigable("https://a.b"));
+        assert!(is_navigable("blob:https://a.b/1"));
+        assert!(is_navigable("file:///C:/a.html"));
         assert!(!is_navigable("javascript:alert(1)"));
         assert!(!is_navigable("ms-settings:"));
+        // about: — только пустая страница.
+        assert!(is_navigable("about:blank"));
+        assert!(is_navigable("ABOUT:BLANK#blocked"));
+        assert!(!is_navigable("about:blankx"));
+        assert!(!is_navigable("about:settings"));
+        assert!(!is_navigable("about:"));
+        // data: и about:srcdoc со страниц — только там, где обработчик видит и фреймы.
+        assert_eq!(is_navigable("data:text/html,<b>x</b>"), SEES_FRAMES);
+        assert_eq!(is_navigable("about:srcdoc"), SEES_FRAMES);
+        // Но это всё равно страницы, а не ссылки на приложения.
+        assert!(is_page("data:text/html,x") && is_page("about:srcdoc"));
+        assert!(!is_page("mailto:a@b.c"));
+    }
+
+    #[test]
+    fn typed_data_opens_once() {
+        let data = "data:text/html,<h1>hi</h1>";
+        assert_eq!(resolve(data), Some(Target::Search(data.into())));
+        assert!(
+            matches!(resolve_typed(data), Some(Target::Url(u)) if u.starts_with("data:text/html,"))
+        );
+        assert_eq!(resolve_typed("rust"), resolve("rust"));
+
+        // Номера вкладок — свои для этого теста: разрешение общее на процесс.
+        let (tab, other) = (900_001, 900_002);
+        assert!(!take_typed(tab, data));
+        allow_typed(tab);
+        // Чужая вкладка и не data: разрешение не тратят.
+        assert!(!take_typed(other, data));
+        assert!(!take_typed(tab, "https://a.b/"));
+        assert!(take_typed(tab, data));
+        assert!(!take_typed(tab, data));
     }
 }

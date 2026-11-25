@@ -62,7 +62,7 @@ function createDownloads(ax) {
   function sub(d) {
     switch (d.status) {
       case 'active': {
-        if (d.ask) return 'Этот тип файла может навредить компьютеру';
+        if (d.ask) return d.disguised ? 'Внутри программа, хотя имя у файла обычное' : 'Этот тип файла может навредить компьютеру';
         if (!d.received) return 'Начинается…';
         const speed = rates.get(d.id)?.speed || 0;
         const parts = [d.total ? `${size(d.received)} из ${size(d.total)}` : size(d.received)];

@@ -14,8 +14,14 @@
 //! пользователя, Edge не сохраняет, пока в его окне загрузок не нажмут
 //! «Оставить», а это окно мы прячем — загрузка так и висела бы «идущей».
 //! Поэтому проверку типа файла (`SaveFileSecurityCheckStarting`) для таких
-//! файлов придерживаем и спрашиваем в своём списке. Настройки SmartScreen
-//! не трогаем.
+//! файлов придерживаем и спрашиваем в своём списке.
+//!
+//! SmartScreen (проверка файлов и адресов на серверах Microsoft) в движке
+//! выключен (`msSmartScreenProtection` в `tabs::webview::browser_args`): его
+//! вопросы тоже ждали бы ответа в спрятанном окне Edge, и загрузка зависала.
+//! Репутацию файла никто не проверяет, остаются отметка «из интернета» (MOTW),
+//! антивирус и наши проверки: тип файла по списку и, после загрузки, начало
+//! файла — программа под безобидным именем спрашивается так же, как `.exe`.
 
 use std::{
     cell::{Cell, RefCell},
@@ -41,19 +47,33 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
 /// Типы, которые Edge без жеста пользователя или без прошлых визитов на сайт
 /// не сохраняет молча: `DANGEROUS` и `ALLOW_ON_USER_GESTURE` для Windows
-/// в `download_file_types.asciipb` Chromium. Спрашиваем о них всегда: узнать,
-/// остановил бы файл сам Edge, нельзя. По алфавиту, через пробел.
-const RISKY: &str = "\
+/// в `download_file_types.asciipb` Chromium (сверено в ноябре 2026), кроме [`QUIET`].
+/// Спрашиваем о них всегда: узнать, остановил бы файл сам Edge, нельзя.
+/// `.ini`, `.cfg`, `.local` и `.manifest` там именно `DANGEROUS`: положенные
+/// в «Загрузки» рядом с установщиком, они меняют то, как он запустится.
+/// По алфавиту, через пробел.
+const CHROMIUM: &str = "\
     accda accdb accde accdr ad ade adp app application appref-ms appx appxbundle asp asx bas \
     bat bgi cer cfg chi chm class cmd com cpi cpl crt crx der diagcab diagcfg diagpkg dll \
     drv efi eml exe fon fxp gadget grp hlp hta htt img inf ini ins inx iqy isp isu jar jnlp \
     job js jse library-ms lnk local mad maf mag mam manifest maq mar mas mat mau mav maw mda \
     mdb mde mdt mdw mdz mht mhtml mmc mof msc msg msh msh1 msh1xml msh2 msh2xml mshxml msi \
     msix msixbundle msp mst ocx ops oxt paf partial pcd pif pl plg prf prg ps1 ps1xml ps2 \
-    ps2xml psc1 psc2 psm1 pst py pyc pyd pyo pyw pyz pyzw rb reg rels rgs scf scr sct \
+    ps2xml psc1 psc2 psm1 pst py pyc pyd pyo pyw pyz pyzw rb reg rgs scf scr sct \
     search-ms settingcontent-ms shb shs slk spl swf sys u3p url vb vbe vbs vbscript vdx vsd \
     vsdm vsdx vsmacros vss vssm vssx vst vstm vstx vsw vsx vtx website ws wsc wsf wsh xbap \
-    xll xml xnk xrm-ms xsd xsl";
+    xll xnk xrm-ms xsl";
+
+/// Не из Chromium: образы дисков (Windows подключает `.iso`, `.vhd` и `.vhdx`
+/// двойным щелчком, а внутри может быть что угодно, и отметки «из интернета»
+/// на файлах внутри уже нет) и установщики — Windows и других систем.
+const MOUNTED: &str =
+    "aab apk apks appinstaller dmg esd ipa iso msu ova pkg vhd vhdx vmdk wim xapk";
+
+/// Из списка Chromium, но это данные, а не программы: XML, его схема и части
+/// документов Office. Спрашивать о них — ложная тревога, а молчать нельзя:
+/// без жеста Edge придержал бы их в спрятанном окне. Пропускаем без вопроса.
+const QUIET: &str = "rels xml xsd";
 
 /// Проверка файла опасного типа, отложенная до ответа пользователя.
 struct Pending {
@@ -68,7 +88,8 @@ impl Pending {
         // SAFETY: объекты события живы, пока не завершена отсрочка; поток интерфейса.
         unsafe {
             if keep {
-                // Пропускает только проверку типа (на неё и ответил пользователь).
+                // Снимает для этого файла проверку Edge целиком. SmartScreen выключен,
+                // так что от неё остаётся только вопрос о типе — на него и ответил человек.
                 self.args.SetSuppressDefaultPolicy(true)?;
             } else {
                 self.args.SetCancelSave(true)?;
@@ -227,7 +248,7 @@ unsafe fn on_starting(
         }
         // Окно загрузок Edge не показываем: у нас своя панель. Без события проверки
         // спросить о файле опасного типа нечем — пусть спросит Edge.
-        if can_ask || !is_risky(&path) {
+        if can_ask || !(is_risky(&path) || is_quiet(&path)) {
             args.SetHandled(true)?;
         }
 
@@ -282,15 +303,27 @@ unsafe fn on_starting(
             let path = PathBuf::from(take_pwstr(raw));
             let (received, _) = bytes(&operation)?;
             let tracked = TRACKED.with(|t| t.borrow_mut().remove(&id));
+            let kept = tracked.as_ref().is_some_and(|d| d.kept);
             if tracked.is_some_and(|d| d.discarded) && outcome != Outcome::Done {
                 outcome = Outcome::Discarded;
             }
-            let _ = state_events.send_event(UserEvent::Download(DownloadEvent::Finished {
-                id,
-                outcome,
-                path: Some(path),
-                received: Some(received),
-            }));
+            // Безобидное имя, а внутри программа: спрашиваем, как о `.exe`.
+            // О файлах опасного типа уже спросили (или спросил Edge).
+            let event = if outcome == Outcome::Done
+                && !kept
+                && !is_risky(&path)
+                && super::program_inside(&path)
+            {
+                DownloadEvent::Disguised { id, path, received }
+            } else {
+                DownloadEvent::Finished {
+                    id,
+                    outcome,
+                    path: Some(path),
+                    received: Some(received),
+                }
+            };
+            let _ = state_events.send_event(UserEvent::Download(event));
             Ok(())
         }));
         operation.add_StateChanged(&state, &mut token)?;
@@ -326,6 +359,10 @@ unsafe fn on_check(
         let mut raw = PWSTR::null();
         args.DocumentOriginUri(&mut raw)?;
         let url = take_pwstr(raw);
+        // Данные из списка Chromium: Edge без жеста придержал бы их, а спрашивать незачем.
+        if is_quiet(&path) {
+            return args.SetSuppressDefaultPolicy(true);
+        }
         // Остальные типы Edge пропускает сам, не задерживая загрузку.
         if !is_risky(&path) {
             return Ok(());
@@ -369,12 +406,21 @@ unsafe fn on_check(
 }
 
 fn is_risky(path: &Path) -> bool {
+    has_type(path, CHROMIUM) || has_type(path, MOUNTED)
+}
+
+fn is_quiet(path: &Path) -> bool {
+    has_type(path, QUIET)
+}
+
+/// Расширение файла есть в списке `types`.
+fn has_type(path: &Path, types: &str) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    RISKY
+    types
         .split_ascii_whitespace()
-        .any(|risky| risky.eq_ignore_ascii_case(ext))
+        .any(|t| t.eq_ignore_ascii_case(ext))
 }
 
 /// Получено байт и сколько всего (если сервер прислал размер).
@@ -453,17 +499,52 @@ mod tests {
 
     #[test]
     fn risky_types() {
-        let types: Vec<_> = RISKY.split_ascii_whitespace().collect();
-        assert!(
-            types.windows(2).all(|w| w[0] < w[1]),
-            "RISKY не по алфавиту"
-        );
-        assert_eq!(types.len(), 168);
-        assert!(is_risky(Path::new(r"C:\Загрузки\setup.EXE")));
-        assert!(is_risky(Path::new("install.msi")));
-        assert!(is_risky(Path::new("run.bat")));
-        assert!(!is_risky(Path::new("photos.zip")));
-        assert!(!is_risky(Path::new("firmware.bin")));
-        assert!(!is_risky(Path::new("README")));
+        let list = |s: &'static str| -> Vec<&'static str> { s.split_ascii_whitespace().collect() };
+        for (name, types) in [
+            ("CHROMIUM", list(CHROMIUM)),
+            ("MOUNTED", list(MOUNTED)),
+            ("QUIET", list(QUIET)),
+        ] {
+            assert!(
+                types.windows(2).all(|w| w[0] < w[1]),
+                "{name} не по алфавиту"
+            );
+        }
+        // Весь список Chromium (168 типов) — либо спрашиваем, либо пропускаем молча.
+        assert_eq!(list(CHROMIUM).len() + list(QUIET).len(), 168);
+        let all = [list(CHROMIUM), list(MOUNTED), list(QUIET)].concat();
+        let mut unique = all.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), all.len(), "тип в двух списках");
+
+        for file in [
+            r"C:\Загрузки\setup.EXE",
+            "install.msi",
+            "run.bat",
+            "desktop.ini",
+            "app.cfg",
+            "disk.img",
+            "Windows.iso",
+            "disk.VHDX",
+            "vm.vmdk",
+            "app.dmg",
+            "game.apk",
+            "update.msu",
+        ] {
+            assert!(is_risky(Path::new(file)), "{file}");
+        }
+        for file in [
+            "photos.zip",
+            "firmware.bin",
+            "README",
+            "notes.txt",
+            "feed.xml",
+            "a.xsd",
+        ] {
+            assert!(!is_risky(Path::new(file)), "{file}");
+        }
+        assert!(is_quiet(Path::new("sitemap.XML")));
+        assert!(!is_quiet(Path::new("setup.exe")));
     }
 }

@@ -173,6 +173,31 @@ mod tests {
     }
 
     #[test]
+    fn restores_only_pages_and_own_tabs() {
+        for url in [
+            "https://a.example/",
+            "http://127.0.0.1:8080/",
+            "file:///C:/page.html",
+            crate::tabs::omnibox::NEWTAB,
+            SETTINGS,
+        ] {
+            assert!(is_restorable(url), "{url}");
+        }
+        // Подменённый session.json не откроет при запуске скрипт или готовую страницу.
+        for url in [
+            "javascript:alert(1)",
+            "data:text/html,<b>x</b>",
+            "about:blank",
+            "view-source:https://a.example/",
+            "blob:https://a.example/1",
+            "ms-settings:",
+            "HTTPS://a.example/",
+        ] {
+            assert!(!is_restorable(url), "{url}");
+        }
+    }
+
+    #[test]
     fn closed_all_tabs_starts_fresh() {
         // Последняя вкладка закрывает окно, и сессия сохраняется пустой:
         // следующий запуск начинается с новой вкладки, а не со старых.

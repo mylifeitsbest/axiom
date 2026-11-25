@@ -21,7 +21,8 @@ pub const TRACKER: &str = r"(() => {
   let input = -1e12;
   let link = null;
   const mark = (e) => { if (e.isTrusted) input = now(); };
-  for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchend']) addEventListener(type, mark, true);
+  // И отпускание: ссылка срабатывает по нему, с него и считаем короткое окно «по клику».
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchend', 'pointerup', 'click', 'keyup']) addEventListener(type, mark, true);
   const note = (e) => {
     if (!e.isTrusted) return;
     const bg = (e.button === 1 || (e.button === 0 && (e.ctrlKey || e.metaKey))) && !e.shiftKey;

@@ -378,6 +378,9 @@ fn short_url(url: &str) -> String {
 /// Начало файла — программа: exe или dll Windows (`MZ` и заголовок `PE`),
 /// программа Linux (ELF) или скрипт со строкой `#!/…`. Так видно `setup.exe`,
 /// переименованный в `setup.txt` или `photo.jpg`, — по имени его не узнать.
+/// Спрашиваем об этом только на Windows: на Linux у скачанного файла нет права
+/// на запуск, а о типах файлов WebKitGTK не спрашивает вовсе.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn looks_like_program(head: &[u8]) -> bool {
     if head.starts_with(b"\x7fELF") {
         return true;

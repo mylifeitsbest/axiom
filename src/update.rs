@@ -191,7 +191,8 @@ pub enum UpdateEvent {
     Downloaded(Result<Downloaded, String>),
 }
 
-/// Скачанный и проверенный exe новой версии.
+/// Скачанный и проверенный exe новой версии (сам скачивает только Windows).
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug)]
 pub struct Downloaded {
     part: PathBuf,

@@ -61,7 +61,7 @@ jobs:
       id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.retry.outputs.page_url }}
     env:
       GH_TOKEN: ${{ github.token }}
       SIGNING_KEY: ${{ secrets.PKG_SIGNING_KEY }}
@@ -107,7 +107,19 @@ jobs:
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: site
+      # GitHub иногда отдаёт список артефактов запуска с задержкой, и деплой не видит
+      # только что загруженный github-pages («No artifacts named github-pages»).
+      # Пауза перед деплоем и вторая попытка через минуту.
+      - name: Пауза перед деплоем
+        run: sleep 20
       - id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        continue-on-error: true
+      - name: Пауза перед повтором
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 60
+      - id: retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
 
   verify:

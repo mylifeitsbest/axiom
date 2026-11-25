@@ -143,8 +143,8 @@ pub fn build_tab(
         .with_initialization_script(super::sleep::DRAFT_TRACKER)
         .with_initialization_script(super::links::TRACKER)
         // Громкость вкладки — во всех фреймах: звук часто играет во встроенном плеере.
-        // (WebView2 и так ставит скрипты во фреймы; WebKitGTK — только с `false`.)
-        .with_initialization_script_for_main_only(super::volume::SCRIPT, false)
+        // (WebView2 и так ставит скрипты во фреймы.) На Linux скрипт пустой, см. `PAGE_SCRIPT`.
+        .with_initialization_script_for_main_only(super::volume::PAGE_SCRIPT, false)
         .with_navigation_handler(move |url| {
             // `data:` — только набранный человеком; не страница вовсе — ссылка
             // на приложение (`mailto:`, `tg:`…): решает external.

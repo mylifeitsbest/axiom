@@ -30,26 +30,9 @@ use tao::{
 use crate::{app::App, events::UserEvent};
 
 fn main() {
-    #[cfg(target_os = "linux")]
-    webkit_workarounds();
     if let Err(err) = run() {
         report_fatal(&err);
         std::process::exit(1);
-    }
-}
-
-/// Linux с видеокартой NVIDIA: у WebKitGTK вывод кадров через DMA-BUF на этих
-/// драйверах мигает, дёргает видео и теряет кадры (известная проблема WebKitGTK,
-/// её же обходят приложения на Tauri). Включаем запасной путь, если человек не
-/// задал переменную сам. Вызывается первой строкой `main`, пока потоков ещё нет.
-#[cfg(target_os = "linux")]
-fn webkit_workarounds() {
-    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
-    let nvidia = std::path::Path::new("/proc/driver/nvidia/version").exists()
-        || std::path::Path::new("/sys/module/nvidia").exists();
-    if nvidia && std::env::var_os(VAR).is_none() {
-        // SAFETY: начало `main`, других потоков ещё нет — окружение никто не читает.
-        unsafe { std::env::set_var(VAR, "1") };
     }
 }
 

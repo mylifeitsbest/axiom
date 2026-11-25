@@ -127,7 +127,7 @@ impl App {
     /// Громкость вкладки — её странице. Новая страница начинает с полной, поэтому
     /// полную не шлём. Без жеста пользователя (см. `tabs::script`).
     pub(super) fn apply_volume(tab: &Tab) {
-        if volume::page_volume(tab.volume) == volume::FULL {
+        if !volume::SUPPORTED || volume::page_volume(tab.volume) == volume::FULL {
             return;
         }
         if let Some(webview) = &tab.webview {

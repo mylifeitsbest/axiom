@@ -303,6 +303,18 @@ pub fn engine_muted(muted: bool, volume: u8) -> bool {
 
 /// Скрипт браузера для главного фрейма вкладки: задать громкость вкладки (0–100)
 /// странице и всем её фреймам. Выполнять через `script::run`: без жеста пользователя.
+/// Скрипт для вкладок этой платформы. На Linux громкость вкладок пока выключена:
+/// после 0.5.3 у тестера на WebKitGTK видео зависало (картинка стоит, звук идёт),
+/// а громкость там вживую не проверена — вернём, когда проверим.
+pub const PAGE_SCRIPT: &str = if cfg!(target_os = "linux") {
+    ""
+} else {
+    SCRIPT
+};
+
+/// Есть ли громкость вкладок на этой платформе.
+pub const SUPPORTED: bool = !cfg!(target_os = "linux");
+
 pub fn apply(volume: u8) -> String {
     let k = f64::from(page_volume(volume)) / f64::from(FULL);
     format!("typeof window.__axiomVolume === 'function' && window.__axiomVolume({k})")

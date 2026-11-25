@@ -92,7 +92,7 @@
   const tr = createTranslate({ esc, send, speed, setOverlay, toast: (t) => toast(t) });
 
   // ---------- меню вкладки (ui/tabmenu.js) ----------
-  const tm = createTabMenu({ send, ms, setOverlay, NEWTAB, tabs: () => S.tabs, canRestore: () => S.canRestore });
+  const tm = createTabMenu({ send, ms, setOverlay, NEWTAB, tabs: () => S.tabs, canRestore: () => S.canRestore, volume: () => SYS.platform !== 'linux' });
   // ---------- ссылки на приложения (ui/applink.js) ----------
   const xap = createAppLink({ esc, send, setOverlay });
 
@@ -443,6 +443,8 @@
     volTipTimer = setTimeout(() => volTip.classList.remove('on'), 900);
   }
   $('#tablist').addEventListener('wheel', (e) => {
+    // Linux: громкость вкладок пока выключена (см. src/tabs/volume.rs).
+    if (SYS.platform === 'linux') return;
     const b = e.target.closest('.ta');
     const el = b && !b.hidden && e.target.closest('.tab');
     if (!el || el.classList.contains('out')) return;

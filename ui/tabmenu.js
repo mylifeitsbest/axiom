@@ -40,7 +40,7 @@ function createTabMenu(ax) {
       { a: 'mute', ic: t.muted ? 'vol' : 'mute', t: t.muted ? 'Включить звук' : 'Выключить звук', k: 'Ctrl+M', off: !page },
       // Значение ползунка в ключ не входит: меню не перестраивается, пока его тянут.
       // У служебных вкладок (новая, настройки) страницы нет — и громкости тоже.
-      { vol: true, off: isInternal(t) },
+      ...(ax.volume?.() === false ? [] : [{ vol: true, off: isInternal(t) }]),
       { a: 'nosleep', ic: 'cup', t: 'Не усыплять', check: !!t.no_sleep, off: !page },
       null,
       { a: 'close', ic: 'x', t: 'Закрыть', k: 'Ctrl+W' },

@@ -218,6 +218,7 @@ function createPanels(ax) {
         <div class="card">
           <div class="srow" id="updRow"><span class="sl"><b>Обновления</b><small id="updNote"></small></span><span class="sc"><button class="btn" data-act="update" id="updSet">Проверить</button></span></div>
           ${row('Проверять автоматически', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии', toggle('data-bkey', 'check_updates'))}
+          ${row('Бета-версии', 'Исправления и новинки сразу, не дожидаясь выхода версии. Возможны ошибки. Выключите — со следующей версии вернётесь на обычные', toggle('data-bkey', 'beta'), 'id="betaRow" hidden data-kw="бета тест beta ранние сборки"')}
         </div>
         <div class="note">${icon('monitor')}<span id="sysNote"></span></div>
         <div class="about">${logoSvg(44, 'about')}<span><b>Axiom</b><small id="verNote"></small></span></div>`,
@@ -314,6 +315,8 @@ function createPanels(ax) {
     const checking = u?.phase === 'checking';
     b.disabled = checking;
     b.classList.toggle('primary', !!u?.latest);
+    // Бета-версии есть для Windows и Arch; на остальных системах переключатель не нужен.
+    $('#betaRow').hidden = !u?.beta_available;
     $('#updRow').classList.toggle('has', !!u?.latest);
     if (u?.latest) {
       b.textContent = 'Обновить';

@@ -114,7 +114,9 @@ impl App {
         open: &[String],
         just_updated: bool,
     ) -> Result<Self> {
-        let settings = Settings::load(&paths);
+        let mut settings = Settings::load(&paths);
+        let mut updater = Updater::new();
+        updater.set_beta(settings.beta_channel(crate::update::Version::current().is_beta()));
         let history = History::load(&paths);
         let bookmarks = Bookmarks::load(&paths);
         let downloads = Downloads::load(&paths);
@@ -155,7 +157,7 @@ impl App {
             session_dirty: false,
             importing: false,
             force_dark,
-            updater: Updater::new(),
+            updater,
             just_updated,
             closed: false,
             quit: false,
@@ -273,7 +275,10 @@ impl App {
                 self.push_translate_all();
                 self.show_window();
                 if std::mem::take(&mut self.just_updated) {
-                    let text = format!("Axiom обновлён до версии {}", env!("CARGO_PKG_VERSION"));
+                    let text = format!(
+                        "Axiom обновлён до версии {}",
+                        crate::update::current_string()
+                    );
                     self.send(&ToUi::Toast { text: &text });
                 }
                 // Ссылка на файл при запуске: загрузка могла начаться раньше, чем
@@ -1197,6 +1202,12 @@ impl App {
         };
         let engine = incoming.search_engine;
         self.settings.apply(incoming);
+        let beta = self
+            .settings
+            .beta_channel(crate::update::Version::current().is_beta());
+        if self.updater.set_beta(beta) {
+            self.push_update(false);
+        }
         // Свой адрес поиска без %s или не http(s) настройки заменили на DuckDuckGo.
         let rejected = rejected.or_else(|| {
             (self.settings.search_engine != engine)
@@ -1704,8 +1715,8 @@ impl App {
 
     fn on_update(&mut self, event: UpdateEvent) -> Flow {
         match event {
-            UpdateEvent::Checked(latest) => {
-                let manual = self.updater.on_checked(latest);
+            UpdateEvent::Checked(latest, beta) => {
+                let manual = self.updater.on_checked(latest, beta);
                 self.push_update(manual);
             }
             UpdateEvent::Progress(received) => {

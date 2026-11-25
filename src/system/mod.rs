@@ -48,7 +48,7 @@ pub fn status() -> Status {
         default_browser: is_default_browser(),
         browsers: crate::storage::import::detect(),
         can_install: cfg!(windows),
-        version: env!("CARGO_PKG_VERSION"),
+        version: crate::update::current_string(),
     }
 }
 

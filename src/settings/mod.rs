@@ -71,6 +71,10 @@ pub struct Settings {
     pub force_dark: bool,
     /// Узнавать у GitHub о новых версиях (раз в несколько часов).
     pub check_updates: bool,
+    /// Следить и за бета-версиями (каждый коммит в main, до выпуска версии).
+    /// `None` — ещё не решали: бета-версия при первом запуске включает их сама,
+    /// и копия остаётся в этом канале, даже если потом поставят обычный выпуск.
+    pub beta: Option<bool>,
     /// Перевод страниц: язык, автоперевод, предлагать ли перевод.
     pub translate: crate::translate::Prefs,
     /// Убирать метки слежки (`utm_*`, `fbclid`, `gclid`…) из открываемых адресов.
@@ -91,6 +95,7 @@ impl Default for Settings {
             onboarded: false,
             force_dark: false,
             check_updates: true,
+            beta: None,
             translate: crate::translate::Prefs::default(),
             strip_tracking: true,
         }
@@ -125,6 +130,19 @@ impl Settings {
         if let Some(on) = incoming.strip_tracking {
             self.strip_tracking = on;
         }
+        // Переключатель есть не у всех: у кого его нет, приходит null.
+        if let Some(on) = incoming.beta {
+            self.beta = Some(on);
+        }
+    }
+
+    /// Следить ли за бета-версиями. Первый запуск бета-версии
+    /// включает их сам; выключенные вручную так и остаются выключенными.
+    pub fn beta_channel(&mut self, beta_build: bool) -> bool {
+        if self.beta.is_none() && beta_build {
+            self.beta = Some(true);
+        }
+        self.beta == Some(true)
     }
 
     /// Куда уходит поиск из адресной строки.

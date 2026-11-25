@@ -47,9 +47,12 @@ function createUpdate(ax) {
     }
   }
 
+  // Бета-версия (`0.5.4-beta.312`) — каждый коммит в main до выхода версии.
+  const beta = () => /-beta\.\d+$/.test(U.latest || '');
+
   function body() {
     const head = `<div class="upp-head"><span class="upp-logo">${logoSvg(36, 'upd')}</span>
-      <span class="upp-t"><b>Axiom ${ax.esc(U.latest)}</b><small>Сейчас установлена ${ax.esc(U.current)}</small></span>
+      <span class="upp-t"><b>${beta() ? 'Бета-версия' : 'Axiom'} ${ax.esc(U.latest)}</b><small>Сейчас установлена ${ax.esc(U.current)}</small></span>
       <button class="lnk" data-u="notes" title="Список изменений на GitHub">Что нового${icon('popout')}</button></div>`;
     let text = '';
     let extra = '';
@@ -69,7 +72,9 @@ function createUpdate(ax) {
     } else if (U.how === 'apt' || U.how === 'pacman' || U.how === 'aur') {
       text = U.how === 'apt'
         ? 'Axiom стоит из репозитория apt и обновится вместе с системой. Чтобы обновить сейчас, выполните в терминале:'
-        : U.how === 'aur'
+        : beta()
+          ? 'Это бета-версия: её ставит установщик Axiom, вся система при этом не обновляется. Выполните в терминале:'
+          : U.how === 'aur'
           ? 'Axiom стоит из AUR (axiom-browser-bin). Чтобы обновить только его, без обновления всей системы, выполните в терминале:'
           : 'Axiom обновится вместе с системой. Чтобы обновить сейчас, выполните в терминале:';
       // Переносы только между словами: `--only-upgrade` не разорвётся на дефисе.

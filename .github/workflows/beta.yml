@@ -1,0 +1,240 @@
+name: Beta
+
+# Бета-версии: каждый коммит в main, прошедший CI, сразу уходит в пре-релиз
+# `beta` (Windows exe и пакет axiom-browser-bin для Arch). Номер — `X.Y.Z-beta.N`,
+# где X.Y.Z — версия из Cargo.toml (последний выпуск), N — число коммитов в main:
+# новее X.Y.Z, старее следующего выпуска, растёт с каждым коммитом.
+# releases/latest на пре-релиз не указывает: обычные копии Axiom его не видят.
+# Следят за ним копии, где в настройках включены «Бета-версии» (src/update.rs),
+# ставят его установщики с --beta (install.sh) и AXIOM_BETA=1 (install.ps1).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Сборки идут по очереди: опубликованная не перезапишется более старой.
+concurrency:
+  group: beta-build
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    # Только зелёный CI после push в main (не pull request).
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      sha: ${{ steps.plan.outputs.sha }}
+      n: ${{ steps.plan.outputs.n }}
+      version: ${{ steps.plan.outputs.version }}
+      pkgver: ${{ steps.plan.outputs.pkgver }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+      - id: plan
+        run: |
+          N=$(git rev-list --count "$SHA")
+          BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          VERSION="$BASE-beta.$N"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # pacman: 0.5.4 < 0.5.4.beta312 < 0.5.5 (без точки перед beta было бы наоборот).
+          echo "pkgver=$BASE.beta$N" >> "$GITHUB_OUTPUT"
+          build=true
+          if gh release download beta --repo "$GITHUB_REPOSITORY" --pattern VERSION --output published.txt 2>/dev/null; then
+            PUB=$(sed -n 1p published.txt)
+            PUB_SHA=$(sed -n 2p published.txt)
+            PUB_N=${PUB##*-beta.}
+            echo "Опубликована $PUB ($PUB_SHA), эта — $VERSION ($SHA)"
+            if [ "$N" -lt "$PUB_N" ] || { [ "$N" -eq "$PUB_N" ] && [ "$FORCE" != true ]; }; then
+              echo "::notice::Уже опубликована $PUB — эта сборка не новее"
+              build=false
+            elif [ "$FORCE" != true ] && git cat-file -e "$PUB_SHA^{commit}" 2>/dev/null \
+              && git diff --quiet "$PUB_SHA" "$SHA" -- src ui assets build.rs Cargo.toml Cargo.lock packaging/linux; then
+              echo "::notice::С $PUB в браузере ничего не изменилось (README, AUR, CI) — новая сборка не нужна"
+              build=false
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "### $VERSION: $([ "$build" = true ] && echo собираю || echo пропуск)" >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: windows-latest
+    env:
+      AXIOM_BETA_BUILD: ${{ needs.plan.outputs.n }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --release --locked
+      - name: Упаковка
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/axiom.exe dist/Axiom-windows-x64.exe
+          # Номер в exe — тот, что будет в VERSION: иначе обновление ходило бы по кругу.
+          $v = (Get-Item dist/Axiom-windows-x64.exe).VersionInfo
+          Write-Host "Версия файла: $($v.FileVersion) / $($v.FileMajorPart).$($v.FileMinorPart).$($v.FileBuildPart).$($v.FilePrivatePart)"
+          if ($v.FileVersion -ne '${{ needs.plan.outputs.version }}') { throw "в exe версия $($v.FileVersion)" }
+          if ($v.FilePrivatePart -ne [int]'${{ needs.plan.outputs.n }}') { throw "в exe номер сборки $($v.FilePrivatePart)" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beta-windows
+          path: dist/*
+
+  linux:
+    # Та же база, что у выпуска: бинарник запускается и на Ubuntu 22.04+, и на Arch.
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-22.04
+    env:
+      AXIOM_BETA_BUILD: ${{ needs.plan.outputs.n }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev pkg-config build-essential
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --release --locked
+      - name: Архив
+        run: |
+          mkdir -p dist stage/axiom
+          install -Dm755 target/release/axiom stage/axiom/axiom-browser
+          install -Dm644 packaging/linux/axiom-browser.desktop stage/axiom/axiom-browser.desktop
+          install -Dm644 assets/logo.svg stage/axiom/icons/axiom-browser.svg
+          cp assets/linux/*.png stage/axiom/icons/
+          cp README.md stage/axiom/
+          tar -C stage -czf dist/axiom-linux-x86_64.tar.gz axiom
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beta-linux
+          path: dist/*
+
+  arch:
+    # Пакет axiom-browser-bin из того же PKGBUILD, что в AUR, но с архивом этой сборки:
+    # у тестера он встаёт поверх пакета из AUR, без вопросов о конфликтах.
+    needs: [plan, linux]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      PKGVER: ${{ needs.plan.outputs.pkgver }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: beta-linux
+          path: dist
+      - name: makepkg
+        shell: bash
+        run: |
+          AUR="$GITHUB_WORKSPACE/packaging/aur/axiom-browser-bin"
+          SUM=$(sha256sum dist/axiom-linux-x86_64.tar.gz | cut -d' ' -f1)
+          sed -i -e "s/^pkgver=.*/pkgver=$PKGVER/" -e "s/^pkgrel=.*/pkgrel=1/" \
+            -e "s/^sha256sums=.*/sha256sums=('$SUM')/" "$AUR/PKGBUILD"
+          grep -E '^(pkgver|pkgrel|sha256sums)=' "$AUR/PKGBUILD"
+          # Архив под именем из source=(): makepkg найдёт его рядом с PKGBUILD и не станет качать.
+          cp dist/axiom-linux-x86_64.tar.gz "$AUR/axiom-browser-bin-$PKGVER.tar.gz"
+          useradd -m builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          # Сборка — только перекладка файлов, зависимости для неё не нужны.
+          sudo -u builder -H bash -c "cd '$AUR' && makepkg --nodeps --noconfirm -f"
+          mkdir -p out
+          cp "$AUR"/axiom-browser-bin-"$PKGVER"-1-x86_64.pkg.tar.zst out/axiom-browser-bin-x86_64.pkg.tar.zst
+      - name: Ставится и запускается
+        shell: bash
+        run: |
+          pacman -Syu --noconfirm
+          pacman -U --noconfirm out/axiom-browser-bin-x86_64.pkg.tar.zst
+          pacman -Qi axiom-browser-bin | grep -E "^(Name|Version)"
+          test -x /usr/bin/axiom-browser
+          if ldd /usr/bin/axiom-browser | grep "not found"; then exit 1; fi
+          # Обновление с выпуска: pacman считает бета-версию новее него.
+          test "$(vercmp "$PKGVER" "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)")" = 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beta-arch
+          path: out/*
+
+  publish:
+    needs: [plan, windows, linux, arch]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          pattern: beta-*
+          merge-multiple: true
+      - name: Публикация
+        run: |
+          cd dist
+          sha256sum Axiom-windows-x64.exe axiom-linux-x86_64.tar.gz axiom-browser-bin-x86_64.pkg.tar.zst > SHA256SUMS.txt
+          printf '%s\n%s\n' "$VERSION" "$SHA" > VERSION
+          cat SHA256SUMS.txt VERSION
+          cd ..
+          # Что нового с последнего выпуска: бета-тестерам видно, что проверять.
+          LAST=$(git tag --list 'v*' --sort=-v:refname --merged "$SHA" | head -n1)
+          {
+            echo "**Бета-версия $VERSION** — коммит ${SHA:0:7}. Всё новое раньше выхода версии, но возможны ошибки: о них — в Issues. Обычная версия — Latest."
+            echo
+            echo "Как попасть в бету: в Axiom откройте Настройки → Система и включите «Бета-версии». Или поставьте сразу бету:"
+            echo
+            echo "Windows: \`\$env:AXIOM_BETA=1; irm https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.ps1 | iex\`"
+            echo
+            echo "Arch: \`curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.sh | sh -s -- --beta\`"
+            echo
+            echo "Дальше Axiom сам предложит каждую новую бета-версию."
+            echo
+            echo "### Изменения после ${LAST:-первого выпуска}"
+            git log --no-merges --format='- %s' "${LAST:+$LAST..}$SHA" \
+              | grep -vE '^- (AUR|CI|README)' | head -n 60 || true
+          } > notes.md
+          if ! gh release view beta --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create beta --repo "$GITHUB_REPOSITORY" --target "$SHA" --prerelease --latest=false \
+              --title "Бета-версия" --notes-file notes.md
+          fi
+          # Тег beta — на этот коммит (архивы исходников на странице совпадут со сборкой).
+          git tag -f beta "$SHA"
+          git push -f origin refs/tags/beta
+          # Сначала файлы, потом суммы, последним VERSION: кто прочитал новый номер,
+          # найдёт и новые файлы. Копия, читавшая VERSION раньше, получит несовпадение
+          # суммы и просто проверит позже.
+          gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/Axiom-windows-x64.exe dist/axiom-linux-x86_64.tar.gz dist/axiom-browser-bin-x86_64.pkg.tar.zst
+          gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber dist/SHA256SUMS.txt
+          gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber dist/VERSION
+          gh release edit beta --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+            --title "Бета-версия $VERSION" --notes-file notes.md
+          echo "### Опубликована $VERSION" >> "$GITHUB_STEP_SUMMARY"

@@ -15,10 +15,18 @@
 //!
 //! Linux: Axiom стоит пакетом, обновлять его — дело apt или pacman.
 //! Показываем готовую команду.
+//!
+//! Бета-тест: каждый коммит в main, прошедший CI, собирается в пре-релиз
+//! `beta` (.github/workflows/beta.yml) с номером вида `0.5.4-beta.312`: это 312-й
+//! коммит main, он новее 0.5.4 и старее 0.5.5. `releases/latest` на пре-релиз не
+//! указывает. За ним следит копия, где в настройках включены «Бета-версии»: включить
+//! может любой на Windows и Arch, а сама бета-версия включает их при первом запуске
+//! (её поставили установщиком с --beta). Тогда проверяем оба канала и берём версию новее.
 
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::LazyLock,
     thread,
     time::{Duration, Instant},
 };
@@ -38,42 +46,89 @@ const SUMS: &str = "SHA256SUMS.txt";
 pub const UPDATED_FLAG: &str = "--updated";
 /// Как часто проверять, пока Axiom открыт.
 const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// Бета-версии выходят с каждым коммитом — их проверяем чаще.
+const EVERY_BETA: Duration = Duration::from_secs(30 * 60);
 /// Повтор после неудачной проверки (например, не было сети).
 const RETRY: Duration = Duration::from_secs(30 * 60);
+/// Пре-релиз с бета-версиями и файл с номером последней из них
+/// (первая строка — версия, вторая — коммит).
+const BETA_TAG: &str = "beta";
+const VERSION_FILE: &str = "VERSION";
+/// Номер бета-версии задаёт CI (beta.yml); в обычной сборке его нет.
+const BETA_BUILD: Option<&str> = option_env!("AXIOM_BETA_BUILD");
 
+/// Версия: выпуск `1.2.3` или бета-версия `1.2.3-beta.N` после него.
+/// Порядок полей задаёт сравнение: `1.2.3` < `1.2.3-beta.5` < `1.2.3-beta.9` < `1.2.4`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Version(u32, u32, u32);
+pub struct Version(u32, u32, u32, Option<u32>);
+
+/// Число без знака и ведущего `+`, не длиннее 9 цифр.
+fn number(p: &str) -> Option<u32> {
+    (!p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| p.parse().ok())
+        .flatten()
+}
 
 impl Version {
-    /// `v1.2.3` или `1.2.3`. Предварительные версии (`1.2.3-rc1`) не принимаем.
+    /// `v1.2.3`, `1.2.3` или `1.2.3-beta.N` (N ≥ 1). Другие предварительные
+    /// версии (`1.2.3-rc1`) не принимаем.
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
-        let mut parts = s.strip_prefix('v').unwrap_or(s).split('.').map(|p| {
-            if !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()) {
-                p.parse().ok()
-            } else {
-                None
-            }
-        });
-        let version = Self(parts.next()??, parts.next()??, parts.next()??);
+        let s = s.strip_prefix('v').unwrap_or(s);
+        let (main, beta) = match s.split_once("-beta.") {
+            Some((main, beta)) => (main, Some(number(beta).filter(|&n| n > 0)?)),
+            None => (s, None),
+        };
+        let mut parts = main.split('.').map(number);
+        let version = Self(parts.next()??, parts.next()??, parts.next()??, beta);
         parts.next().is_none().then_some(version)
     }
 
     pub fn current() -> Self {
-        Self::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Self(0, 0, 0))
+        let Self(major, minor, patch, _) =
+            Self::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Self(0, 0, 0, None));
+        let beta = BETA_BUILD.and_then(number).filter(|&n| n > 0);
+        Self(major, minor, patch, beta)
     }
 
     #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self(major, minor, patch)
+    pub fn new(major: u32, minor: u32, patch: u32, beta: Option<u32>) -> Self {
+        Self(major, minor, patch, beta)
+    }
+
+    /// Бета-версия, а не выпуск.
+    pub fn is_beta(&self) -> bool {
+        self.3.is_some()
+    }
+
+    /// Тег на GitHub, где лежат файлы этой версии.
+    fn tag(&self) -> String {
+        if self.is_beta() {
+            BETA_TAG.to_string()
+        } else {
+            format!("v{self}")
+        }
     }
 }
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)?;
+        match self.3 {
+            Some(n) => write!(f, "-beta.{n}"),
+            None => Ok(()),
+        }
     }
 }
+
+/// Версия этой сборки строкой: `0.5.4` или `0.5.4-beta.312`.
+pub fn current_string() -> &'static str {
+    static TEXT: LazyLock<String> = LazyLock::new(|| Version::current().to_string());
+    &TEXT
+}
+
+/// Команда для Linux, которая ставит последнюю бета-версию.
+const BETA_LINUX_COMMAND: &str = "curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh -s -- --beta";
 
 /// Чем обновляется эта копия Axiom. Каждая система использует свои варианты.
 #[allow(dead_code)]
@@ -111,8 +166,15 @@ impl How {
         how
     }
 
-    fn command(self) -> &'static str {
+    /// Бета-версии есть только для Windows и Arch (пакет `axiom-browser-bin`).
+    fn has_beta(self) -> bool {
+        matches!(self, Self::InPlace | Self::Pacman | Self::Aur)
+    }
+
+    /// `beta` — предлагаем бета-версию: на Arch её ставит install.sh --beta.
+    fn command(self, beta: bool) -> &'static str {
         match self {
+            Self::Pacman | Self::Aur if beta => BETA_LINUX_COMMAND,
             Self::Apt => "sudo apt update && sudo apt install --only-upgrade axiom-browser",
             // В Arch обновляют всю систему сразу: частичное обновление (-Sy) её ломает.
             Self::Pacman => "sudo pacman -Syu",
@@ -184,7 +246,8 @@ pub enum Checked {
 /// Результаты фоновых потоков.
 #[derive(Debug)]
 pub enum UpdateEvent {
-    Checked(Result<Version, String>),
+    /// Итог проверки и следила ли она за бета-версиями.
+    Checked(Result<Version, String>, bool),
     /// Сколько байт скачано (только Windows).
     #[cfg_attr(not(windows), allow(dead_code))]
     Progress(u64),
@@ -223,6 +286,12 @@ pub struct View {
     pub manual: bool,
     /// Идут загрузки файлов: перезапуск их прервёт.
     pub busy: bool,
+    /// Следим и за бета-версиями.
+    pub beta: bool,
+    /// Эта копия — бета-версия.
+    pub beta_build: bool,
+    /// Бета-версии для этой системы есть: показываем переключатель.
+    pub beta_available: bool,
 }
 
 pub struct Updater {
@@ -236,6 +305,8 @@ pub struct Updater {
     /// Идущую проверку запросил пользователь — итог нужно показать.
     manual: bool,
     how: How,
+    /// Следить и за бета-версиями (если они есть для этой системы).
+    beta: bool,
 }
 
 impl Updater {
@@ -250,7 +321,23 @@ impl Updater {
             next_check: Instant::now(),
             manual: false,
             how: How::detect(),
+            beta: false,
         }
+    }
+
+    /// Включает или выключает бета-версии. Канал сменился — прежний ответ
+    /// не годится: проверим заново при ближайшем тике. `true` — канал сменился.
+    pub fn set_beta(&mut self, beta: bool) -> bool {
+        let beta = beta && self.how.has_beta();
+        if beta == self.beta {
+            return false;
+        }
+        self.beta = beta;
+        self.latest = None;
+        self.checked = Checked::Never;
+        self.check_error.clear();
+        self.next_check = Instant::now();
+        true
     }
 
     /// Плановая проверка из служебного таймера.
@@ -272,21 +359,27 @@ impl Updater {
         self.phase = Phase::Checking;
         self.manual = manual;
         let events = events.clone();
+        let beta = self.beta;
         thread::spawn(move || {
-            let latest = fetch_latest().map_err(|e| format!("{e:#}"));
-            let _ = events.send_event(UserEvent::Update(UpdateEvent::Checked(latest)));
+            let latest = fetch_latest(beta).map_err(|e| format!("{e:#}"));
+            let _ = events.send_event(UserEvent::Update(UpdateEvent::Checked(latest, beta)));
         });
         true
     }
 
     /// Итог проверки. `true` — её запросил пользователь.
-    pub fn on_checked(&mut self, latest: Result<Version, String>) -> bool {
+    pub fn on_checked(&mut self, latest: Result<Version, String>, beta: bool) -> bool {
         if self.phase == Phase::Checking {
             self.phase = Phase::Idle;
         }
+        if beta != self.beta {
+            // Пока шла проверка, бета-версии включили или выключили:
+            // ответ про другой канал. `set_beta` уже назначил новую проверку.
+            return std::mem::take(&mut self.manual);
+        }
         match latest {
             Ok(version) => {
-                self.next_check = Instant::now() + EVERY;
+                self.next_check = Instant::now() + if self.beta { EVERY_BETA } else { EVERY };
                 self.checked = Checked::Ok;
                 self.check_error.clear();
                 self.latest = (version > Version::current()).then_some(version);
@@ -346,11 +439,11 @@ impl Updater {
 
     pub fn view(&self, manual: bool, busy: bool) -> View {
         let page = match self.latest {
-            Some(v) => format!("{REPO}/releases/tag/v{v}"),
+            Some(v) => format!("{REPO}/releases/tag/{}", v.tag()),
             None => format!("{REPO}/releases/latest"),
         };
         View {
-            current: Version::current().to_string(),
+            current: current_string().to_string(),
             latest: self.latest.map(|v| v.to_string()),
             phase: self.phase,
             received: self.received,
@@ -358,10 +451,13 @@ impl Updater {
             checked: self.checked,
             check_error: self.check_error.clone(),
             how: self.how,
-            command: self.how.command(),
+            command: self.how.command(self.latest.is_some_and(|v| v.is_beta())),
             page,
             manual,
             busy,
+            beta: self.beta,
+            beta_build: Version::current().is_beta(),
+            beta_available: self.how.has_beta(),
         }
     }
 }
@@ -383,7 +479,7 @@ fn base_url() -> String {
 #[cfg(windows)]
 const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
-const NULL_DEVICE: &str = "/dev/null";
+const NULL_DEVICE: &str = "/beta/null";
 
 fn curl() -> Command {
     #[cfg(windows)]
@@ -432,8 +528,53 @@ fn curl_error(out: &std::process::Output) -> anyhow::Error {
     }
 }
 
+/// Самая новая версия: выпуск, а с `beta` — и бета-версия, если она новее.
+/// Один канал не ответил — берём ответ другого.
+fn fetch_latest(beta: bool) -> Result<Version> {
+    let stable = fetch_stable();
+    if !beta {
+        return stable;
+    }
+    match (stable, fetch_beta()) {
+        (Ok(stable), Ok(beta)) => Ok(stable.max(beta)),
+        (Ok(version), Err(_)) | (Err(_), Ok(version)) => Ok(version),
+        (Err(err), Err(_)) => Err(err),
+    }
+}
+
+/// Номер последней бета-версии: первая строка файла VERSION пре-релиза `beta`.
+fn fetch_beta() -> Result<Version> {
+    let out = curl()
+        .args([
+            "--fail",
+            "--location",
+            "--max-time",
+            "30",
+            "--max-filesize",
+            "4096",
+        ])
+        .arg(format!(
+            "{}/releases/download/{BETA_TAG}/{VERSION_FILE}",
+            base_url()
+        ))
+        .output()
+        .context("не удалось запустить curl")?;
+    if !out.status.success() {
+        return Err(curl_error(&out));
+    }
+    beta_version(&String::from_utf8_lossy(&out.stdout))
+        .ok_or_else(|| anyhow!("GitHub не назвал бета-версию"))
+}
+
+fn beta_version(text: &str) -> Option<Version> {
+    text.lines()
+        .next()
+        .and_then(Version::parse)
+        .filter(Version::is_beta)
+}
+
 /// Номер последнего релиза из адреса, куда GitHub перенаправляет `releases/latest`.
-fn fetch_latest() -> Result<Version> {
+fn fetch_stable() -> Result<Version> {
     let out = curl()
         .args(["--max-time", "30", "--output", NULL_DEVICE])
         .args(["--write-out", "%{redirect_url}"])
@@ -463,7 +604,7 @@ fn download(version: Version, events: &EventLoopProxy<UserEvent>) -> Result<Down
         .parent()
         .ok_or_else(|| anyhow!("не найдена папка Axiom"))?;
     let part = dir.join(format!("axiom-{version}.download"));
-    let base = format!("{}/releases/download/v{version}", base_url());
+    let base = format!("{}/releases/download/{}", base_url(), version.tag());
 
     let sums = curl()
         .args(["--fail", "--location", "--max-time", "60"])
@@ -761,23 +902,94 @@ pub fn cleanup() {
 mod tests {
     use super::*;
 
+    fn v(major: u32, minor: u32, patch: u32) -> Version {
+        Version(major, minor, patch, None)
+    }
+
+    fn beta(major: u32, minor: u32, patch: u32, n: u32) -> Version {
+        Version(major, minor, patch, Some(n))
+    }
+
     #[test]
     fn parses_versions() {
-        assert_eq!(Version::parse("v0.3.0"), Some(Version(0, 3, 0)));
-        assert_eq!(Version::parse("1.10.2"), Some(Version(1, 10, 2)));
+        assert_eq!(Version::parse("v0.3.0"), Some(v(0, 3, 0)));
+        assert_eq!(Version::parse("1.10.2"), Some(v(1, 10, 2)));
         assert_eq!(Version::parse("v1.2"), None);
         assert_eq!(Version::parse("v1.2.3.4"), None);
         assert_eq!(Version::parse("v1.2.3-rc1"), None);
         assert_eq!(Version::parse("v+1.2.3"), None);
-        assert!(Version(0, 10, 0) > Version(0, 9, 9));
-        assert!(Version(1, 0, 0) > Version(0, 99, 99));
-        assert_eq!(Version::current().to_string(), env!("CARGO_PKG_VERSION"));
+        assert!(v(0, 10, 0) > v(0, 9, 9));
+        assert!(v(1, 0, 0) > v(0, 99, 99));
+        if BETA_BUILD.is_none() {
+            assert_eq!(Version::current().to_string(), env!("CARGO_PKG_VERSION"));
+            assert!(!Version::current().is_beta());
+            assert_eq!(current_string(), env!("CARGO_PKG_VERSION"));
+        }
+    }
+
+    #[test]
+    fn beta_builds_sit_between_releases() {
+        assert_eq!(Version::parse("0.5.4-beta.312"), Some(beta(0, 5, 4, 312)));
+        assert_eq!(Version::parse("v0.5.4-beta.7\n"), Some(beta(0, 5, 4, 7)));
+        assert_eq!(Version::parse("0.5.4-beta.0"), None);
+        assert_eq!(Version::parse("0.5.4-beta."), None);
+        assert_eq!(Version::parse("0.5.4-beta.3a"), None);
+        assert_eq!(Version::parse("0.5-beta.3"), None);
+        assert_eq!(beta(0, 5, 4, 312).to_string(), "0.5.4-beta.312");
+        assert!(v(0, 5, 4) < beta(0, 5, 4, 1));
+        assert!(beta(0, 5, 4, 9) < beta(0, 5, 4, 312));
+        assert!(beta(0, 5, 4, 312) < v(0, 5, 5));
+        assert!(v(0, 5, 5) < beta(0, 5, 5, 313));
+        assert_eq!(beta(0, 5, 4, 312).tag(), "beta");
+        assert_eq!(v(0, 5, 4).tag(), "v0.5.4");
+    }
+
+    #[test]
+    fn reads_beta_version_file() {
+        let text = "0.5.4-beta.312\n06ddbe2c0ffee\n";
+        assert_eq!(beta_version(text), Some(beta(0, 5, 4, 312)));
+        // Выпуск в файле бета-версий — не ответ.
+        assert_eq!(beta_version("0.5.4\n"), None);
+        assert_eq!(beta_version("<html>Not Found</html>"), None);
+        assert_eq!(beta_version(""), None);
+    }
+
+    #[test]
+    fn beta_only_where_builds_exist() {
+        assert!(How::InPlace.has_beta() && How::Aur.has_beta() && How::Pacman.has_beta());
+        assert!(!How::Apt.has_beta() && !How::Manual.has_beta());
+        assert_eq!(How::Aur.command(true), BETA_LINUX_COMMAND);
+        assert_eq!(How::Pacman.command(true), BETA_LINUX_COMMAND);
+        assert_eq!(How::Pacman.command(false), "sudo pacman -Syu");
+        assert!(How::Apt.command(true).starts_with("sudo apt"));
+    }
+
+    #[test]
+    fn switching_channel_drops_stale_answer() {
+        let mut up = Updater::new();
+        up.how = How::InPlace;
+        up.latest = Some(v(0, 5, 5));
+        up.checked = Checked::Ok;
+        up.set_beta(true);
+        assert!(up.beta && up.latest.is_none() && up.checked == Checked::Never);
+        // Ответ проверки, начатой до переключения, пропускаем.
+        up.phase = Phase::Checking;
+        up.on_checked(Ok(v(9, 9, 9)), false);
+        assert_eq!(up.latest, None);
+        assert_eq!(up.phase, Phase::Idle);
+        up.on_checked(Ok(beta(9, 9, 9, 1)), true);
+        assert_eq!(up.latest, Some(beta(9, 9, 9, 1)));
+        // Где бета-версий нет, канал не включается.
+        let mut apt = Updater::new();
+        apt.how = How::Apt;
+        apt.set_beta(true);
+        assert!(!apt.beta);
     }
 
     #[test]
     fn reads_tag_from_redirect() {
         let url = "https://github.com/mylifeitsbest/axiom/releases/tag/v0.3.1";
-        assert_eq!(version_from_tag_url(url), Some(Version(0, 3, 1)));
+        assert_eq!(version_from_tag_url(url), Some(v(0, 3, 1)));
         assert_eq!(
             version_from_tag_url("https://github.com/mylifeitsbest/axiom/releases"),
             None

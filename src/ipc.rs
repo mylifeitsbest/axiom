@@ -107,6 +107,9 @@ pub struct SettingsIn {
     /// Убирать метки слежки из адресов. Нет поля — не менять.
     #[serde(default)]
     pub strip_tracking: Option<bool>,
+    /// Бета-версии. Нет поля или null — не менять.
+    #[serde(default)]
+    pub beta: Option<bool>,
 }
 
 fn yes() -> bool {

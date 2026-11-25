@@ -107,7 +107,8 @@ fn replace(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Версия exe из ресурса VERSIONINFO (его встраивает build.rs с версией пакета).
+/// Версия exe из ресурса VERSIONINFO (его встраивает build.rs с версией пакета
+/// и номером бета-версии).
 /// Старую копию ради этого не запускаем: она открыла бы окно на профиле.
 fn file_version(exe: &Path) -> Option<Version> {
     use std::{ffi::c_void, os::windows::ffi::OsStrExt};
@@ -161,10 +162,13 @@ fn file_version(exe: &Path) -> Option<Version> {
     if fixed.signature != SIGNATURE {
         return None;
     }
+    // Четвёртое число — номер бета-версии (build.rs), у выпуска 0.
+    let beta = fixed.file_version_ls & 0xFFFF;
     Some(Version::new(
         fixed.file_version_ms >> 16,
         fixed.file_version_ms & 0xFFFF,
         fixed.file_version_ls >> 16,
+        (beta > 0).then_some(beta),
     ))
 }
 

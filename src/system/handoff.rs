@@ -297,7 +297,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let saved = saved.unwrap_or_else(|| last("", Path::new("")));
-        assert_eq!(saved, last(env!("CARGO_PKG_VERSION"), &me));
+        assert_eq!(saved, last(&Version::current().to_string(), &me));
         // Своя же запись никуда не отправляет.
         assert_eq!(
             next(&saved, Version::current(), &me, &homes(&me)),

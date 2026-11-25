@@ -64,6 +64,12 @@ irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
 
 Когда есть новая версия, в панели появляется кнопка «Обновить». На Windows Axiom скачивает `Axiom-windows-x64.exe` из релиза в свою папку, сверяет его с `SHA256SUMS.txt` и ставит на место текущего exe, затем перезапускается с теми же вкладками. Если папка недоступна для записи или сумма не совпала, ничего не меняется, и Axiom предложит скачать версию вручную. Прежняя версия остаётся рядом как `axiom.exe.old`, пока новая не проработает 10 минут: если новая не запускается, закройте Axiom, удалите `axiom.exe` и переименуйте `axiom.exe.old` в `axiom.exe`. На Linux Axiom стоит пакетом, поэтому кнопка показывает команду для apt или pacman.
 
+### Бета-версии
+
+Хотите получать исправления и новинки сразу, не дожидаясь выхода версии? Включите «Система» → «Бета-версии» (Windows и Arch). Бета-версия собирается из каждого изменения, прошедшего проверки, и лежит в пре-релизе [`beta`](https://github.com/mylifeitsbest/axiom/releases/tag/beta). Axiom проверяет её раз в полчаса и предлагает обновиться так же, как с обычной версией. Ошибки в бете возможны, о них пишите в [Issues](https://github.com/mylifeitsbest/axiom/issues). Если выключить переключатель, со следующей обычной версии Axiom вернётся на обычные.
+
+Сразу поставить бету: на Windows `$env:AXIOM_BETA=1; irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex`, на Arch `curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh -s -- --beta` (пакет `axiom-browser-bin` через `pacman -U`, без обновления системы).
+
 ### Linux одной командой
 
 ```sh

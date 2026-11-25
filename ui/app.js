@@ -323,6 +323,8 @@
         force_dark: !!B.force_dark,
         check_updates: B.check_updates !== false,
         strip_tracking: B.strip_tracking !== false,
+        // null — бета-версии ещё не включали и не выключали: Rust не трогает поле.
+        beta: typeof B.beta === 'boolean' ? B.beta : null,
       },
     });
     if (now) run(); else saveTimer = setTimeout(run, 350);
@@ -1042,7 +1044,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '' };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {

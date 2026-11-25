@@ -292,7 +292,8 @@ impl TempDb {
         let id = format!("{browser:?}").to_lowercase();
         let dir = paths.root.join(format!("import-{id}.tmp"));
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir)?;
+        // Копия чужой истории: только для владельца, как и весь профиль.
+        super::private_dir(&dir)?;
         let temp = Self {
             file: dir.join(src.file_name().unwrap_or_default()),
             dir,

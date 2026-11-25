@@ -8,7 +8,7 @@ pub mod session;
 
 use std::{
     fs,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -32,8 +32,14 @@ impl Paths {
                 .data_local_dir()
                 .to_path_buf(),
         };
-        fs::create_dir_all(&root)
+        Self::open(root)
+    }
+
+    /// Создаёт папку профиля или закрывает от чужих уже существующую.
+    fn open(root: PathBuf) -> Result<Self> {
+        private_dir(&root)
             .with_context(|| format!("не удалось создать папку профиля {}", root.display()))?;
+        owner::close_root(&root);
         Ok(Self { root })
     }
 
@@ -76,7 +82,7 @@ pub fn write_json_compact<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 
 fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
-    let mut file = fs::File::create(&tmp).with_context(|| format!("запись {}", tmp.display()))?;
+    let mut file = create_private(&tmp).with_context(|| format!("запись {}", tmp.display()))?;
     file.write_all(bytes)
         .with_context(|| format!("запись {}", tmp.display()))?;
     // Без этого после сбоя питания переименование может пережить данные,
@@ -86,6 +92,105 @@ fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     drop(file);
     fs::rename(&tmp, path).with_context(|| format!("замена {}", path.display()))?;
     Ok(())
+}
+
+/// Папка в профиле, которую видит только владелец: на Unix `0700`.
+/// Недостающие родительские папки создаются как обычно — их права не наше дело.
+/// Уже существующую папку не трогаем (корень профиля закрывает [`Paths::resolve`]).
+pub fn private_dir(path: &Path) -> io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    let mut builder = fs::DirBuilder::new();
+    owner::dir_mode(&mut builder);
+    match builder.create(path) {
+        // Папку только что создал кто-то ещё (второй экземпляр браузера).
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        result => result,
+    }
+}
+
+/// Файл в профиле, который читает только владелец: на Unix `0600`.
+/// Существующий файл обрезается, как у [`fs::File::create`].
+pub fn create_private(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    owner::file_mode(&mut options);
+    let file = options.open(path)?;
+    // Режим при открытии действует только на новый файл, а этот мог остаться
+    // с прежними правами (`.json.tmp` после сбоя).
+    owner::fix_file(&file);
+    Ok(file)
+}
+
+/// Права «только владелец». На Windows профиль лежит в `%LOCALAPPDATA%`, и его
+/// и так закрывают права папки пользователя: там ничего не меняем.
+///
+/// На Linux куки WebKitGTK лежат в профиле открытым текстом, а домашняя папка
+/// бывает открыта другим пользователям (`0755`), и профиль можно вынести
+/// на общий диск (`AXIOM_PROFILE`). Поэтому папки профиля — `0700`,
+/// наши файлы — `0600`. Ошибки смены прав молча пропускаем: на флешке с FAT
+/// права не меняются вовсе, а профиль должен работать и там.
+#[cfg(unix)]
+mod owner {
+    use std::{
+        fs,
+        os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+        path::Path,
+    };
+
+    const DIR: u32 = 0o700;
+    const FILE: u32 = 0o600;
+    /// Права группы и остальных.
+    const OTHERS: u32 = 0o077;
+    /// Sticky-бит: папка общая по замыслу, как `/tmp`.
+    const STICKY: u32 = 0o1000;
+
+    pub fn dir_mode(builder: &mut fs::DirBuilder) {
+        builder.mode(DIR);
+    }
+
+    pub fn file_mode(options: &mut fs::OpenOptions) {
+        options.mode(FILE);
+    }
+
+    pub fn fix_file(file: &fs::File) {
+        if file
+            .metadata()
+            .is_ok_and(|meta| meta.permissions().mode() & OTHERS != 0)
+        {
+            let _ = file.set_permissions(fs::Permissions::from_mode(FILE));
+        }
+    }
+
+    /// Профиль, созданный прежними версиями (`0755`), закрываем при запуске.
+    /// Только сам корень, не родителей. Общую папку со sticky-битом не трогаем,
+    /// даже если `AXIOM_PROFILE` указывает прямо на неё.
+    pub fn close_root(root: &Path) {
+        let Ok(meta) = fs::metadata(root) else {
+            return;
+        };
+        let mode = meta.permissions().mode();
+        if meta.is_dir() && mode & OTHERS != 0 && mode & STICKY == 0 {
+            let _ = fs::set_permissions(root, fs::Permissions::from_mode(DIR));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod owner {
+    use std::{fs, path::Path};
+
+    pub fn dir_mode(_builder: &mut fs::DirBuilder) {}
+
+    pub fn file_mode(_options: &mut fs::OpenOptions) {}
+
+    pub fn fix_file(_file: &fs::File) {}
+
+    pub fn close_root(_root: &Path) {}
 }
 
 /// Текущее время в секундах Unix.
@@ -116,5 +221,87 @@ mod tests {
         assert!(gone);
         assert_eq!(bad, b"{\"onboarded\": tru");
         assert_eq!(back, Some(serde_json::json!({ "a": 1 })));
+    }
+
+    #[test]
+    fn profile_is_created_with_parents() {
+        let base = std::env::temp_dir().join(format!("axiom-private-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let root = base.join("nested").join("profile");
+        let paths = Paths::open(root.clone());
+        let engine = root.join("webview");
+        let engine_ok = private_dir(&engine).is_ok() && private_dir(&engine).is_ok();
+        let file = root.join("settings.json");
+        let written = write_json(&file, &serde_json::json!({ "a": 1 })).is_ok()
+            && write_json(&file, &serde_json::json!({ "a": 2 })).is_ok();
+        let back: Option<serde_json::Value> = read_json(&file);
+        let tmp_left = root.join("settings.json.tmp").exists();
+        // На месте папки — файл: это ошибка, а не «папка уже есть».
+        let blocked = root.join("blocked");
+        let _ = fs::write(&blocked, b"x");
+        let blocked_err = private_dir(&blocked).is_err();
+        let _ = fs::remove_dir_all(&base);
+        assert!(paths.is_ok_and(|p| p.root == root));
+        assert!(engine_ok);
+        assert!(written);
+        assert_eq!(back, Some(serde_json::json!({ "a": 2 })));
+        assert!(!tmp_left);
+        assert!(blocked_err);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        fn mode(path: &Path) -> u32 {
+            fs::metadata(path)
+                .map(|m| m.permissions().mode() & 0o7777)
+                .unwrap_or(0)
+        }
+        let base = std::env::temp_dir().join(format!("axiom-owner-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::create_dir_all(&base);
+
+        // Новый профиль и всё, что пишем в него сами.
+        let fresh = base.join("fresh");
+        let opened = Paths::open(fresh.clone()).is_ok();
+        let engine = fresh.join("webview");
+        let _ = private_dir(&engine);
+        let file = fresh.join("instance.json");
+        let _ = write_json(&file, &serde_json::json!({ "port": 1 }));
+        // `.tmp`, оставшийся от сбоя с открытыми правами, тоже закрывается.
+        let stale = fresh.join("history.json.tmp");
+        let _ = fs::write(&stale, b"old");
+        let _ = fs::set_permissions(&stale, fs::Permissions::from_mode(0o644));
+        let _ = write_json(&fresh.join("history.json"), &serde_json::json!([]));
+        let fresh_modes = (
+            mode(&fresh),
+            mode(&engine),
+            mode(&file),
+            mode(&fresh.join("history.json")),
+        );
+
+        // Профиль прежних версий: корень закрывается, родитель — нет.
+        let parent = base.join("shared");
+        let old = parent.join("axiom");
+        let _ = fs::create_dir_all(&old);
+        let _ = fs::set_permissions(&parent, fs::Permissions::from_mode(0o755));
+        let _ = fs::set_permissions(&old, fs::Permissions::from_mode(0o755));
+        let reopened = Paths::open(old.clone()).is_ok();
+        let old_modes = (mode(&parent), mode(&old));
+
+        // Общую папку со sticky-битом (как `/tmp`) не трогаем.
+        let common = base.join("common");
+        let _ = fs::create_dir_all(&common);
+        let _ = fs::set_permissions(&common, fs::Permissions::from_mode(0o1777));
+        let common_ok = Paths::open(common.clone()).is_ok();
+        let common_mode = mode(&common);
+
+        let _ = fs::set_permissions(&common, fs::Permissions::from_mode(0o700));
+        let _ = fs::remove_dir_all(&base);
+        assert!(opened && reopened && common_ok);
+        assert_eq!(fresh_modes, (0o700, 0o700, 0o600, 0o600));
+        assert_eq!(old_modes, (0o755, 0o700));
+        assert_eq!(common_mode, 0o1777);
     }
 }

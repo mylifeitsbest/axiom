@@ -11,6 +11,7 @@ mod webview2;
 
 use std::{
     ffi::OsString,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
@@ -380,6 +381,8 @@ fn short_url(url: &str) -> String {
 /// переименованный в `setup.txt` или `photo.jpg`, — по имени его не узнать.
 /// Спрашиваем об этом только на Windows: на Linux у скачанного файла нет права
 /// на запуск, а о типах файлов WebKitGTK не спрашивает вовсе.
+///
+/// Заголовок PE дальше `head` здесь не виден — его дочитывает [`program_inside`].
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn looks_like_program(head: &[u8]) -> bool {
     if head.starts_with(b"\x7fELF") {
@@ -391,33 +394,64 @@ pub fn looks_like_program(head: &[u8]) -> bool {
             .find(|b| !matches!(b, b' ' | b'\t'))
             .is_some_and(|&b| b == b'/');
     }
+    pe_offset(head)
+        .and_then(|offset| usize::try_from(offset).ok())
+        .and_then(|offset| head.get(offset..offset.checked_add(4)?))
+        .is_some_and(|sig| sig == PE_SIGNATURE)
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+const PE_SIGNATURE: &[u8; 4] = b"PE\0\0";
+
+/// `MZ` в начале — смещение заголовка PE из поля e_lfanew старого заголовка DOS.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn pe_offset(head: &[u8]) -> Option<u64> {
     if !head.starts_with(b"MZ") {
-        return false;
+        return None;
     }
-    // Смещение заголовка PE — в поле e_lfanew старого заголовка DOS.
-    let Some(offset) = head.get(0x3C..0x40) else {
-        return false;
-    };
-    let offset = u32::from_le_bytes([offset[0], offset[1], offset[2], offset[3]]) as usize;
-    offset
-        .checked_add(4)
-        .and_then(|end| head.get(offset..end))
-        .is_some_and(|sig| sig == b"PE\0\0")
+    let field: [u8; 4] = head.get(0x3C..0x40)?.try_into().ok()?;
+    Some(u64::from(u32::from_le_bytes(field)))
 }
 
 /// Сколько байт начала файла читать для [`looks_like_program`]: заголовок PE
-/// у настоящих программ — в первых сотнях байт.
+/// у обычных программ — в первых сотнях байт.
 #[cfg_attr(not(windows), allow(dead_code))]
 const HEAD: u64 = 4096;
+
+/// Дальше этого заголовок PE не ищем. Windows читает его по 32-битному смещению
+/// e_lfanew, то есть где угодно в файле: длинная заглушка DOS — и заголовок
+/// уже за первыми 4 КБ. У настоящих программ он гораздо ближе; 16 МБ — с запасом,
+/// а читаем оттуда всё равно только 4 байта.
+#[cfg_attr(not(windows), allow(dead_code))]
+const MAX_PE_OFFSET: u64 = 16 << 20;
 
 /// Скачанный файл — программа (см. [`looks_like_program`]).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn program_inside(path: &Path) -> bool {
-    use std::io::Read;
+    std::fs::File::open(path).is_ok_and(program_in)
+}
+
+/// [`program_inside`] для любого источника с перемоткой.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn program_in<R: Read + Seek>(mut file: R) -> bool {
     let mut head = Vec::new();
-    std::fs::File::open(path)
-        .and_then(|f| f.take(HEAD).read_to_end(&mut head))
-        .is_ok_and(|_| looks_like_program(&head))
+    if file.by_ref().take(HEAD).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    if looks_like_program(&head) {
+        return true;
+    }
+    // Заголовок PE не поместился в прочитанное начало: дочитываем 4 байта по смещению.
+    let Some(offset) = pe_offset(&head) else {
+        return false;
+    };
+    if offset.saturating_add(4) <= head.len() as u64 || offset > MAX_PE_OFFSET {
+        return false;
+    }
+    let mut sig = [0u8; 4];
+    file.seek(SeekFrom::Start(offset)).is_ok()
+        && file.read_exact(&mut sig).is_ok()
+        && &sig == PE_SIGNATURE
 }
 
 /// `файл.zip` → `файл (1).zip`, если такой файл уже есть.
@@ -690,6 +724,58 @@ mod tests {
         assert!(!looks_like_program(b"PK\x03\x04"));
         assert!(!looks_like_program(b""));
         assert!(!program_inside(Path::new("нет такого файла")));
+    }
+
+    /// Файл `len` байт: `MZ`, e_lfanew = `offset` и подпись PE там, если влезает.
+    fn pe_at(offset: u32, len: usize) -> Vec<u8> {
+        let mut file = vec![0u8; len];
+        file[..2].copy_from_slice(b"MZ");
+        file[0x3C..0x40].copy_from_slice(&offset.to_le_bytes());
+        let at = offset as usize;
+        if let Some(sig) = file.get_mut(at..at.saturating_add(4)) {
+            sig.copy_from_slice(b"PE\0\0");
+        }
+        file
+    }
+
+    #[test]
+    fn finds_pe_header_past_head() {
+        use std::io::Cursor;
+        // Заголовок в начале, на границе прочитанного и далеко за ним (длинная заглушка DOS).
+        for offset in [0x80, 0xFFC, 0xFFE, 0x1000, 0x2000, 0x10_0000] {
+            let file = pe_at(offset, offset as usize + 0x200);
+            assert!(program_in(Cursor::new(&file)), "{offset:#x}");
+        }
+        // Ровно на пределе ещё ищем, дальше — уже нет.
+        let edge = MAX_PE_OFFSET as u32;
+        assert!(program_in(Cursor::new(pe_at(edge, edge as usize + 4))));
+        assert!(!program_in(Cursor::new(pe_at(edge + 1, edge as usize + 5))));
+        // Смещение 0xFFFFFFFF не переполняет ничего.
+        assert!(!program_in(Cursor::new(pe_at(u32::MAX, 0x100))));
+
+        // Смещение за концом файла, не та подпись, обрыв на середине подписи.
+        assert!(!program_in(Cursor::new(pe_at(0x2000, 0x1800))));
+        let mut wrong = pe_at(0x2000, 0x2200);
+        wrong[0x2000..0x2004].copy_from_slice(b"NE\0\0");
+        assert!(!program_in(Cursor::new(&wrong)));
+        let cut = pe_at(0x2000, 0x2200);
+        assert!(!program_in(Cursor::new(&cut[..0x2002])));
+        // Без `MZ` смещение не читаем вовсе; ELF и скрипты — как раньше.
+        let mut text = pe_at(0x2000, 0x2200);
+        text[..2].copy_from_slice(b"MX");
+        assert!(!program_in(Cursor::new(&text)));
+        assert!(program_in(Cursor::new(b"\x7fELF\x02\x01\x01")));
+        assert!(program_in(Cursor::new(b"#!/bin/sh\n")));
+        assert!(!program_in(Cursor::new(b"MZ")));
+
+        // И с диска: программа под видом картинки.
+        let dir = std::env::temp_dir().join(format!("axiom-dl-pe-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("photo.jpg");
+        let _ = std::fs::write(&file, pe_at(0x2000, 0x3000));
+        let found = program_inside(&file);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(found);
     }
 
     #[test]

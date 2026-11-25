@@ -194,10 +194,51 @@ pub fn classify(url: &str, source: Source) -> Option<String> {
     launch_string(parsed.as_str())
 }
 
-/// `ofe|u|…`: после схемы идёт команда с разделителем `|` (или `%7C`).
+/// Сколько слоёв `%XX` снимаем, ища `|` в ссылке Office. Глубже — уже не ссылка,
+/// а попытка обойти проверку: такую считаем командой.
+const MAX_DECODE: usize = 8;
+
+/// `ofe|u|…`: после схемы идёт команда с разделителем `|` — в том числе
+/// закодированным (`%7C`) и закодированным повторно (`%257C`, `%25257C`…):
+/// обработчик Office может снимать кодирование не один раз.
 fn office_command(url: &Url) -> bool {
-    let rest = &url.as_str()[url.scheme().len() + 1..];
-    rest.contains('|') || rest.to_ascii_lowercase().contains("%7c")
+    let mut rest = url.as_str().as_bytes()[url.scheme().len() + 1..].to_vec();
+    for _ in 0..MAX_DECODE {
+        if rest.contains(&b'|') {
+            return true;
+        }
+        let decoded = percent_decode(&rest);
+        if decoded == rest {
+            return false;
+        }
+        rest = decoded;
+    }
+    true
+}
+
+/// Один слой `%XX` → байт. Неполное `%` (`%7`, `%zz`) остаётся как есть.
+fn percent_decode(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    let mut i = 0;
+    while let Some(&b) = text.get(i) {
+        if let Some(byte) = escape_at(text, i) {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(b);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Байт, закодированный как `%XX` с позиции `i`.
+fn escape_at(text: &[u8], i: usize) -> Option<u8> {
+    if text.get(i) != Some(&b'%') {
+        return None;
+    }
+    let hex = |at: usize| char::from(*text.get(at)?).to_digit(16);
+    u8::try_from((hex(i + 1)? << 4) | hex(i + 2)?).ok()
 }
 
 /// Ссылка для запуска: всё, кроме безопасных символов URL (RFC 3986), — `%XX`.
@@ -637,6 +678,10 @@ mod tests {
             "ms-word:ofe|u|https://evil.example/doc.docx",
             "ms-excel:ofv|u|https://evil.example/a.xlsx",
             "ms-powerpoint:nft%7Cu%7Chttps://evil.example/p.pptx",
+            // Закодированный повторно `|`: обработчик может снять кодирование дважды.
+            "ms-word:ofe%257Cu%257Chttps://evil.example/doc.docx",
+            "ms-excel:ofv%25257cu%25257chttps://evil.example/a.xlsx",
+            "ms-visio:ofe%%7C7Cu",
             "ms-cxh://setaddlocalonly",
             "ms-cxh-full://0",
             "ms-appinstaller:?source=https://evil.example/a.appinstaller",
@@ -662,6 +707,22 @@ mod tests {
             classify("ms-settings:windowsdefender", Source::Typed).as_deref(),
             Some("ms-settings:windowsdefender")
         );
+    }
+
+    #[test]
+    fn office_commands_are_decoded() {
+        assert_eq!(percent_decode(b"a%7Cb%7cc"), b"a|b|c");
+        assert_eq!(percent_decode(b"%257C"), b"%7C");
+        // Неполные и не шестнадцатеричные `%` — как есть.
+        assert_eq!(percent_decode(b"%7 %zz %"), b"%7 %zz %");
+        assert_eq!(percent_decode(b"100%"), b"100%");
+        // Сколько угодно слоёв: глубже MAX_DECODE — тоже команда.
+        for layers in [1, 2, 5, MAX_DECODE - 1, MAX_DECODE, MAX_DECODE + 3] {
+            let url = format!("ms-word:ofe%{}7Cu", "25".repeat(layers));
+            assert_eq!(site(&url), None, "{url}");
+        }
+        // Без `|` даже после раскодирования — просто приложение.
+        assert_eq!(site("ms-word:%41").as_deref(), Some("ms-word:%41"));
     }
 
     #[test]

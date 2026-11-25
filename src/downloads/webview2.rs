@@ -356,9 +356,6 @@ unsafe fn on_check(
         let mut raw = PWSTR::null();
         args.FilePath(&mut raw)?;
         let path = PathBuf::from(take_pwstr(raw));
-        let mut raw = PWSTR::null();
-        args.DocumentOriginUri(&mut raw)?;
-        let url = take_pwstr(raw);
         // Данные из списка Chromium: Edge без жеста придержал бы их, а спрашивать незачем.
         if is_quiet(&path) {
             return args.SetSuppressDefaultPolicy(true);
@@ -367,12 +364,14 @@ unsafe fn on_check(
         if !is_risky(&path) {
             return Ok(());
         }
+        // Загрузку узнаём только по пути: адреса самой загрузки в этом событии нет,
+        // а `DocumentOriginUri` — адрес страницы, с адресом загрузки он не совпадёт.
         let found = TRACKED.with(|t| {
             let tracked = t.borrow();
             tracked
                 .iter()
                 .find(|(_, d)| d.path == path)
-                .or_else(|| tracked.iter().find(|(_, d)| d.url == url && !d.kept))
+                .or_else(|| tracked.iter().find(|(_, d)| same_file(&d.path, &path)))
                 .map(|(&id, d)| (id, d.kept))
         });
         // Не загрузка из нашего списка — решает Edge.
@@ -403,6 +402,21 @@ unsafe fn on_check(
         }));
     }
     Ok(())
+}
+
+/// Один и тот же путь для Windows: `/` вместо `\`, префикс `\\?\` (`\\?\UNC\`)
+/// и регистр латинских букв не важны. Остальной регистр не сравниваем: лучше
+/// не узнать загрузку (тогда решает Edge), чем спросить о чужой.
+fn same_file(a: &Path, b: &Path) -> bool {
+    fn plain(path: &Path) -> String {
+        let text = path.to_string_lossy().replace('/', "\\");
+        if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{share}")
+        } else {
+            text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
+        }
+    }
+    plain(a).eq_ignore_ascii_case(&plain(b))
 }
 
 fn is_risky(path: &Path) -> bool {
@@ -546,5 +560,24 @@ mod tests {
         }
         assert!(is_quiet(Path::new("sitemap.XML")));
         assert!(!is_quiet(Path::new("setup.exe")));
+    }
+
+    #[test]
+    fn same_download_path() {
+        let same = |a: &str, b: &str| same_file(Path::new(a), Path::new(b));
+        let file = r"C:\Users\me\Downloads\setup.exe";
+        assert!(same(file, file));
+        assert!(same(file, r"c:\users\ME\downloads\SETUP.EXE"));
+        assert!(same(file, r"\\?\C:\Users\me\Downloads\setup.exe"));
+        assert!(same(file, "C:/Users/me/Downloads/setup.exe"));
+        assert!(same(
+            r"\\server\share\setup.exe",
+            r"\\?\UNC\server\share\setup.exe"
+        ));
+        assert!(!same(file, r"C:\Users\me\Downloads\setup (1).exe"));
+        assert!(!same(file, r"D:\Users\me\Downloads\setup.exe"));
+        assert!(!same(r"\\server\share\a.exe", r"C:\server\share\a.exe"));
+        // Не латиница: регистр не сравниваем, лучше промахнуться.
+        assert!(!same(r"C:\Загрузки\a.exe", r"C:\загрузки\a.exe"));
     }
 }

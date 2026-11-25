@@ -51,7 +51,9 @@ maintainer = "Axiom contributors <192708983+mylifeitsbest@users.noreply.github.c
 copyright = "2026, Axiom contributors"
 section = "web"
 priority = "optional"
-depends = "$auto, xdg-utils, curl"
+depends = "$auto, xdg-utils, curl, gstreamer1.0-plugins-good"
+# Кодеки mp4 (H.264/AAC): без них видео — чёрный прямоугольник. В Ubuntu — universe.
+recommends = "gstreamer1.0-libav"
 extended-description = """\
 Лёгкий браузер на Rust и системном WebView (WebKitGTK). Двойной поиск: \
 DuckDuckGo во вкладке и Google AI Mode в боковой панели, прокси только для \

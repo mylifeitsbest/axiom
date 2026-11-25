@@ -288,6 +288,31 @@ pub fn fill_window(webview: &WebView, rect: Rect) {
     }
 }
 
+/// Где держать webview (x, y, ширина, высота), пока окно меняет размер, а интерфейс
+/// ещё не прислал новую раскладку: `base` — размер контейнера, для которого место
+/// посчитано, `now` — нынешний. Отступы справа и снизу сохраняются, так что страница
+/// тянется вместе с окном и не оставляет тёмной полосы; узкая панель у правого края
+/// (ИИ) едет за краем. Точную раскладку чуть позже пришлёт интерфейс.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn follow(rect: (i32, i32, i32, i32), base: (i32, i32), now: (i32, i32)) -> (i32, i32, i32, i32) {
+    let (x, y, w, h) = rect;
+    let ((bw, bh), (nw, nh)) = (base, now);
+    if base == now || bw <= 0 || bh <= 0 {
+        return rect;
+    }
+    let right = bw - (x + w);
+    let bottom = bh - (y + h);
+    let (x, w) = if right == 0 && x > 0 && w * 2 < bw {
+        (nw - w, w)
+    } else if right >= 0 {
+        (x, nw - x - right)
+    } else {
+        (x, w)
+    };
+    let h = if bottom >= 0 { nh - y - bottom } else { h };
+    (x.max(0), y, w.max(1), h.max(1))
+}
+
 /// Linux: места webview в общем `gtk::Fixed`.
 ///
 /// `set_bounds` у wry для webview в GtkFixed только разово вызывает `size_allocate`,
@@ -295,7 +320,10 @@ pub fn fill_window(webview: &WebView, rect: Rect) {
 /// (оконный менеджер подогнал окно под плитку, развернул его, показалась вкладка)
 /// GtkFixed возвращает детей к стартовым размерам: интерфейс застревал в углу окна.
 /// Здесь каждый webview помнит своё место и получает его после каждой перекладки,
-/// а запрошенный размер сброшен до 1×1, чтобы не мешать окну уменьшаться.
+/// а запрошенный размер сброшен до 1×1, чтобы не мешать окну уменьшаться. Если окно
+/// с тех пор поменяло размер, место подстраивается под него сразу ([`follow`]), не
+/// дожидаясь интерфейса: иначе при перетаскивании окна в плиточном менеджере
+/// (Hyprland) страница отставала и мигала тёмной полосой.
 #[cfg(target_os = "linux")]
 mod gtk_place {
     use gtk::{glib, prelude::*};
@@ -309,44 +337,56 @@ mod gtk_place {
         At(i32, i32, i32, i32),
     }
 
+    /// Место webview и размер контейнера, для которого оно посчитано.
+    type Entry = (glib::WeakRef<gtk::Widget>, Place, Option<(i32, i32)>);
+
     thread_local! {
-        static PLACES: RefCell<Vec<(glib::WeakRef<gtk::Widget>, Place)>> =
-            const { RefCell::new(Vec::new()) };
+        static PLACES: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
     }
 
     pub fn remember(widget: &gtk::Widget, place: Place) {
+        let parent = widget.parent().map(|p| p.allocation());
+        let base = parent.as_ref().map(|a| (a.width(), a.height()));
         PLACES.with(|p| {
             let mut p = p.borrow_mut();
-            p.retain(|(w, _)| w.upgrade().is_some_and(|w| &w != widget));
-            p.push((widget.downgrade(), place));
+            p.retain(|(w, _, _)| w.upgrade().is_some_and(|w| &w != widget));
+            p.push((widget.downgrade(), place, base));
         });
         widget.set_size_request(1, 1);
-        if let Some(parent) = widget.parent() {
-            allocate(widget, place, &parent.allocation());
+        if let Some(parent) = parent {
+            allocate(widget, place, base, &parent);
         }
     }
 
     pub fn relayout(parent: &gtk::Allocation) {
         // Сначала список, потом размещение: size_allocate не должен застать занятый RefCell.
-        let items: Vec<(gtk::Widget, Place)> = PLACES.with(|p| {
+        let items: Vec<(gtk::Widget, Place, Option<(i32, i32)>)> = PLACES.with(|p| {
             let mut p = p.borrow_mut();
-            p.retain(|(w, _)| w.upgrade().is_some());
+            p.retain(|(w, _, _)| w.upgrade().is_some());
             p.iter()
-                .filter_map(|(w, place)| w.upgrade().map(|w| (w, *place)))
+                .filter_map(|(w, place, base)| w.upgrade().map(|w| (w, *place, *base)))
                 .collect()
         });
-        for (widget, place) in items {
-            allocate(&widget, place, parent);
+        for (widget, place, base) in items {
+            allocate(&widget, place, base, parent);
         }
     }
 
-    fn allocate(widget: &gtk::Widget, place: Place, parent: &gtk::Allocation) {
+    fn allocate(
+        widget: &gtk::Widget,
+        place: Place,
+        base: Option<(i32, i32)>,
+        parent: &gtk::Allocation,
+    ) {
         if !widget.is_visible() {
             return;
         }
+        let now = (parent.width(), parent.height());
         let (x, y, w, h) = match place {
-            Place::Fill => (0, 0, parent.width(), parent.height()),
-            Place::At(x, y, w, h) => (x, y, w, h),
+            Place::Fill => (0, 0, now.0, now.1),
+            Place::At(x, y, w, h) => {
+                base.map_or((x, y, w, h), |base| super::follow((x, y, w, h), base, now))
+            }
         };
         // У GtkFixed нет своего окна: координаты детей — от угла родительского окна.
         let rect = gtk::Allocation::new(parent.x() + x, parent.y() + y, w.max(1), h.max(1));
@@ -422,4 +462,35 @@ pub fn is_playing_audio(webview: &WebView) -> bool {
 #[cfg(not(windows))]
 pub fn is_playing_audio(_webview: &WebView) -> bool {
     false
+}
+
+#[cfg(test)]
+mod follow_tests {
+    use super::follow;
+
+    #[test]
+    fn page_stretches_and_panel_rides_the_edge() {
+        // Страница от сайдбара до правого края, окно стало шире.
+        assert_eq!(
+            follow((240, 80, 760, 640), (1000, 720), (1200, 800)),
+            (240, 80, 960, 720)
+        );
+        // Страница рядом с панелью ИИ: отступ справа (ширина панели) сохраняется.
+        assert_eq!(
+            follow((240, 80, 400, 640), (1000, 720), (1200, 720)),
+            (240, 80, 600, 640)
+        );
+        // Узкая панель у правого края едет за краем, ширина та же.
+        assert_eq!(
+            follow((640, 80, 360, 640), (1000, 720), (1200, 720)),
+            (840, 80, 360, 640)
+        );
+        // Размер не менялся — как есть.
+        assert_eq!(follow((1, 2, 3, 4), (10, 10), (10, 10)), (1, 2, 3, 4));
+        // Окно сжалось почти в ноль — не меньше 1×1.
+        assert_eq!(
+            follow((240, 80, 760, 640), (1000, 720), (100, 50)),
+            (240, 80, 1, 1)
+        );
+    }
 }

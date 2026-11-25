@@ -110,6 +110,9 @@ pub struct SettingsIn {
     /// Бета-версии. Нет поля или null — не менять.
     #[serde(default)]
     pub beta: Option<bool>,
+    /// Отрисовка страниц на Linux. Нет поля — не менять.
+    #[serde(default)]
+    pub gpu: Option<crate::system::gpu::Gpu>,
 }
 
 fn yes() -> bool {

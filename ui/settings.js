@@ -214,6 +214,7 @@ function createPanels(ax) {
         <div class="card">
           <div class="srow" id="instRow"><span class="sl"><b>Установка</b><small id="instNote"></small></span><span class="sc"><button class="btn primary" data-act="install" id="instBtn">Установить</button></span></div>
           <div class="srow"><span class="sl"><b>Браузер по умолчанию</b><small id="defNote"></small></span><span class="sc"><button class="btn" data-act="default" id="defBtn">Открыть параметры</button></span></div>
+          ${row('Отрисовка страниц', 'Если страницы мигают, когда двигаете окно, или Axiom закрывается сам (чаще на NVIDIA). Применится после перезапуска Axiom', '<select data-bkey="gpu"><option value="auto">Авто</option><option value="no_dmabuf">Без DMA-BUF</option><option value="no_compositing">Без ускорения</option><option value="off">Ничего не менять</option></select>', 'id="gpuRow" hidden data-kw="nvidia мигание видеокарта wayland hyprland dmabuf"')}
         </div>
         <div class="card">
           <div class="srow" id="updRow"><span class="sl"><b>Обновления</b><small id="updNote"></small></span><span class="sc"><button class="btn" data-act="update" id="updSet">Проверить</button></span></div>
@@ -305,6 +306,7 @@ function createPanels(ax) {
       $('#cssCut').hidden = !ax.cssCut();
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
       $('#forceDarkRow').hidden = sys.platform !== 'windows';
+      $('#gpuRow').hidden = sys.platform !== 'linux';
       ax.translate.syncSheet();
     }
   }
@@ -437,7 +439,7 @@ function createPanels(ax) {
       ax.B[el.dataset.bkey] = readVal(el);
       ax.saveSettings();
       ax.refresh();
-      if (el.dataset.bkey === 'force_dark') ax.toast('Перезапустите Axiom, чтобы применить');
+      if (el.dataset.bkey === 'force_dark' || el.dataset.bkey === 'gpu') ax.toast('Перезапустите Axiom, чтобы применить');
     }
   }
 

@@ -66,6 +66,9 @@ fn run() -> Result<()> {
         .collect();
 
     let paths = storage::Paths::resolve()?;
+    // До GTK и до первых потоков: переменные читают драйвер и процессы WebKit.
+    #[cfg(target_os = "linux")]
+    system::gpu::apply(settings::Settings::load(&paths).gpu);
     // Профиль уже открывала более новая версия: адреса — ей, а профиль не трогаем.
     if !updated && !handed_off && system::handoff::to_newer(&paths, &urls) {
         return Ok(());

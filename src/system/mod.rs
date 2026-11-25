@@ -7,6 +7,7 @@
 //! Linux: Axiom ставится пакетом (.deb, pacman), а основным браузером
 //! становится через `xdg-settings`.
 
+pub mod gpu;
 pub mod handoff;
 #[cfg(target_os = "linux")]
 mod linux;

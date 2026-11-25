@@ -75,6 +75,9 @@ pub struct Settings {
     /// `None` — ещё не решали: бета-версия при первом запуске включает их сама,
     /// и копия остаётся в этом канале, даже если потом поставят обычный выпуск.
     pub beta: Option<bool>,
+    /// Linux: обходы WebKitGTK для NVIDIA (мигание, окно закрывается само).
+    /// Применяются при запуске, см. `system::gpu`.
+    pub gpu: crate::system::gpu::Gpu,
     /// Перевод страниц: язык, автоперевод, предлагать ли перевод.
     pub translate: crate::translate::Prefs,
     /// Убирать метки слежки (`utm_*`, `fbclid`, `gclid`…) из открываемых адресов.
@@ -96,6 +99,7 @@ impl Default for Settings {
             force_dark: false,
             check_updates: true,
             beta: None,
+            gpu: crate::system::gpu::Gpu::Auto,
             translate: crate::translate::Prefs::default(),
             strip_tracking: true,
         }
@@ -133,6 +137,9 @@ impl Settings {
         // Переключатель есть не у всех: у кого его нет, приходит null.
         if let Some(on) = incoming.beta {
             self.beta = Some(on);
+        }
+        if let Some(gpu) = incoming.gpu {
+            self.gpu = gpu;
         }
     }
 

@@ -17,6 +17,8 @@ pkgbase = axiom-browser-bin
 	depends = xdg-utils
 	depends = hicolor-icon-theme
 	depends = curl
+	depends = gst-plugins-good
+	depends = gst-libav
 	provides = axiom-browser=0.5.4
 	conflicts = axiom-browser
 	options = !strip

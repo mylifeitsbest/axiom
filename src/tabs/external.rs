@@ -227,7 +227,7 @@ pub fn typed(input: &str) -> Option<Result<String, String>> {
     let s = input.trim();
     if s == super::omnibox::NEWTAB
         || s.chars().any(char::is_whitespace)
-        || super::omnibox::is_navigable(s)
+        || super::omnibox::is_page(s)
     {
         return None;
     }
@@ -662,6 +662,20 @@ mod tests {
             classify("ms-settings:windowsdefender", Source::Typed).as_deref(),
             Some("ms-settings:windowsdefender")
         );
+    }
+
+    #[test]
+    fn pages_are_not_app_links() {
+        // Адреса страниц в адресной строке (и из других программ) — не ссылки
+        // на приложения, даже если вкладка сама по ним не переходит.
+        for input in [
+            "data:text/html,x",
+            "about:settings",
+            "https://a.example/",
+            "rust webview",
+        ] {
+            assert!(typed(input).is_none(), "{input}");
+        }
     }
 
     #[test]

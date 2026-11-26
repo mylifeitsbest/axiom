@@ -14,6 +14,31 @@ const SEARCH_ENGINES = [
   { id: 'custom', name: 'Свой адрес', note: 'Адрес страницы результатов, %s — место запроса' },
 ];
 
+// ---------- подмена для сайтов (те же, что в src/tabs/identity.rs) ----------
+const AGENTS = [
+  { id: 'default', name: 'Как есть', note: 'Сайты видят настоящий Axiom' },
+  { id: 'chrome', name: 'Chrome', note: 'Google Chrome на Windows — самый частый браузер' },
+  { id: 'firefox', name: 'Firefox', note: 'Firefox на Windows' },
+  { id: 'safari', name: 'Safari', note: 'Safari на Mac' },
+  { id: 'android', name: 'Android', note: 'Chrome на телефоне: сайты покажут мобильную версию' },
+  { id: 'iphone', name: 'iPhone', note: 'Safari на iPhone: сайты покажут мобильную версию' },
+  { id: 'custom', name: 'Свой', note: 'Любая строка латиницей, до 512 знаков' },
+];
+const REFERERS = [
+  { id: 'default', name: 'Как есть', note: 'Как в Chrome: другим сайтам — только адрес сайта, без страницы' },
+  { id: 'off', name: 'Не отправлять', note: 'Сайты не узнают, откуда вы пришли' },
+  { id: 'site', name: 'С того же сайта', note: 'Каждый сайт думает, что вы пришли с него самого. Выручает, когда картинка или файл не открываются по прямой ссылке' },
+  { id: 'custom', name: 'Свой адрес', note: 'Все запросы будто идут с этого адреса' },
+];
+// Свой User-Agent: печатная латиница до 512 знаков (как valid_agent в Rust).
+const agentOk = (v) => !!v && v.length <= 512 && /^[\x20-\x7e]+$/.test(v);
+// Свой Referer: адрес http(s), без схемы — https:// (как clean_referer в Rust).
+function refererOk(v) {
+  v = String(v || '').trim();
+  if (!v || v.length > 2048) return false;
+  try { const u = new URL(v.includes('://') ? v : `https://${v}`); return /^https?:$/.test(u.protocol) && !!u.hostname; } catch { return false; }
+}
+
 // Свой адрес: http(s), с %s, и запрос не может поменять сайт (как valid_template в Rust).
 function searchTemplateOk(t) {
   t = String(t || '').trim();
@@ -115,6 +140,8 @@ function createPanels(ax) {
   const range = (attrs) => `<span class="rng"><input type="range" ${attrs}><output class="bub" aria-hidden="true"></output></span>`;
   const engineChips = () => `<span class="chips" role="radiogroup" aria-label="Поисковая система">${SEARCH_ENGINES.map((e) =>
     `<button class="chip" role="radio" data-engine="${e.id}">${icon('check')}<span>${e.name}</span></button>`).join('')}</span>`;
+  const pickChips = (list, attr, label) => `<span class="chips" role="radiogroup" aria-label="${label}">${list.map((e) =>
+    `<button class="chip" role="radio" ${attr}="${e.id}">${icon('check')}<span>${e.name}</span></button>`).join('')}</span>`;
   // Что показывает пузырёк над ползунком.
   const BUBBLE = {
     hue: (v) => `${v}°`,
@@ -209,6 +236,13 @@ function createPanels(ax) {
         <div class="card">
           ${row('Убирать метки слежки из ссылок', 'utm_*, fbclid, gclid, yclid и другие: сайт не узнает, откуда вы пришли. Формы и кнопку «Назад» это не трогает.', toggle('data-bkey', 'strip_tracking'), 'data-kw="utm приватность трекинг метки слежка"')}
         </div>
+        <h4>Подмена для сайтов</h4><div class="card">
+          <div class="srow col" data-kw="user agent юзер агент useragent ua браузер подмена маскировка мобильная версия"><span class="sl"><b>User-Agent</b><small id="uaNote"></small></span>${pickChips(AGENTS, 'data-ua', 'User-Agent')}<code class="ua-str" id="uaStr"></code></div>
+          <div class="srow" id="uaCustomRow" data-kw="свой user agent строка"><span class="inline"><input type="text" id="uaCustomIn" placeholder="Mozilla/5.0 (…)" spellcheck="false" maxlength="512"><button class="btn primary" data-act="ua-custom">Применить</button></span></div>
+          <div class="srow col" id="refRow" data-kw="referer реферер referrer рефер откуда пришли подмена ссылка картинки хотлинк"><span class="sl"><b>Referer</b><small id="refNote"></small></span>${pickChips(REFERERS, 'data-ref', 'Referer')}</div>
+          <div class="srow" id="refCustomRow" data-kw="свой referer адрес"><span class="inline"><input type="text" id="refCustomIn" placeholder="https://www.google.com/" spellcheck="false"><button class="btn primary" data-act="ref-custom">Применить</button></span></div>
+        </div>
+        <div class="note">${icon('globe')}<span id="idNote"></span></div>
         <div class="note">${icon('lock')}<span>Пароли и входы на сайты не переносятся: браузеры шифруют их так, что прочитать их может только сам браузер. Войдите на нужные сайты один раз — Axiom предложит сохранить пароль.</span></div>`,
       system: `
         <div class="card">
@@ -368,6 +402,7 @@ function createPanels(ax) {
     const lo = $('#liveOut', box);
     if (lo) { const n = +B.live_tabs; lo.textContent = n ? `Не больше ${n}, лишние засыпают сразу` : 'Без ограничения'; }
     syncSearch(box);
+    syncIdentity(box);
   }
 
   // Заливка до бегунка и пузырёк над ним.
@@ -401,6 +436,91 @@ function createPanels(ax) {
     if (rowC) rowC.hidden = !custom;
     const input = $('#seCustomIn', box);
     if (input && document.activeElement !== input && !input.classList.contains('bad')) input.value = B.search_custom || '';
+  }
+
+  // Подмена для сайтов: пилюли User-Agent и Referer, поля своих значений, подписи.
+  // Как со своим поиском: пока своё значение не применено, выбранным остаётся прежнее.
+  let uaOpen = false;
+  let refOpen = false;
+  function syncChoice(box, attr, list, value, open) {
+    const id = list.some((e) => e.id === value) ? value : 'default';
+    const custom = id === 'custom' || open;
+    $$(`[${attr}]`, box).forEach((b) => {
+      const v = b.getAttribute(attr);
+      const on = v === id;
+      b.classList.toggle('on', on);
+      b.classList.toggle('open', !on && custom && v === 'custom');
+      b.setAttribute('aria-checked', String(on));
+    });
+    return { id, custom, note: list.find((e) => e.id === (custom ? 'custom' : id)).note };
+  }
+  function syncIdentity(box) {
+    const uaNote = $('#uaNote', box);
+    if (!uaNote) return;
+    const B = ax.B;
+    const ua = syncChoice(box, 'data-ua', AGENTS, B.user_agent, uaOpen);
+    const ref = syncChoice(box, 'data-ref', REFERERS, B.referer, refOpen);
+    uaNote.textContent = ua.note;
+    $('#refNote', box).textContent = ref.note;
+    $('#uaCustomRow', box).hidden = !ua.custom;
+    const sys = ax.system();
+    const agents = Object.fromEntries(sys.agents || []);
+    // Что именно увидят сайты; пока своё значение не применено — не показываем.
+    const str = ua.id === 'custom' ? B.user_agent_custom : agents[ua.id] || '';
+    const code = $('#uaStr', box);
+    code.textContent = str;
+    code.hidden = !str || (ua.custom && ua.id !== 'custom');
+    // WebKitGTK не даёт менять заголовки запросов: на Linux — только User-Agent.
+    const win = sys.platform === 'windows';
+    $('#refRow', box).hidden = !win;
+    $('#refCustomRow', box).hidden = !win || !ref.custom;
+    $('#idNote', box).textContent = win
+      ? 'Только для вкладок: панель ИИ и сам Axiom не меняются. Новые запросы идут с подменой сразу, открытые страницы получат новый User-Agent после обновления. Если сайт перестал пускать или показывать картинки — верните «Как есть».'
+      : 'Только для вкладок: панель ИИ и сам Axiom не меняются. Открытые страницы получат новый User-Agent после обновления. Referer на Linux не подменить: WebKitGTK не даёт менять заголовки запросов.';
+    for (const [id, v] of [['uaCustomIn', B.user_agent_custom], ['refCustomIn', B.referer_custom]]) {
+      const input = $(`#${id}`, box);
+      if (document.activeElement !== input && !input.classList.contains('bad')) input.value = v || '';
+    }
+  }
+  function pickAgent(id) {
+    uaOpen = id === 'custom';
+    if (uaOpen && !agentOk(ax.B.user_agent_custom)) { sync(); $('#uaCustomIn')?.focus(); return; }
+    ax.B.user_agent = id;
+    ax.saveSettings(true);
+    ax.refresh();
+  }
+  function pickReferer(id) {
+    refOpen = id === 'custom';
+    if (refOpen && !refererOk(ax.B.referer_custom)) { sync(); $('#refCustomIn')?.focus(); return; }
+    ax.B.referer = id;
+    ax.saveSettings(true);
+    ax.refresh();
+  }
+  function applyCustomAgent() {
+    const input = $('#uaCustomIn');
+    const v = input.value.trim();
+    const ok = agentOk(v);
+    input.classList.toggle('bad', !ok);
+    if (!ok) { ax.toast(v ? 'Только латиница, цифры и знаки, до 512' : 'Впишите строку User-Agent'); input.focus(); return; }
+    Object.assign(ax.B, { user_agent_custom: v, user_agent: 'custom' });
+    uaOpen = true;
+    ax.saveSettings(true);
+    ax.refresh();
+    input.blur();
+    ax.toast('Свой User-Agent применён');
+  }
+  function applyCustomReferer() {
+    const input = $('#refCustomIn');
+    const v = input.value.trim();
+    const ok = refererOk(v);
+    input.classList.toggle('bad', !ok);
+    if (!ok) { ax.toast('Нужен адрес сайта, например https://www.google.com/'); input.focus(); return; }
+    Object.assign(ax.B, { referer_custom: v, referer: 'custom' });
+    refOpen = true;
+    ax.saveSettings(true);
+    ax.refresh();
+    input.blur();
+    ax.toast('Свой Referer применён');
   }
 
   function pickEngine(id) {
@@ -442,7 +562,7 @@ function createPanels(ax) {
   function onInput(e) {
     const el = e.target;
     if (el.id === 'setFind') { filter(el.value); return; }
-    if (el.id === 'seCustomIn') { el.classList.remove('bad'); return; }
+    if (['seCustomIn', 'uaCustomIn', 'refCustomIn'].includes(el.id)) { el.classList.remove('bad'); return; }
     if (el.dataset.key) ax.setA(el.dataset.key, readVal(el));
     else if (el.dataset.bkey) {
       ax.B[el.dataset.bkey] = readVal(el);
@@ -472,9 +592,13 @@ function createPanels(ax) {
     }
     if (b.dataset.accent) { ax.setA('accent', b.dataset.accent); return; }
     if (b.dataset.engine) { pickEngine(b.dataset.engine); return; }
+    if (b.dataset.ua) { pickAgent(b.dataset.ua); return; }
+    if (b.dataset.ref) { pickReferer(b.dataset.ref); return; }
     switch (b.dataset.act) {
       case 'close': close(); break;
       case 'search-custom': applyCustomSearch(); break;
+      case 'ua-custom': applyCustomAgent(); break;
+      case 'ref-custom': applyCustomReferer(); break;
       case 'proxy': applyProxy(b.closest('.card, .step') || sheet); break;
       case 'copy': ax.copyText(JSON.stringify(ax.A, null, 2)); ax.toast('Тема скопирована'); break;
       case 'import-toggle': { const box = $('.import-box', sheet); box.hidden = !box.hidden; break; }
@@ -590,6 +714,8 @@ function createPanels(ax) {
       if (e.target.id === 'proxyIn' && e.key === 'Enter') applyProxy(sheet);
       if (e.target.id === 'seCustomIn' && e.key === 'Enter') applyCustomSearch();
       if (e.target.id === 'bugText' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendBug();
+      if (e.target.id === 'uaCustomIn' && e.key === 'Enter') applyCustomAgent();
+      if (e.target.id === 'refCustomIn' && e.key === 'Enter') applyCustomReferer();
     });
     // Пузырёк над ползунком держится, пока бегунок тянут, даже если мышь ушла с ползунка.
     sheet.addEventListener('pointerdown', (e) => {

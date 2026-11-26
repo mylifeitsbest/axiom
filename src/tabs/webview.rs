@@ -134,9 +134,21 @@ pub fn build_tab(
     let source = super::tools::is_source(spec.url);
     let (title_tx, load_tx, open_tx) = (events.clone(), events.clone(), events.clone());
     let nav_tx = events.clone();
+    // С подменой Referer страница грузится после `identity::install`: иначе первый
+    // документ ушёл бы без неё. User-Agent wry ставит ещё до первого запроса.
+    let defer = super::identity::defer_load();
 
-    let builder = WebViewBuilder::new_with_web_context(context)
-        .with_url(spec.url)
+    let builder = WebViewBuilder::new_with_web_context(context);
+    let builder = if defer {
+        builder
+    } else {
+        builder.with_url(spec.url)
+    };
+    let builder = match super::identity::agent() {
+        Some(ua) => builder.with_user_agent(ua),
+        None => builder,
+    };
+    let builder = builder
         .with_bounds(spec.bounds)
         .with_visible(spec.visible)
         .with_focused(spec.visible)
@@ -196,6 +208,12 @@ pub fn build_tab(
         super::zoom::set(&webview, spec.zoom);
     }
     enable_autofill(&webview);
+    super::identity::install(&webview);
+    if defer {
+        webview
+            .load_url(spec.url)
+            .context("не удалось открыть страницу вкладки")?;
+    }
     Ok(webview)
 }
 

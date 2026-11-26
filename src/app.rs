@@ -38,6 +38,7 @@ use crate::{
     tabs::{
         SETTINGS, SETTINGS_TITLE, TabId, TabStore,
         fullscreen::{self, Owner},
+        identity::{Agent, Referer},
         omnibox::{self, NEWTAB},
         script,
         sleep::{self, PageState},
@@ -141,6 +142,9 @@ impl App {
         #[cfg(target_os = "linux")]
         tab_webview::apply_theme_globally(ui_look.theme);
         let ui = build_ui(&window, &mut context, &events, ui_look)?;
+        // Интерфейс ещё без подмены: его User-Agent — строка движка.
+        crate::tabs::identity::remember_engine(&ui);
+        crate::tabs::identity::install_ui(&ui);
         let ai = AiPanel::new(&settings.ai_proxy);
 
         let mut app = Self {
@@ -177,6 +181,7 @@ impl App {
             zoom,
         };
         app.sync_tracking();
+        app.sync_identity();
         app.restore_session(open);
         Ok(app)
     }
@@ -1245,6 +1250,7 @@ impl App {
             }
         };
         let engine = incoming.search_engine;
+        let (agent, referer) = (incoming.user_agent, incoming.referer);
         self.settings.apply(incoming);
         crate::reports::set_auto(self.settings.crash_reports);
         let beta = self
@@ -1253,12 +1259,24 @@ impl App {
         if self.updater.set_beta(beta) {
             self.push_update(false);
         }
-        // Свой адрес поиска без %s или не http(s) настройки заменили на DuckDuckGo.
-        let rejected = rejected.or_else(|| {
-            (self.settings.search_engine != engine)
-                .then(|| "Свой адрес поиска не подошёл: нужен http(s) и %s".to_string())
-        });
+        // Свой адрес поиска без %s или не http(s) настройки заменили на DuckDuckGo,
+        // негодные свой User-Agent и Referer — на «как есть».
+        let rejected = rejected
+            .or_else(|| {
+                (self.settings.search_engine != engine)
+                    .then(|| "Свой адрес поиска не подошёл: нужен http(s) и %s".to_string())
+            })
+            .or_else(|| {
+                (agent == Some(Agent::Custom) && self.settings.user_agent != Agent::Custom).then(
+                    || "Свой User-Agent не подошёл: латиница, цифры и знаки, до 512".to_string(),
+                )
+            })
+            .or_else(|| {
+                (referer == Some(Referer::Custom) && self.settings.referer != Referer::Custom)
+                    .then(|| "Свой Referer не подошёл: нужен адрес сайта".to_string())
+            });
         self.sync_tracking();
+        self.sync_identity();
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }

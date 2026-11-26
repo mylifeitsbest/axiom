@@ -13,7 +13,7 @@ use crate::{
     tabs::{
         TabId,
         external::{self, Event, Gesture, Request, Source},
-        script, tracking,
+        identity, script, tracking,
     },
 };
 
@@ -47,6 +47,17 @@ impl App {
     /// Включает или выключает чистку переходов по ссылкам по настройке.
     pub(super) fn sync_tracking(&self) {
         tracking::set_enabled(self.settings.strip_tracking);
+    }
+
+    /// Подмена User-Agent и Referer: новый выбор — сразу всем живым вкладкам.
+    pub(super) fn sync_identity(&self) {
+        if !identity::set(self.settings.identity()) {
+            return;
+        }
+        for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
+            identity::apply(webview);
+        }
+        identity::apply_ui(&self.ui);
     }
 
     /// Адрес для вкладки без меток слежки (если это включено).

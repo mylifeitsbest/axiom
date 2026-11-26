@@ -7,7 +7,10 @@ use serde_json::{Map, Value};
 use crate::{
     ipc::SettingsIn,
     storage,
-    tabs::omnibox::{self, Engine, Search},
+    tabs::{
+        identity::{self, Agent, Referer},
+        omnibox::{self, Engine, Search},
+    },
 };
 
 pub const FILE: &str = "settings.json";
@@ -84,6 +87,16 @@ pub struct Settings {
     pub strip_tracking: bool,
     /// Отправлять разработчику отчёт, если Axiom вылетит (см. `reports`).
     pub crash_reports: bool,
+    /// Каким браузером вкладки представляются сайтам.
+    #[serde(deserialize_with = "identity::lenient")]
+    pub user_agent: Agent,
+    /// Своя строка User-Agent (для `custom`). Хранится и при другом выборе.
+    pub user_agent_custom: String,
+    /// Что вкладки шлют в заголовке Referer.
+    #[serde(deserialize_with = "identity::lenient")]
+    pub referer: Referer,
+    /// Свой адрес для Referer (для `custom`).
+    pub referer_custom: String,
 }
 
 impl Default for Settings {
@@ -105,6 +118,10 @@ impl Default for Settings {
             translate: crate::translate::Prefs::default(),
             strip_tracking: true,
             crash_reports: true,
+            user_agent: Agent::Default,
+            user_agent_custom: String::new(),
+            referer: Referer::Default,
+            referer_custom: String::new(),
         }
     }
 }
@@ -147,6 +164,44 @@ impl Settings {
         if let Some(gpu) = incoming.gpu {
             self.gpu = gpu;
         }
+        if let Some(agent) = incoming.user_agent {
+            self.user_agent = agent;
+        }
+        if let Some(custom) = incoming.user_agent_custom {
+            self.user_agent_custom = custom.trim().to_string();
+        }
+        if let Some(referer) = incoming.referer {
+            self.referer = referer;
+        }
+        if let Some(custom) = incoming.referer_custom {
+            self.referer_custom = custom;
+        }
+        self.fix_identity();
+    }
+
+    /// Подмена User-Agent и Referer для вкладок.
+    pub fn identity(&self) -> identity::Prefs {
+        identity::Prefs {
+            agent: self.user_agent,
+            agent_custom: self.user_agent_custom.clone(),
+            referer: self.referer,
+            referer_custom: self.referer_custom.clone(),
+        }
+    }
+
+    /// Своя строка — печатный ASCII до 512 знаков, свой Referer — адрес http(s);
+    /// без годного своего значения — как есть.
+    fn fix_identity(&mut self) {
+        if !identity::valid_agent(&self.user_agent_custom) {
+            self.user_agent_custom.clear();
+        }
+        if self.user_agent == Agent::Custom && self.user_agent_custom.is_empty() {
+            self.user_agent = Agent::Default;
+        }
+        self.referer_custom = identity::clean_referer(&self.referer_custom).unwrap_or_default();
+        if self.referer == Referer::Custom && self.referer_custom.is_empty() {
+            self.referer = Referer::Default;
+        }
     }
 
     /// Следить ли за бета-версиями. Первый запуск бета-версии
@@ -186,6 +241,7 @@ impl Settings {
         self.sleep_minutes = self.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.live_tabs = self.live_tabs.min(MAX_LIVE_TABS);
         self.translate = self.translate.sanitized();
+        self.fix_identity();
         if crate::ai_panel::proxy::parse(&self.ai_proxy).is_err() {
             self.ai_proxy.clear();
         }
@@ -234,6 +290,61 @@ mod tests {
             assert_eq!(s.search_engine, Engine::DuckDuckGo, "{bad}");
             assert!(s.search_custom.is_empty());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn applies_identity() -> serde_json::Result<()> {
+        let with = |extra: serde_json::Value| -> serde_json::Result<SettingsIn> {
+            let mut v = serde_json::json!({
+                "appearance": {}, "double_search": true, "ai_proxy": "",
+                "sleep_minutes": 5, "live_tabs": 3,
+            });
+            if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
+                v.extend(extra.clone());
+            }
+            serde_json::from_value(v)
+        };
+        let mut s = Settings::default();
+        s.apply(with(serde_json::json!({
+            "user_agent": "custom", "user_agent_custom": "  Mozilla/5.0 Test  ",
+            "referer": "custom", "referer_custom": "google.com",
+        }))?);
+        assert_eq!(s.user_agent, Agent::Custom);
+        assert_eq!(s.user_agent_custom, "Mozilla/5.0 Test");
+        assert_eq!(s.referer, Referer::Custom);
+        assert_eq!(s.referer_custom, "https://google.com/");
+
+        // Старый интерфейс без этих полей — ничего не меняется.
+        s.apply(with(serde_json::json!({}))?);
+        assert_eq!((s.user_agent, s.referer), (Agent::Custom, Referer::Custom));
+
+        // Негодные свои значения — «как есть», неизвестный выбор не трогает прежний.
+        s.apply(with(serde_json::json!({
+            "user_agent": "custom", "user_agent_custom": "Bad\r\nX: 1",
+            "referer": "custom", "referer_custom": "javascript:alert(1)",
+        }))?);
+        assert_eq!(
+            (s.user_agent, s.referer),
+            (Agent::Default, Referer::Default)
+        );
+        assert!(s.user_agent_custom.is_empty() && s.referer_custom.is_empty());
+        s.apply(with(
+            serde_json::json!({"user_agent": "iphone", "referer": "site"}),
+        )?);
+        s.apply(with(
+            serde_json::json!({"user_agent": "netscape", "referer": 1}),
+        )?);
+        assert_eq!((s.user_agent, s.referer), (Agent::Iphone, Referer::Site));
+
+        // Файл настроек с мусором читается целиком.
+        let file = r#"{"user_agent":"netscape","referer":"custom","referer_custom":"","sleep_minutes":30}"#;
+        let s = serde_json::from_str::<Settings>(file)?.sanitized();
+        assert_eq!(
+            (s.user_agent, s.referer),
+            (Agent::Default, Referer::Default)
+        );
+        assert_eq!(s.sleep_minutes, 30);
         Ok(())
     }
 

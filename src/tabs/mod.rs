@@ -2,6 +2,7 @@
 
 pub mod external;
 pub mod fullscreen;
+pub mod identity;
 pub mod links;
 pub mod omnibox;
 pub mod popups;

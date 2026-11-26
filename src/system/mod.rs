@@ -40,6 +40,8 @@ pub struct Status {
     /// Можно ли установить из самого приложения (на Linux — через пакетный менеджер).
     pub can_install: bool,
     pub version: &'static str,
+    /// Что увидят сайты с каждым пресетом User-Agent (`default` — строка движка).
+    pub agents: Vec<(crate::tabs::identity::Agent, String)>,
 }
 
 pub fn status() -> Status {
@@ -50,6 +52,7 @@ pub fn status() -> Status {
         browsers: crate::storage::import::detect(),
         can_install: cfg!(windows),
         version: crate::update::current_string(),
+        agents: crate::tabs::identity::presets(),
     }
 }
 

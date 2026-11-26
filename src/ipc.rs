@@ -117,6 +117,15 @@ pub struct SettingsIn {
     /// Отрисовка страниц на Linux. Нет поля — не менять.
     #[serde(default)]
     pub gpu: Option<crate::system::gpu::Gpu>,
+    /// Подмена User-Agent и Referer; нет поля — не менять, неизвестный выбор — тоже.
+    #[serde(default, deserialize_with = "crate::tabs::identity::lenient")]
+    pub user_agent: Option<crate::tabs::identity::Agent>,
+    #[serde(default)]
+    pub user_agent_custom: Option<String>,
+    #[serde(default, deserialize_with = "crate::tabs::identity::lenient")]
+    pub referer: Option<crate::tabs::identity::Referer>,
+    #[serde(default)]
+    pub referer_custom: Option<String>,
 }
 
 fn yes() -> bool {
@@ -347,6 +356,13 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
                 crate::tabs::omnibox::MAX_TEMPLATE,
                 "search",
             )?;
+            // С запасом на пробелы по краям: точную проверку делают настройки.
+            if let Some(ua) = &settings.user_agent_custom {
+                short(ua, 2 * crate::tabs::identity::MAX_AGENT, "user_agent")?;
+            }
+            if let Some(referer) = &settings.referer_custom {
+                short(referer, 2 * crate::tabs::identity::MAX_REFERER, "referer")?;
+            }
         }
         UiCmd::TranslatePrefs { prefs } if !prefs.is_valid() => {
             return Err(IpcError::Invalid("translate"));

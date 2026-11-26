@@ -36,6 +36,8 @@ windows-registry = "0.100.0"
 [target.'cfg(target_os = "linux")'.dependencies]
 # Та же версия, что у tao и wry: контейнер для webview и горячие клавиши.
 gtk = "0.18"
+# Та же версия, что у wry: смена User-Agent у живых вкладок.
+webkit2gtk = "2.0"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.34"

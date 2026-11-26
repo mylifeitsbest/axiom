@@ -146,12 +146,13 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
-/// Windows хранит выбор пользователя в `UserChoice`.
+/// Кому Windows на самом деле отдаёт https-ссылки. Ключи реестра не читаем: выбор
+/// лежит в `UserChoice`, а в новых сборках Windows 11 — в `UserChoiceLatest`, ключи
+/// расходятся, и какой из них сейчас в силе, знает только сама Windows.
 pub fn is_default_browser() -> bool {
-    CURRENT_USER
-        .open(r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice")
-        .and_then(|key| key.get_string("ProgId"))
-        .is_ok_and(|id| id == URL_PROGID)
+    const ASSOCSTR_PROGID: u32 = 20;
+    crate::tabs::external::assoc_query("https", ASSOCSTR_PROGID)
+        .is_some_and(|id| id.eq_ignore_ascii_case(URL_PROGID))
 }
 
 /// Открывает страницу «Приложения по умолчанию» сразу на Axiom.

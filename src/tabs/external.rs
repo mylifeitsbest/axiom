@@ -430,8 +430,10 @@ pub fn handler(scheme: &str) -> Option<Handler> {
     Some(Handler { name })
 }
 
+/// Что Windows сама ответит про схему (`kind` — `ASSOCSTR_*`): её ответ учитывает
+/// и `UserChoice`, и `UserChoiceLatest`, и проверку их хешей.
 #[cfg(windows)]
-fn assoc_query(scheme: &str, kind: u32) -> Option<String> {
+pub(crate) fn assoc_query(scheme: &str, kind: u32) -> Option<String> {
     #[link(name = "shlwapi")]
     unsafe extern "system" {
         fn AssocQueryStringW(

@@ -726,6 +726,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .pmp.arm .pm-acts .btn{opacity:.5}
 .pmp .pm-acts .btn{transition:opacity var(--d2),background-color var(--d1)}
 .pmc{padding:12px 6px 8px;transform-origin:top left}
+.dlp.pmc.up{transform-origin:bottom left}
 .pmc .trp-ic.warn{background:color-mix(in oklab,#e5a03a 18%,transparent);color:#e5a03a}
 .pm-h{margin:14px 8px 2px;color:var(--t3);font-size:calc(var(--fs) - 1.5px);font-weight:600}
 .pm-clist{margin-top:2px}

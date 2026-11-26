@@ -71,7 +71,11 @@ function createPermissions(ax) {
     panel.style.width = w + 'px';
     const visible = r && r.width > 0 && r.bottom > 0;
     const left = visible ? Math.min(Math.max(8, alignLeft ?? r.left), innerWidth - 8 - w) : (innerWidth - w) / 2;
-    Object.assign(panel.style, { left: left + 'px', top: (visible ? r.bottom + 8 : 56) + 'px' });
+    // Панель у нижнего края окна — окошко над адресной строкой.
+    const up = visible && r.top > innerHeight / 2;
+    panel.classList.toggle('up', up);
+    const top = !visible ? 56 : up ? r.top - 8 - panel.offsetHeight : r.bottom + 8;
+    Object.assign(panel.style, { left: left + 'px', top: Math.max(8, Math.round(top)) + 'px' });
   }
 
   // ---------- окошко «Сайт хочет…» ----------
@@ -163,7 +167,11 @@ function createPermissions(ax) {
       ${cardChanged ? `<div class="pm-reload"><span>Изменения вступят в силу после обновления страницы</span><button class="btn primary" data-pm-act="reload">Обновить</button></div>` : ''}
       <div class="pm-foot"><button class="lnk" data-pm-act="all">${icon('shield')}Все сайты</button>
         ${decided.length ? '<button class="lnk" data-pm-act="forget">Сбросить разрешения</button>' : ''}</div>`;
+    // Высота могла измениться (подсказка «Обновить»): над панелью снизу окошко растёт вверх.
+    if (cardOpen()) placeCard();
   }
+
+  const placeCard = () => placeBelowOmni(card, 340, $('#omniIc').getBoundingClientRect().left - 10);
 
   function openCard() {
     const t = ax.activeTab();
@@ -178,7 +186,7 @@ function createPermissions(ax) {
       card.classList.add('on');
       ax.setOverlay('pmc', true);
     }
-    placeBelowOmni(card, 340, $('#omniIc').getBoundingClientRect().left - 10);
+    placeCard();
   }
 
   function closeCard() {
@@ -222,7 +230,7 @@ function createPermissions(ax) {
   }, true);
   const follow = () => requestAnimationFrame(() => {
     if (isOpen()) placeBelowOmni(prompt, 380);
-    if (cardOpen()) placeBelowOmni(card, 340, $('#omniIc').getBoundingClientRect().left - 10);
+    if (cardOpen()) placeCard();
   });
   addEventListener('resize', follow);
   if (window.ResizeObserver && $('#omni')) new ResizeObserver(follow).observe($('#omni'));

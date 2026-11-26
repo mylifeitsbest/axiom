@@ -347,3 +347,51 @@ fn write_stack(log: RawFd, tty: RawFd) {
 
 #[cfg(not(target_env = "gnu"))]
 fn write_stack(_log: RawFd, _tty: RawFd) {}
+
+#[cfg(all(test, target_env = "gnu"))]
+mod tests {
+    use std::{os::unix::process::ExitStatusExt, process::Command};
+
+    use super::*;
+
+    /// Куда второй процесс пишет журнал; без этой переменной `crash_child` ничего не делает.
+    const CHILD: &str = "AXIOM_TEST_CRASH_LOG";
+
+    /// Второй процесс для `crash_leaves_signal_and_stack`: падает по abort.
+    #[test]
+    fn crash_child() {
+        let Some(path) = std::env::var_os(CHILD) else {
+            return;
+        };
+        let Ok(file) = File::create(path) else {
+            return;
+        };
+        LOG.store(file.into_raw_fd(), Ordering::Release);
+        catch_crashes();
+        std::process::abort();
+    }
+
+    #[test]
+    fn crash_leaves_signal_and_stack() -> std::io::Result<()> {
+        let log = std::env::temp_dir().join(format!("axiom-crash-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+        let status = Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "reports::terminal::tests::crash_child",
+                "--test-threads=1",
+            ])
+            .env(CHILD, &log)
+            .output()?
+            .status;
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        let _ = std::fs::remove_file(&log);
+        // Процесс завершился тем же сигналом, что и без обработчика.
+        assert_eq!(status.signal(), Some(libc::SIGABRT), "{status:?}\n{text}");
+        assert!(text.contains("сигнал SIGABRT"), "{text}");
+        assert!(text.contains("стек вылета:"), "{text}");
+        let frames = text.lines().filter(|l| l.contains("[0x")).count();
+        assert!(frames >= 3, "{text}");
+        Ok(())
+    }
+}

@@ -221,7 +221,9 @@ function createPermissions(ax) {
   // Клик мимо окошек и Esc.
   document.addEventListener('mousedown', (e) => {
     if (cardOpen() && !e.target.closest('#pmc') && !e.target.closest('#omniIc')) closeCard();
-    if (isOpen() && !e.target.closest('#pmp')) answer('dismiss');
+    // Переход на другую вкладку вопрос не отклоняет: Rust спрячет окошко и покажет снова,
+    // когда вернётесь. Клик по странице — «не сейчас».
+    if (isOpen() && !e.target.closest('#pmp, #tabs, #side')) answer('dismiss');
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;

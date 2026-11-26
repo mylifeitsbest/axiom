@@ -11,6 +11,10 @@
 // Где он живёт, зависит от раскладки: в одну и две строки — чёлкой посередине ряда
 // вкладок; при вкладках сбоку — на выбор: чёлкой над страницей (страница на это время
 // опускается на полосу) или карточкой во всю ширину боковой панели над вкладками.
+// Linux: видео в чёлке нет, а снимка страницы под окнами интерфейса тоже нет — список,
+// зашедший на страницу, спрятал бы её (серый экран). Поэтому там чёлка в ряду вкладок
+// и над страницей раскрывается не вниз, а вширь: название и кнопки прямо в ней
+// (`wide`); карточка в боковой панели раскрывается как обычно — страницу она не задевает.
 function createIsland(ax) {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -43,6 +47,10 @@ function createIsland(ax) {
   let showPip = true; // кнопка «видео в окне»
   let collapsed = false; // свёрнут в полоску
   let sidePlace = 'panel'; // вкладки сбоку: 'panel' — в боковой панели, 'top' — над страницей
+  // Раскрытый островок может зайти на страницу: под ним снимок страницы (Windows).
+  // На Linux снимков нет — см. `inline`.
+  let overPage = true;
+  let wide = false; // Linux: чёлка раскрыта вширь, кнопки прямо в ней
   let peekH = 0; // высота острова с видео (от Rust) — под неё место в боковой панели
   let downloads = [];
   let lastStatus = null;
@@ -100,6 +108,8 @@ function createIsland(ax) {
       done,
       // Видео показано из чёлки — чёлка шириной с него, кнопки прямо в ней.
       video: !!tab && peeking === tab.id,
+      // Linux: чёлка раскрыта вширь — те же кнопки, но видео под ней нет.
+      wide: wide && !collapsed && inline(),
       // Видео в окошке «картинка в картинке».
       pip: !!tab && !!media.get(tab.id)?.pip,
     };
@@ -164,12 +174,18 @@ function createIsland(ax) {
     // Кнопки в самой чёлке — как в строке вкладки раскрытого островка.
     const c = el.querySelector('.isl-c');
     if (m.tab) c.dataset.tab = m.tab.id; else delete c.dataset.tab;
+    // Раскрытая вширь чёлка загрузки — её кнопки относятся к этой загрузке.
+    const d = !m.tab && m.wide ? dlOf(m) : null;
+    if (d) c.dataset.dl = d.id; else delete c.dataset.dl;
     const i = m.tab ? media.get(m.tab.id) || {} : {};
     const state = m.run.length ? 'ring' : m.done ? 'ok' : !m.tab ? '' : m.pip ? 'pip' : playingOf(m.tab) ? 'eq' : 'paused';
-    const right = m.video ? `vid:${playingOf(m.tab)}:${!!i.prev}:${!!i.next}:${showPip}:${m.run.length ? 'ring' : ''}` : state;
+    const buttons = m.video || (m.wide && m.tab);
+    const right = buttons ? `vid:${playingOf(m.tab)}:${!!i.prev}:${!!i.next}:${showPip}:${m.run.length ? 'ring' : ''}`
+      : d ? `dl:${d.id}:${m.run.length}` : state;
     if (r.dataset.k !== right) {
       r.dataset.k = right;
-      r.innerHTML = m.video ? videoButtons(m)
+      r.innerHTML = buttons ? videoButtons(m)
+        : d ? dlButtons(m)
         : (state === 'ring' ? ring(pct(m.run))
           : state === 'ok' ? `<span class="isl-ok">${icon('check')}</span>`
           : state === 'pip' ? `<span class="isl-st" title="Видео в окне">${icon('pip')}</span>`
@@ -193,6 +209,18 @@ function createIsland(ax) {
       i.next ? btn('next', 'next', 'Дальше') : '',
       showPip ? btn('pip', 'pip', 'Видео в окне — его можно таскать и закрыть') : '',
       btn('go', 'arrowR', 'Перейти на вкладку'),
+      fold(),
+    ].join('');
+  }
+  // Загрузка в раскрытой вширь чёлке (Linux): первая идущая или только что скачанная.
+  const dlOf = (m) => m.run[0] || m.done || null;
+  function dlButtons(m) {
+    const going = m.run.length > 0;
+    return [
+      going ? ring(pct(m.run)) : `<span class="isl-ok">${icon('check')}</span>`,
+      going ? '' : btn('open', 'file', 'Открыть'),
+      btn('show', 'folder', 'Показать в папке'),
+      m.run.length === 1 ? btn('cancel', 'x', 'Отменить') : '',
       fold(),
     ].join('');
   }
@@ -264,18 +292,20 @@ function createIsland(ax) {
   }
 
   // Раскрытый островок ниже панели заходит на страницу: её webview нативный и лежит
-  // выше интерфейса, поэтому на это время — снимок страницы, как под меню.
+  // выше интерфейса, поэтому на это время — снимок страницы, как под меню. Без снимка
+  // (Linux) страница спряталась бы целиком — там список над страницей не раскрывается.
   function syncOverlay() {
     let want = false;
-    if (opened && mode() !== 'panel') {
+    if (overPage && opened && mode() !== 'panel') {
       const c = $('#content').getBoundingClientRect();
       want = el.querySelectorAll('.isl-row').length * ROW + 16 > c.top + 1;
     }
     if (want !== overlay) { overlay = want; ax.setOverlay('isl', want); }
   }
   function setOpen(on) {
-    // Под чёлкой видео или островок свёрнут — не раскрываем.
-    if (on && (!shown || collapsed || model().video)) return;
+    // Под чёлкой видео или островок свёрнут — не раскрываем. Список зашёл бы на
+    // страницу без снимка под ним (Linux) — вместо него чёлка раскрывается вширь.
+    if (on && (!shown || collapsed || model().video || inline())) return;
     if (on === opened) return;
     opened = on;
     if (!on) pinned = false;
@@ -289,6 +319,20 @@ function createIsland(ax) {
     poll();
     if (mode() === 'panel') sync();
   }
+  // Linux, чёлка в ряду вкладок или над страницей: раскрыться вширь, кнопки прямо в ней.
+  // Островок остаётся высотой с чёлку и на страницу не заходит.
+  function setWide(on) {
+    if (on && (!shown || collapsed || !inline())) return;
+    if (on === wide) return;
+    wide = on;
+    if (!on) pinned = false;
+    if (on) ask();
+    sync();
+    poll();
+  }
+  // Навели мышь или кликнули по чёлке: список вниз или (Linux) вширь.
+  const expand = () => (inline() ? setWide(true) : setOpen(true));
+  const collapseAll = () => { setOpen(false); setWide(false); };
 
   // ---------- что играет: спрашиваем страницу ----------
   let pollTimer = 0;
@@ -300,7 +344,7 @@ function createIsland(ax) {
   function poll() {
     clearTimeout(pollTimer);
     if (!shown || asked == null) return;
-    pollTimer = setTimeout(() => { ask(); poll(); }, opened ? 1500 : 3000);
+    pollTimer = setTimeout(() => { ask(); poll(); }, opened || wide ? 1500 : 3000);
   }
   function press(id, action) {
     ax.send({ cmd: 'media', id, action });
@@ -312,12 +356,17 @@ function createIsland(ax) {
   // 'bar' — чёлка в ряду вкладок (одна и две строки), 'top' — чёлка над страницей,
   // 'panel' — карточка в боковой панели (вкладки сбоку).
   const mode = () => (ax.layout() !== 'side' ? 'bar' : sidePlace === 'top' ? 'top' : 'panel');
+  // Раскрытый вниз список зашёл бы на страницу, а снимка под ним нет (Linux): чёлка в
+  // ряду вкладок и над страницей раскрывается вширь (`setWide`), карточка в боковой
+  // панели — вниз, как обычно (страницу она не задевает).
+  const inline = () => !overPage && mode() !== 'panel';
   function place(m) {
     if (!enabled) return null;
     const k = mode();
     if (k === 'bar') {
-      // Пока выехало видео, чёлка шириной с него; не хватает места в ряду — поверх.
-      const z = (m.video && !collapsed && zone(VW)) || zone(W);
+      // Пока выехало видео (или чёлка раскрыта вширь), чёлка шириной с него; не хватает
+      // места в ряду — поверх.
+      const z = ((m.video || m.wide) && !collapsed && zone(VW)) || zone(W);
       return z && { ...z, mode: k };
     }
     if (k === 'top') {
@@ -441,8 +490,12 @@ function createIsland(ax) {
     }
   }
   // Над страницей: страница опускается на полосу под чёлку (свёрнутому — на тонкую).
+  // Linux: сразу, без анимации отступа — иначе webview страницы менял бы размер каждый
+  // кадр (GTK size_allocate и новые буферы кадра WebKitGTK), и так при каждом появлении
+  // и уходе чёлки.
   function setStrip(on) {
     const app = $('#app');
+    app.classList.toggle('isl-instant', !overPage);
     app.classList.toggle('isl-strip', on && !collapsed);
     app.classList.toggle('isl-strip-mini', on && collapsed);
   }
@@ -488,19 +541,23 @@ function createIsland(ax) {
   let showTimer = 0;
   function sync() {
     onActive();
+    // Свернули или переехали в боковую панель — раскрытой вширь чёлки больше нет.
+    if (wide && (collapsed || !inline())) { wide = false; pinned = false; }
     const m = model();
     // Место под чёлку; пока из неё выехало видео, чёлка шириной с него, и вкладки
     // расступаются шире (а потом смыкаются обратно).
     const z = place(m);
     const want = enabled && !!z && busy(m);
     el.classList.toggle('vid', want && m.video && !collapsed);
+    el.classList.toggle('wide', want && m.wide && !m.video);
     el.classList.toggle('panel', !!z && z.mode === 'panel');
     el.classList.toggle('mini', collapsed);
     el.title = collapsed ? 'Развернуть островок' : '';
     // Свёрнутый островок видео не показывает.
     sendDock(want && !collapsed ? z : null);
     // Видео встало под чёлку — раскрытый островок оказался бы под ним: сворачиваем.
-    if (opened && (m.video || collapsed)) setOpen(false);
+    // Linux: карточку из боковой панели перенесли над страницу — список тоже убираем.
+    if (opened && (m.video || collapsed || inline())) setOpen(false);
     const id = m.tab ? m.tab.id : null;
     if (id !== asked) {
       asked = id;
@@ -547,6 +604,7 @@ function createIsland(ax) {
       shown = false;
       clearTimeout(showTimer);
       clearTimeout(pollTimer);
+      if (wide) { wide = false; pinned = false; }
       setOpen(false);
       el.classList.remove('on');
       showTimer = setTimeout(() => { closeGap(); setSlot(0); setStrip(false); }, ax.ms(180));
@@ -560,7 +618,8 @@ function createIsland(ax) {
   // ---------- мышь ----------
   let hoverTimer = 0;
   // Наведение на чёлку вкладки с видео показывает само видео (уберёт Rust, когда мышь
-  // уйдёт и с видео). Видео в окне или видео в островке выключено — раскрывается список.
+  // уйдёт и с видео). Видео в окне или видео в островке выключено — раскрывается список
+  // (на Linux — чёлка вширь, см. `inline`).
   function peek() {
     const m = model();
     if (!showVideo || !m.tab || m.pip || peeking != null || !isVideo(m.tab.id)) return false;
@@ -576,18 +635,19 @@ function createIsland(ax) {
     if (collapsed || hovering || (!e.movementX && !e.movementY)) return;
     hovering = true;
     clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => { if (!peek()) setOpen(true); }, 140);
+    hoverTimer = setTimeout(() => { if (!peek()) expand(); }, 140);
   });
   el.addEventListener('mouseleave', () => {
     hovering = false;
     clearTimeout(hoverTimer);
-    if (!pinned) hoverTimer = setTimeout(() => setOpen(false), 260);
+    if (!pinned) hoverTimer = setTimeout(collapseAll, 260);
   });
-  document.addEventListener('mousedown', (e) => { if (opened && !e.target.closest('.isl')) setOpen(false); }, true);
+  document.addEventListener('mousedown', (e) => { if ((opened || wide) && !e.target.closest('.isl')) collapseAll(); }, true);
   function setCollapsed(on) {
     if (collapsed === on) return;
     collapsed = on;
     hovering = false;
+    if (on && wide) { wide = false; pinned = false; }
     if (on && peeking != null) ax.send({ cmd: 'media', id: peeking, action: 'unpeek' });
     ax.collapse(on);
     sync();
@@ -597,9 +657,9 @@ function createIsland(ax) {
     if (collapsed) { setCollapsed(false); return; }
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'fold') { setOpen(false); setCollapsed(true); return; }
-    // Кнопки в самой чёлке — как в строке вкладки раскрытого островка.
-    const row = e.target.closest('.isl-row') || (a && e.target.closest('.isl-c[data-tab]'));
-    if (!row) { pinned = !opened || !pinned; setOpen(true); return; }
+    // Кнопки в самой чёлке — как в строке вкладки (или загрузки) раскрытого островка.
+    const row = e.target.closest('.isl-row') || (a && e.target.closest('.isl-c[data-tab],.isl-c[data-dl]'));
+    if (!row) { pinned = !(opened || wide) || !pinned; expand(); return; }
     if (row.dataset.tab) {
       const id = +row.dataset.tab;
       if (a === 'toggle' || a === 'next' || a === 'prev') {
@@ -618,14 +678,14 @@ function createIsland(ax) {
         press(id, a);
         return;
       }
-      setOpen(false);
+      collapseAll();
       ax.send({ cmd: 'activate_tab', id });
       return;
     }
     const id = +row.dataset.dl;
-    if (a === 'show') { ax.send({ cmd: 'download_show', id }); setOpen(false); }
+    if (a === 'show') { ax.send({ cmd: 'download_show', id }); collapseAll(); }
     else if (a === 'cancel') ax.send({ cmd: 'download_cancel', id });
-    else if (row.classList.contains('done')) { ax.send({ cmd: 'download_open', id }); setOpen(false); }
+    else if (a === 'open' || row.classList.contains('done')) { ax.send({ cmd: 'download_open', id }); collapseAll(); }
   });
 
   // ---------- сообщения ----------
@@ -691,15 +751,17 @@ function createIsland(ax) {
     onMedia,
     onPeek,
     onOmniFocus,
-    // Настройки: островок, видео из чёлки, кнопка «видео в окне», свёрнут ли он.
+    // Настройки: островок, видео из чёлки, кнопка «видео в окне», свёрнут ли он; может ли
+    // раскрытый островок зайти на страницу (есть ли под ним снимок — нет на Linux).
     configure(o) {
-      const was = [enabled, showVideo, showPip, collapsed, sidePlace].join();
+      const was = [enabled, showVideo, showPip, collapsed, sidePlace, overPage].join();
       enabled = o.enabled !== false;
       showVideo = o.video !== false;
       showPip = o.pip !== false;
       collapsed = !!o.collapsed;
       sidePlace = o.side === 'top' ? 'top' : 'panel';
-      if ([enabled, showVideo, showPip, collapsed, sidePlace].join() !== was) {
+      overPage = o.overPage !== false;
+      if ([enabled, showVideo, showPip, collapsed, sidePlace, overPage].join() !== was) {
         el.querySelector('.isl-r').dataset.k = '';
         sync();
       }

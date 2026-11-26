@@ -341,6 +341,18 @@ fn follow(rect: (i32, i32, i32, i32), base: (i32, i32), now: (i32, i32)) -> (i32
     (x.max(0), y, w.max(1), h.max(1))
 }
 
+/// Место webview внутри контейнера `size` (x, y, ширина, высота): угол — в контейнере,
+/// размер — не меньше 1×1 и не дальше его края. Webview за краем окна не виден, а
+/// отрицательный угол или размер больше окна GTK отдал бы окну GDK, а WebKitGTK —
+/// буферу кадра (огромный буфер видеокарта может и не выделить).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn fit(rect: (i32, i32, i32, i32), size: (i32, i32)) -> (i32, i32, i32, i32) {
+    let (x, y, w, h) = rect;
+    let (cw, ch) = (size.0.max(1), size.1.max(1));
+    let (x, y) = (x.clamp(0, cw - 1), y.clamp(0, ch - 1));
+    (x, y, w.clamp(1, cw - x), h.clamp(1, ch - y))
+}
+
 /// Linux: места webview в общем `gtk::Fixed`.
 ///
 /// `set_bounds` у wry для webview в GtkFixed только разово вызывает `size_allocate`,
@@ -418,8 +430,9 @@ mod gtk_place {
                 base.map_or((x, y, w, h), |base| super::follow((x, y, w, h), base, now))
             }
         };
+        let (x, y, w, h) = super::fit((x, y, w, h), now);
         // У GtkFixed нет своего окна: координаты детей — от угла родительского окна.
-        let rect = gtk::Allocation::new(parent.x() + x, parent.y() + y, w.max(1), h.max(1));
+        let rect = gtk::Allocation::new(parent.x() + x, parent.y() + y, w, h);
         widget.size_allocate(&rect);
     }
 }
@@ -496,7 +509,25 @@ pub fn is_playing_audio(_webview: &WebView) -> bool {
 
 #[cfg(test)]
 mod follow_tests {
-    use super::follow;
+    use super::{fit, follow};
+
+    #[test]
+    fn place_stays_inside_the_container() {
+        // Внутри — как есть.
+        assert_eq!(fit((240, 80, 760, 640), (1000, 720)), (240, 80, 760, 640));
+        // Шире и ниже окна — до его края.
+        assert_eq!(
+            fit((240, 80, 9000, 90000), (1000, 720)),
+            (240, 80, 760, 640)
+        );
+        // Отрицательный угол — в угол окна, нулевой и отрицательный размер — 1×1.
+        assert_eq!(fit((-50, -5, 0, -10), (1000, 720)), (0, 0, 1, 1));
+        // Угол за краем окна — у края, 1×1.
+        assert_eq!(fit((5000, 900, 300, 300), (1000, 720)), (999, 719, 1, 1));
+        // Контейнер ещё не разложен (0×0) — 1×1 в углу, без паники.
+        assert_eq!(fit((10, 10, 100, 100), (0, 0)), (0, 0, 1, 1));
+        assert_eq!(fit((10, 10, 100, 100), (-3, -3)), (0, 0, 1, 1));
+    }
 
     #[test]
     fn page_stretches_and_panel_rides_the_edge() {

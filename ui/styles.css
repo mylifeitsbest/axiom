@@ -821,6 +821,10 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .isl.vid{width:400px;border-radius:0 0 10px 10px}
 .isl.vid .isl-t{text-align:left}
 .isl.vid .isl-r{display:flex;align-items:center;gap:1px;width:auto;height:24px}
+/* Linux: чёлка раскрыта вширь — те же кнопки прямо в ней, но видео под ней нет:
+   скругление обычное, на страницу она не заходит. */
+.isl.wide{width:400px}
+.isl.wide .isl-t{text-align:left}
 .isl-r .ib{width:24px;height:24px;color:#d0d0d0}
 .isl-r .ib .i{width:14px;height:14px}
 .isl-r .ib:hover{background:#262626;color:#fff}
@@ -867,6 +871,9 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 /* Вкладки сбоку, островок «Сверху»: страница опускается на полосу под чёлку. */
 .app.isl-strip .content{margin-top:32px}
 .app.isl-strip-mini .content{margin-top:10px}
+/* Linux: страница встаёт под чёлку сразу — без анимации отступа её webview менял бы
+   размер каждый кадр. */
+.app.isl-instant .content{transition:background-color var(--d3),border-radius var(--d2)}
 /* Вкладки сбоку, островок «В боковой панели»: карточка во всю ширину панели над
    вкладками, видео выезжает под ней. Место под неё держит .isl-slot. */
 .isl-slot{flex:none;height:0;transition:height calc(420ms*var(--k)) var(--e)}
@@ -881,7 +888,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .isl.panel.mini:hover{height:10px}
 /* Свернуть — только при наведении, справа в чёлке. */
 .isl-fold{opacity:0;transition:opacity var(--d1)}
-.isl:hover .isl-fold,.isl.vid .isl-fold{opacity:1}
+.isl:hover .isl-fold,.isl.vid .isl-fold,.isl.wide .isl-fold{opacity:1}
 .isl-st{display:grid;place-items:center;color:#b8b8b8;margin-right:2px}
 .isl-st .i{width:15px;height:15px}
 .isl.vid .isl-r,.isl .isl-r:has(.isl-fold){display:flex;align-items:center;gap:1px;width:auto;height:24px}

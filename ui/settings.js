@@ -230,7 +230,7 @@ function createPanels(ax) {
         <h4>Элементы</h4><div class="card">
           ${row('Кнопки навигации', 'Назад, вперёд, обновить', toggle('data-key', 'showNav'))}
           ${row('Кнопка ИИ', 'Панель открывается и по Ctrl+K', toggle('data-key', 'showAiBtn'))}
-          ${row('Островок', 'Чёлка сверху: видео на других вкладках и загрузки', toggle('data-key', 'island'))}
+          ${row('Островок', 'Чёлка сверху: видео на других вкладках и загрузки', toggle('data-key', 'island'), 'id="islRow"')}
           ${row('Видео в островке', 'Навели мышь на чёлку — из неё вылетает видео той вкладки', toggle('data-key', 'islandVideo'), 'id="islVideoRow"')}
           ${row('Кнопка «Видео в окне»', 'В островке: видео в отдельное окошко, его можно таскать и закрыть', toggle('data-key', 'islandPip'), 'id="islPipRow"')}
           ${row('Островок при вкладках сбоку', 'Сверху — над страницей, в панели — над вкладками', '<span class="seg" data-key="islandSide"><button data-v="top">Сверху</button><button data-v="panel">В панели</button></span>', 'data-show="layout=side"')}
@@ -388,6 +388,10 @@ function createPanels(ax) {
       $('#gpuRow').hidden = sys.platform !== 'linux';
       $('#islVideoRow').hidden = !win;
       $('#islPipRow').hidden = !win;
+      // На Linux видео в чёлке нет: в ней название и кнопки видео с другой вкладки.
+      $('#islRow small').textContent = sys.platform === 'linux'
+        ? 'Чёлка сверху: что играет на других вкладках (пауза, дальше, назад) и загрузки'
+        : 'Чёлка сверху: видео на других вкладках и загрузки';
       ax.translate.syncSheet();
     }
   }

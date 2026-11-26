@@ -309,6 +309,10 @@ impl App {
                     );
                     self.send(&ToUi::Toast { text: &text });
                 }
+                // Тяжёлый режим отрисовки сброшен после вылетов подряд (Linux).
+                if let Some(text) = system::gpu::reset_notice() {
+                    self.send(&ToUi::Toast { text });
+                }
                 // Ссылка на файл при запуске: загрузка могла начаться раньше, чем
                 // интерфейс загрузился, и её сообщение не дошло.
                 if let Some(d) = self.downloads.iter().find(|d| d.status == Status::Active) {

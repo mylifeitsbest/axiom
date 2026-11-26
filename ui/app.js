@@ -107,6 +107,15 @@
   // ---------- обновления (ui/update.js) ----------
   const upd = createUpdate({ esc, send, ms, speed, setOverlay, copyText: (t) => copyText(t), toast: (t) => toast(t), onChange: () => panels.sync() });
 
+  // ---------- ответы разработчика (ui/answers.js) ----------
+  // openSettings и panels объявлены ниже: к первому клику они уже есть.
+  const ans = createAnswers({
+    esc, send, ms, speed, setOverlay, toast: (t) => toast(t), onChange: () => panels.sync(),
+    update: () => upd.state(),
+    openUpdate() { dl.close(); upd.open(); },
+    writeAgain() { panels.bugSoon(); openSettings('system'); },
+  });
+
   // ---------- перевод страниц (ui/translate.js) ----------
   const tr = createTranslate({ esc, send, speed, setOverlay, toast: (t) => toast(t) });
 
@@ -327,6 +336,7 @@
     configureIsland();
     dl.reposition();
     upd.reposition();
+    ans.reposition();
     renderOmni();
     panels.sync();
     sendThemeColors();
@@ -1128,6 +1138,7 @@
     cssLoads, cssCut: () => cssCut,
     system: () => SYS,
     update: () => upd.state(),
+    answers: ans,
     translate: tr,
     perms: pm,
     openUpdate() { dl.close(); upd.open(); },
@@ -1196,7 +1207,7 @@
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел, #onb:шаг, #downloads, #update[:install|:notes|:current], #translate[:menu|:revert], #history[:запрос]
+        // #settings:раздел, #onb:шаг, #downloads, #update[:install|:notes|:current], #answers, #translate[:menu|:revert], #history[:запрос]
         // или #import:браузер (сразу начать перенос) — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') openSettings(arg);
@@ -1204,6 +1215,7 @@
         else if (screen === 'import') { openSettings('data'); panels.importSoon(arg); }
         else if (screen === 'downloads') dl.open();
         else if (screen === 'update') upd.openSoon(arg);
+        else if (screen === 'answers') ans.openSoon();
         else if (screen === 'translate') tr.debug(arg);
         else if (screen === 'history') openHistory(arg);
         else if (!B.onboarded) panels.openOnboarding();
@@ -1256,6 +1268,7 @@
     zoom(m) { zm.onZoom(m); },
     report_info(m) { panels.onReportInfo(m); },
     reported(m) { panels.onReported(m); },
+    answers(m) { ans.onList(m); },
     history(m) { hist.onPage(m); },
     history_count(m) { hist.onCount(m); },
   };

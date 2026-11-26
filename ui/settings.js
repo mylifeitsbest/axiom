@@ -308,12 +308,13 @@ function createPanels(ax) {
         </div>
         <div class="card">
           ${row('Отправлять отчёты об ошибках', 'Автоматически отправлять разработчику отчёт, если Axiom вылетит. Без адресов страниц и личных данных.', toggle('data-bkey', 'crash_reports'), 'data-kw="отчёт ошибка вылет краш crash баг падение"')}
-          <div class="srow" data-kw="баг ошибка отчёт проблема жалоба не работает"><span class="sl"><b>Сообщить о проблеме</b><small>Что-то сломалось или ведёт себя странно — расскажите, это уйдёт разработчику</small></span><span class="sc"><button class="btn" data-act="bug-open" id="bugOpen">Сообщить о проблеме</button></span></div>
+          <div class="srow" data-kw="баг ошибка отчёт проблема жалоба не работает ответ разработчика сообщения"><span class="sl"><b>Сообщить о проблеме</b><small>Что-то сломалось или ведёт себя странно — расскажите, это уйдёт разработчику</small></span><span class="sc"><button class="btn" data-act="bug-open" id="bugOpen">Сообщить о проблеме</button></span></div>
           <div class="bug-box" id="bugBox" hidden>
             <textarea id="bugText" maxlength="4000" placeholder="Что не работает?"></textarea>
             <label class="bug-log"><input type="checkbox" class="tg" id="bugLog" checked><span class="sl"><b>Приложить журнал</b><small id="bugLogNote">Последние записи Axiom о его работе</small></span></label>
-            <div class="btns"><button class="btn primary" data-act="bug-send" id="bugSend">Отправить</button><button class="btn ghost" data-act="bug-cancel">Отмена</button></div>
+            <div class="btns"><button class="btn primary" data-act="bug-send" id="bugSend">Отправить</button><button class="btn ghost" data-act="bug-cancel">Отмена</button><small class="bug-hint">Если разработчик ответит, ответ появится здесь же, в Axiom</small></div>
           </div>
+          <div class="msgs" id="msgList" hidden></div>
         </div>
         <div class="note">${icon('monitor')}<span id="sysNote"></span></div>
         <div class="about">${logoSvg(44, 'about')}<span><b>Axiom</b><small id="verNote"></small></span></div>`,
@@ -374,7 +375,7 @@ function createPanels(ax) {
   }
 
   function sync() {
-    if (built) syncScope(sheet);
+    if (built) { syncScope(sheet); renderMsgs(); }
     if (onb.classList.contains('on')) syncScope(onb);
     const ds = document.getElementById('dsBtn');
     if (ds) {
@@ -768,6 +769,25 @@ function createPanels(ax) {
       ? `${size(n)} — последние записи Axiom о его работе, без адресов страниц и личных данных`
       : 'Журнал пока пуст';
   }
+  // «Написать ещё» из ответа разработчика: открыть форму, когда откроются настройки.
+  let wantBug = false;
+  const bugSoon = () => { wantBug = true; };
+
+  // «Ваши сообщения»: что отправили и что ответил разработчик (ui/answers.js).
+  let msgsShape = '';
+  function renderMsgs() {
+    const box = $('#msgList');
+    const list = ax.answers?.list() || [];
+    const shape = JSON.stringify(list);
+    if (!box || shape === msgsShape) return;
+    msgsShape = shape;
+    box.hidden = !list.length;
+    const day = (sec) => new Date(sec * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+    box.innerHTML = list.length ? `<div class="msgs-t">Ваши сообщения</div>${list.map((m) => (m.answer
+      ? `<div class="msg">${ax.answers.card(m)}</div>`
+      : `<div class="msg"><div class="ans-quote"><small>Вы писали ${day(m.at)} · ответа пока нет</small><p>${esc(m.text)}</p></div></div>`)).join('')}` : '';
+  }
+
   function onReported(m) {
     $('#bugSend')?.classList.remove('busy');
     if (!m.done || !built) return;
@@ -926,6 +946,7 @@ function createPanels(ax) {
   function open(id) {
     if (!built) build();
     if (id) show(id);
+    if (wantBug) { wantBug = false; toggleBug(true); }
     if (leaving) {
       // Настройки открыли снова, пока прежний лист уходил: он возвращается с начала.
       const a = leaving;
@@ -1155,5 +1176,5 @@ function createPanels(ax) {
     return many;
   }
 
-  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon, onReportInfo, onReported };
+  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon, onReportInfo, onReported, bugSoon };
 }

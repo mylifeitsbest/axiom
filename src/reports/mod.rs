@@ -13,6 +13,7 @@
 //! Автоматические отчёты уходят, только если включено «Отправлять отчёты об ошибках»;
 //! выключено — они удаляются, не уходя никуда.
 
+pub mod answers;
 mod journal;
 mod scrub;
 #[cfg(target_os = "linux")]
@@ -85,7 +86,7 @@ impl Kind {
     }
 }
 
-/// То, что уходит на сервер: ровно эти поля, без идентификаторов.
+/// То, что уходит на сервер: ровно эти поля, без идентификаторов браузера.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Report {
     kind: Kind,
@@ -93,6 +94,10 @@ struct Report {
     os: String,
     text: String,
     log: String,
+    /// Только у «Сообщить о проблеме»: случайный ключ, по которому браузер потом
+    /// спросит ответ разработчика (см. [`answers`]). Ни с чем больше не связан.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
 }
 
 /// Чем закончилась отправка «Сообщить о проблеме».
@@ -269,6 +274,7 @@ pub fn log_size() -> usize {
             os: os_name().into(),
             text: state.about.clone(),
             log: journal::tail(&state.root, READ_LOG),
+            token: None,
         };
         report.clean(&state.private);
         report.log.len()
@@ -282,6 +288,7 @@ pub fn send_user(text: &str, with_log: bool, events: EventLoopProxy<UserEvent>) 
         let _ = events.send_event(UserEvent::Reported(Outcome::Failed));
         return;
     };
+    let token = answers::token();
     let mut report = Report {
         kind: Kind::User,
         version: crate::update::current_string().into(),
@@ -292,10 +299,12 @@ pub fn send_user(text: &str, with_log: bool, events: EventLoopProxy<UserEvent>) 
         } else {
             String::new()
         },
+        token: Some(token.clone()),
     };
     report.clean(&state.private);
+    let text = text.to_string();
     thread::spawn(move || {
-        let outcome = match endpoint().map(|url| post(&url, &report)) {
+        let outcome = match endpoint("r").map(|url| post(&url, &report)) {
             Some(Posted::Ok) => Outcome::Sent,
             Some(Posted::Rejected) | None => Outcome::Failed,
             Some(Posted::Later) => match save(&state.root, &report) {
@@ -303,6 +312,10 @@ pub fn send_user(text: &str, with_log: bool, events: EventLoopProxy<UserEvent>) 
                 Err(_) => Outcome::Failed,
             },
         };
+        // Ушло или уйдёт само — ждём ответа.
+        if outcome != Outcome::Failed {
+            answers::remember(&state.root, token, &text);
+        }
         let _ = events.send_event(UserEvent::Reported(outcome));
     });
 }
@@ -468,6 +481,7 @@ fn record(kind: Kind, version: &str, text: &str, log: &str) {
         os: os_name().into(),
         text: format!("{}\n\n{text}", state.about),
         log: log.into(),
+        token: None,
     };
     report.clean(&state.private);
     if let Err(err) = save(&state.root, &report) {
@@ -555,7 +569,7 @@ fn send_pending() {
     let auto = AUTO.load(Ordering::Relaxed);
     // Тестовые запуски release-сборки (`AXIOM_NO_STATS=1`) сами отчётов не шлют.
     let quiet = std::env::var_os("AXIOM_NO_STATS").is_some_and(|v| !v.is_empty() && v != "0");
-    let Some(url) = endpoint() else { return };
+    let Some(url) = endpoint("r") else { return };
     for (path, report) in pending(&state.root.join(DIR)) {
         if report.kind != Kind::User {
             match auto {
@@ -591,9 +605,9 @@ enum Posted {
     Later,
 }
 
-/// Адрес приёма. В debug — только подменённый локальный (`AXIOM_STATS_URL`):
-/// отладочные запуски не шлют на боевой сервер ничего.
-fn endpoint() -> Option<String> {
+/// Адрес на сервере (`r` — приём отчётов, `a` — ответы). В debug — только
+/// подменённый локальный (`AXIOM_STATS_URL`): отладочные запуски не ходят на боевой сервер.
+fn endpoint(path: &str) -> Option<String> {
     if cfg!(debug_assertions) && std::env::var_os("AXIOM_STATS_URL").is_none() {
         return None;
     }
@@ -601,7 +615,7 @@ fn endpoint() -> Option<String> {
     if cfg!(debug_assertions) && base == crate::stats::STATS_URL {
         return None;
     }
-    Some(format!("{base}/r"))
+    Some(format!("{base}/{path}"))
 }
 
 fn post(url: &str, report: &Report) -> Posted {
@@ -724,6 +738,7 @@ mod tests {
             os: "windows".into(),
             text: text.into(),
             log: log.into(),
+            token: None,
         }
     }
 
@@ -736,6 +751,14 @@ mod tests {
                 "kind": "crash", "version": "0.5.4", "os": "windows", "text": "t", "log": "l"
             })
         );
+        // Сообщение человека — ещё и с ключом ответа; очистка его не трогает.
+        let mut user = report("t", "l");
+        user.kind = Kind::User;
+        user.token = Some("0123456789abcdef0123456789abcdef".into());
+        user.clean(&scrub::Private::new(vec![], vec![], vec![]));
+        let json = serde_json::to_value(&user)?;
+        assert_eq!(json["token"], "0123456789abcdef0123456789abcdef");
+        assert_eq!(json.as_object().map(|o| o.len()), Some(6));
         Ok(())
     }
 

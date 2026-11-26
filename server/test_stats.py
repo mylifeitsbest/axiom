@@ -88,7 +88,9 @@ class Server(unittest.TestCase):
         con = stats.db()
         cols = {r[1] for r in con.execute("PRAGMA table_info(reports)")}
         con.close()
-        self.assertEqual(cols, {"id", "at", "kind", "v", "os", "text", "log"})
+        # Ключ ответа и сам ответ — без IP и без чего-либо о браузере.
+        self.assertEqual(cols, {"id", "at", "kind", "v", "os", "text", "log",
+                                "token", "ans", "ans_text", "ans_v", "ans_at", "ans_got"})
 
     def test_all_kinds_and_beta_versions(self):
         for kind in ("crash", "renderer", "user"):
@@ -178,6 +180,94 @@ class Server(unittest.TestCase):
         self.assertEqual(stats.first_line("Axiom 0.5.4 · Windows · WebView2\n\nПаника: x"), "Паника: x")
         self.assertEqual(stats.first_line("  \nВкладка не грузится\nподробности"), "Вкладка не грузится")
         self.assertEqual(stats.first_line(""), "")
+
+    # ---------- ответы человеку ----------
+
+    TOKEN = "0123456789abcdef0123456789abcdef"
+
+    def last_id(self):
+        con = stats.db()
+        rid = con.execute("SELECT MAX(id) FROM reports").fetchone()[0]
+        con.close()
+        return rid
+
+    def answer(self, rid, key=KEY, **fields):
+        from urllib.parse import urlencode
+        return self.request("POST", f"/d/{key}/r/{rid}", urlencode(fields),
+                            headers={"Content-Type": "application/x-www-form-urlencoded"})
+
+    def ask(self, *tokens):
+        status, body, _ = self.request("POST", "/a", {"t": list(tokens)})
+        self.assertEqual(status, 200, body)
+        return json.loads(body)["answers"]
+
+    def test_only_user_messages_keep_a_valid_answer_token(self):
+        cases = [("user", self.TOKEN, self.TOKEN), ("crash", self.TOKEN, None),
+                 ("user", "XYZ", None), ("user", 5, None), ("user", None, None)]
+        for kind, token, kept in cases:
+            self.assertEqual(self.request("POST", "/r", report(kind=kind, token=token))[0], 204)
+            con = stats.db()
+            got = con.execute("SELECT token FROM reports WHERE id=?", (self.last_id(),)).fetchone()[0]
+            con.close()
+            self.assertEqual(got, kept, (kind, token))
+
+    def test_answer_reaches_the_browser_once_posted(self):
+        self.assertEqual(self.request("POST", "/r", report(kind="user", token=self.TOKEN))[0], 204)
+        rid = self.last_id()
+        other = "f" * 32
+        self.assertEqual(self.ask(self.TOKEN, other), {})
+        status, page, resp = self.request("GET", f"/d/{KEY}/r/{rid}")
+        self.assertIn("Ответ человеку", page)
+        self.assertIn("form-action 'self'", resp.getheader("Content-Security-Policy"))
+        self.assertIn("ждёт ответа", self.request("GET", f"/d/{KEY}")[1])
+
+        status, _, resp = self.answer(rid, s="fixed", v="0.6.1-beta.150", text="Сделали <b>кнопку</b>")
+        self.assertEqual(status, 303)
+        self.assertEqual(resp.getheader("Location"), f"/d/{KEY}/r/{rid}")
+        page = self.request("GET", f"/d/{KEY}/r/{rid}")[1]
+        self.assertIn("ещё не забрал", page)
+        self.assertIn("Сделали &lt;b&gt;кнопку&lt;/b&gt;", page)
+
+        got = self.ask(self.TOKEN, other)
+        self.assertEqual(list(got), [self.TOKEN])
+        self.assertEqual(got[self.TOKEN]["s"], "fixed")
+        self.assertEqual(got[self.TOKEN]["v"], "0.6.1-beta.150")
+        self.assertEqual(got[self.TOKEN]["text"], "Сделали <b>кнопку</b>")
+        self.assertTrue(got[self.TOKEN]["at"])
+        self.assertIn("Браузер забрал ответ", self.request("GET", f"/d/{KEY}/r/{rid}")[1])
+        self.assertIn("исправлено ✓", self.request("GET", f"/d/{KEY}")[1])
+
+        # Исправленный ответ уходит снова, с новым временем; «убрать» — пропадает.
+        self.assertEqual(self.answer(rid, s="reply", text="Уточните, пожалуйста")[0], 303)
+        self.assertEqual(self.ask(self.TOKEN)[self.TOKEN]["s"], "reply")
+        self.assertEqual(self.answer(rid, s="fixed", do="clear")[0], 303)
+        self.assertEqual(self.ask(self.TOKEN), {})
+
+    def test_bad_answers_are_refused(self):
+        self.assertEqual(self.request("POST", "/r", report(kind="user", token=self.TOKEN))[0], 204)
+        rid = self.last_id()
+        self.assertEqual(self.request("POST", "/r", report(kind="user"))[0], 204)
+        no_token = self.last_id()
+        self.assertEqual(self.request("POST", "/r", report(kind="crash", token=self.TOKEN))[0], 204)
+        crash = self.last_id()
+        self.assertEqual(self.answer(rid, key="wrong", s="fixed")[0], 404)
+        self.assertEqual(self.answer(999999, s="fixed")[0], 404)
+        for fields in ({"s": "hack"}, {"s": "reply"}, {"s": "fixed", "v": "0.6"},
+                       {"s": "fixed", "text": "x" * (stats.MAX_ANSWER_TEXT + 1)}):
+            status, page, _ = self.answer(rid, **fields)
+            self.assertEqual(status, 400, fields)
+            self.assertIn('class="err"', page)
+        self.assertIn("ответить нельзя", self.answer(no_token, s="fixed")[1])
+        self.assertIn("ответить нельзя", self.answer(crash, s="fixed")[1])
+        self.assertIn("ещё не умел", self.request("GET", f"/d/{KEY}/r/{no_token}")[1])
+        self.assertEqual(self.ask(self.TOKEN), {})
+
+    def test_bad_answer_questions_are_refused(self):
+        bad = [{"t": "x"}, {"t": ["XYZ"]}, {"t": [5]}, {"t": ["a" * 32] * (stats.MAX_ASK + 1)},
+               [self.TOKEN], {}]
+        for body in bad:
+            self.assertEqual(self.request("POST", "/a", body)[0], 400, repr(body)[:60])
+        self.assertEqual(self.request("GET", "/a")[0], 404)
 
     # ---------- ограничение частоты ----------
 

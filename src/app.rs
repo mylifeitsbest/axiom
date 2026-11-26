@@ -129,6 +129,8 @@ impl App {
     ) -> Result<Self> {
         let mut settings = Settings::load(&paths);
         crate::reports::set_auto(settings.crash_reports);
+        let events = event_loop.create_proxy();
+        crate::reports::answers::listen(&paths.root, events.clone());
         let mut updater = Updater::new();
         updater.set_updated_from(updated_from);
         // Пакет обновили apt или pacman — Axiom узнаёт об этом по записи в профиле.
@@ -138,7 +140,6 @@ impl App {
         let bookmarks = Bookmarks::load(&paths);
         let downloads = Downloads::load(&paths);
         let zoom = zoom::State::load(&paths);
-        let events = event_loop.create_proxy();
         let window = build_window(event_loop)?;
         #[cfg(target_os = "linux")]
         crate::ui::hotkeys::install_window(&window, events.clone());
@@ -304,6 +305,7 @@ impl App {
             UserEvent::PermissionPageLeft(tab) => self.permissions_tab_gone(tab),
             UserEvent::Untracked { id, url } => self.load_untracked(id, url),
             UserEvent::Reported(outcome) => self.on_reported(outcome),
+            UserEvent::Answers => self.push_answers(true),
             UserEvent::Tick => self.on_tick(),
         }
         Ok(Flow::Continue)
@@ -324,6 +326,7 @@ impl App {
                 self.push_downloads();
                 self.push_permissions();
                 self.push_update(false);
+                self.push_answers(false);
                 self.push_window_state();
                 self.push_translate_all();
                 self.show_window();
@@ -572,6 +575,7 @@ impl App {
             UiCmd::Report { text, log } => {
                 crate::reports::send_user(&text, log, self.events.clone());
             }
+            UiCmd::AnswersSeen { ids } => crate::reports::answers::seen(&ids),
         }
         Ok(Flow::Continue)
     }
@@ -587,6 +591,15 @@ impl App {
             done: outcome != Outcome::Failed,
         });
         self.send(&ToUi::Toast { text });
+    }
+
+    /// Свои сообщения разработчику — интерфейсу. `fresh`: пришло из фонового потока
+    /// (новый ответ или «Понятно»), а не при загрузке интерфейса.
+    fn push_answers(&self, fresh: bool) {
+        self.send(&ToUi::Answers {
+            items: crate::reports::answers::list(),
+            fresh,
+        });
     }
 
     fn on_hotkey(&mut self, hotkey: Hotkey) -> Result<()> {

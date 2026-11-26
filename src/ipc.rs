@@ -406,6 +406,10 @@ pub enum UiCmd {
         text: String,
         log: bool,
     },
+    /// «Понятно» под ответом разработчика: эти ответы прочитаны.
+    AnswersSeen {
+        ids: Vec<String>,
+    },
 }
 
 /// Что нажали в окошке разрешения.
@@ -534,6 +538,14 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
             short(text, crate::reports::MAX_USER_TEXT, "report")?;
             if text.trim().is_empty() {
                 return Err(IpcError::Invalid("report_empty"));
+            }
+        }
+        UiCmd::AnswersSeen { ids } => {
+            if ids.len() > 32 {
+                return Err(IpcError::Invalid("ids"));
+            }
+            for id in ids {
+                short(id, 64, "ids")?;
             }
         }
         _ => {}
@@ -743,6 +755,12 @@ pub enum ToUi<'a> {
     /// «Сообщить о проблеме» отправлен (`done`: форму можно очистить) или нет.
     Reported {
         done: bool,
+    },
+    /// Свои сообщения разработчику и ответы на них, новые сверху.
+    Answers {
+        items: Vec<crate::reports::answers::View>,
+        /// Пришёл ответ, которого ещё не видели (не при запуске): сказать об этом.
+        fresh: bool,
     },
     /// Записи для страницы истории: ответ на `history` с теми же `q` и `offset`.
     History {

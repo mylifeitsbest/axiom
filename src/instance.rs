@@ -244,7 +244,7 @@ fn same_secret(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// 128 бит из системного генератора, которым std засевает `RandomState`.
-fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     let part = || {
         let mut h = RandomState::new().build_hasher();
         let nanos = SystemTime::now()

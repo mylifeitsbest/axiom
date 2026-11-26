@@ -3,6 +3,9 @@
 
 Принимает короткие пинги от браузеров (`POST /p`) и отчёты об ошибках (`POST /r`),
 показывает приватную панель (`GET /d/<ключ>`, отчёт — `/d/<ключ>/r/<номер>`).
+На сообщение из «Сообщить о проблеме» можно ответить со страницы отчёта
+(`POST /d/<ключ>/r/<номер>`): браузер узнаёт ответ по случайному ключу сообщения
+(`POST /a`) и показывает его человеку.
 Пинги хранятся только агрегатами в SQLite; ни IP, ни идентификаторов в базе нет
 (IP живёт лишь в памяти ограничителя частоты, и то в виде хэша с солью).
 Зависимостей нет: всё из стандартной библиотеки, запускается на голой Ubuntu.
@@ -25,6 +28,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from html import escape
+from urllib.parse import parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DB = os.environ.get("AXIOM_STATS_DB", "stats.db")
@@ -44,9 +48,20 @@ MAX_REPORT_TEXT = 16 * 1024
 MAX_REPORTS = 2000  # больше — самые старые удаляются: база не растёт без предела
 REPORTS_KEEP = timedelta(days=90)
 
+# Ответы на «Сообщить о проблеме». Ключ ответа браузер выбирает сам: 128 случайных
+# бит, с другими сообщениями, пингами и самим браузером он не связан.
+TOKEN_RE = re.compile(r"[0-9a-f]{32}")
+ANSWERS = {"fixed": "исправлено", "reply": "ответ"}
+MAX_ANSWER_TEXT = 2000
+MAX_ANSWER_BODY = 32 * 1024
+MAX_ASK_BODY = 2048
+# Сколько ключей браузер спрашивает за раз (своих сообщений у него не больше).
+MAX_ASK = 16
+
 # Ограничение частоты по IP: (запросов, за секунд). Браузер пингует раз в час,
-# а отчёты шлёт редко — больше бывает только у накрутки.
-LIMITS = {"/p": (30, 3600), "/r": (20, 3600)}
+# а отчёты шлёт редко — больше бывает только у накрутки. Об ответах спрашивает
+# раз в 20 минут; запас — на несколько браузеров за одним адресом.
+LIMITS = {"/p": (30, 3600), "/r": (20, 3600), "/a": (120, 3600)}
 MAX_BUCKETS = 50_000
 # Строк (версия × ОС) за день. Поддельные версии иначе раздували бы базу без предела.
 MAX_ROWS_PER_DAY = 200
@@ -115,6 +130,14 @@ def init():
                 at TEXT NOT NULL, kind TEXT NOT NULL, v TEXT NOT NULL, os TEXT NOT NULL,
                 text TEXT NOT NULL DEFAULT '', log TEXT NOT NULL DEFAULT '')"""
         )
+        # Ответ на сообщение человека: ключ, по которому браузер спросит, что ответили
+        # (ans: fixed | reply), текст, в какой версии, когда и когда браузер его забрал.
+        # У отчётов до этих столбцов ключа нет — ответить на них нельзя.
+        pcols = {r[1] for r in con.execute("PRAGMA table_info(reports)")}
+        for col in ("token", "ans", "ans_text", "ans_v", "ans_at", "ans_got"):
+            if col not in pcols:
+                con.execute(f"ALTER TABLE reports ADD COLUMN {col} TEXT")
+        con.execute("CREATE INDEX IF NOT EXISTS reports_token ON reports(token)")
     con.close()
 
 
@@ -213,17 +236,22 @@ def check_report(payload):
     # Пустой отчёт ни о чём не говорит; NUL в тексте — только мусор.
     if not text.strip() and not log.strip():
         return None
-    return kind, v, os_, text.replace("\0", ""), log.replace("\0", "")
+    # Ключ ответа — только у сообщения человека. Кривой ключ не повод терять
+    # сообщение: оно сохранится, только ответить на него будет нельзя.
+    token = payload.get("token")
+    if kind != "user" or not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
+        token = None
+    return kind, v, os_, text.replace("\0", ""), log.replace("\0", ""), token
 
 
 def store_report(report):
-    kind, v, os_, text, log = report
+    kind, v, os_, text, log, token = report
     now = utcnow()
     con = db()
     with con:
         cur = con.execute(
-            "INSERT INTO reports(at, kind, v, os, text, log) VALUES(?,?,?,?,?,?)",
-            (now.strftime("%Y-%m-%dT%H:%M:%SZ"), kind, v, os_, text, log))
+            "INSERT INTO reports(at, kind, v, os, text, log, token) VALUES(?,?,?,?,?,?,?)",
+            (now.strftime("%Y-%m-%dT%H:%M:%SZ"), kind, v, os_, text, log, token))
         con.execute("DELETE FROM reports WHERE at<?",
                     ((now - REPORTS_KEEP).strftime("%Y-%m-%dT%H:%M:%SZ"),))
         con.execute(
@@ -231,6 +259,73 @@ def store_report(report):
             (MAX_REPORTS,))
     con.close()
     return cur.lastrowid
+
+
+def check_ask(payload):
+    """Вопрос браузера «есть ли ответы»: {"t": [ключи]}. Вернуть ключи или None."""
+    if not isinstance(payload, dict):
+        return None
+    tokens = payload.get("t")
+    if not isinstance(tokens, list) or len(tokens) > MAX_ASK:
+        return None
+    if not all(isinstance(t, str) and TOKEN_RE.fullmatch(t) for t in tokens):
+        return None
+    return list(dict.fromkeys(tokens))
+
+
+def answers(tokens):
+    """Ответы на сообщения с этими ключами: {ключ: {s, text, v, at}} — только на те,
+    на которые ответили. Впервые отданный ответ помечается полученным."""
+    if not tokens:
+        return {}
+    now = utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    marks = ",".join("?" * len(tokens))
+    out = {}
+    con = db()
+    with con:
+        rows = con.execute(
+            f"""SELECT id, token, ans, ans_text, ans_v, ans_at FROM reports
+                WHERE token IN ({marks}) AND ans IS NOT NULL ORDER BY id""", tokens).fetchall()
+        for id_, token, ans, text, v, at in rows:
+            out[token] = {"s": ans, "text": text or "", "v": v or "", "at": at or ""}
+            con.execute("UPDATE reports SET ans_got=? WHERE id=? AND ans_got IS NULL", (now, id_))
+    con.close()
+    return out
+
+
+def set_answer(id_, form):
+    """Ответить на сообщение №id_ (поля формы: s, text, v). Вернуть None или причину
+    отказа. s=clear убирает ответ (если браузер его уже забрал — у человека он останется)."""
+    s = form.get("s", "")
+    text = form.get("text", "").replace("\0", "").replace("\r\n", "\n").strip()
+    v = form.get("v", "").strip()
+    if s not in ANSWERS and s != "clear":
+        return "Неизвестный ответ"
+    if len(text) > MAX_ANSWER_TEXT:
+        return f"Ответ длиннее {MAX_ANSWER_TEXT} символов"
+    if v and not REPORT_VERSION_RE.fullmatch(v):
+        return "Версия — как 0.6.1 или 0.6.1-beta.150"
+    if s == "reply" and not text:
+        return "Напишите ответ"
+    con = db()
+    row = con.execute("SELECT kind, token FROM reports WHERE id=?", (id_,)).fetchone()
+    if not row:
+        con.close()
+        return "Нет такого отчёта"
+    if row[0] != "user" or not row[1]:
+        con.close()
+        return "На этот отчёт ответить нельзя"
+    with con:
+        if s == "clear":
+            con.execute(
+                """UPDATE reports SET ans=NULL, ans_text=NULL, ans_v=NULL, ans_at=NULL,
+                   ans_got=NULL WHERE id=?""", (id_,))
+        else:
+            con.execute(
+                "UPDATE reports SET ans=?, ans_text=?, ans_v=?, ans_at=?, ans_got=NULL WHERE id=?",
+                (s, text, v, utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), id_))
+    con.close()
+    return None
 
 
 # ---------- ограничение частоты ----------
@@ -369,8 +464,8 @@ def dashboard(nonce=""):
            HAVING a>0 ORDER BY a DESC""", (t,)).fetchall()
     # Отчёты об ошибках: свежие сверху и сколько каких пришло за сутки.
     s["reports"] = con.execute(
-        """SELECT id, at, kind, v, os, substr(text, 1, 2000) FROM reports
-           ORDER BY id DESC LIMIT 30""").fetchall()
+        """SELECT id, at, kind, v, os, substr(text, 1, 2000), token IS NOT NULL, ans, ans_got
+           FROM reports ORDER BY id DESC LIMIT 30""").fetchall()
     s["reports_day"] = dict(con.execute(
         "SELECT kind, COUNT(*) FROM reports WHERE at>=? GROUP BY kind",
         ((now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),)).fetchall())
@@ -522,7 +617,7 @@ def reports_html(rows):
         return ('<div class="panel feed-empty">Отчётов пока нет. Сюда придут вылеты, упавшие '
                 'процессы страниц и сообщения из «Сообщить о проблеме».</div>')
     trs = []
-    for id_, at, kind, v, os_, text in rows:
+    for id_, at, kind, v, os_, text, can, ans, got in rows:
         line = first_line(text)
         if len(line) > 140:
             line = line[:139] + "…"
@@ -532,9 +627,21 @@ def reports_html(rows):
             f'{escape(at[:16].replace("T", " "))}</time></a></td>'
             f'<td><span class="kind k-{escape(kind)}">{escape(REPORT_KINDS.get(kind, kind))}</span></td>'
             f'<td>{escape(v)}</td><td>{escape(os_)}</td>'
-            f'<td class="line"><a href="{href}">{escape(line) or "—"}</a></td></tr>')
+            f'<td class="line"><a href="{href}">{escape(line) or "—"}</a></td>'
+            f'<td>{answer_badge(kind, can, ans, got)}</td></tr>')
     return ('<table class="reps"><thead><tr><th>когда</th><th>что</th><th>версия</th>'
-            f'<th>система</th><th>о чём</th></tr></thead><tbody>{"".join(trs)}</tbody></table>')
+            f'<th>система</th><th>о чём</th><th>ответ</th></tr></thead><tbody>{"".join(trs)}</tbody></table>')
+
+
+def answer_badge(kind, can, ans, got):
+    """Ответили ли человеку: «исправлено ✓» (✓ — браузер ответ забрал), «ждёт ответа»."""
+    if kind != "user" or not can:
+        return ""
+    if not ans:
+        return '<span class="ans a-wait">ждёт ответа</span>'
+    mark = " ✓" if got else ""
+    title = "Браузер ответ забрал" if got else "Браузер ещё не забрал ответ"
+    return f'<span class="ans a-{escape(ans)}" title="{title}">{escape(ANSWERS.get(ans, ans))}{mark}</span>'
 
 
 def reports_hint(day):
@@ -566,23 +673,85 @@ REPORT_CSS = """
     padding:14px 16px; font:12.5px/1.55 ui-monospace,"Cascadia Code",Consolas,monospace;
     white-space:pre-wrap; word-break:break-word; color:var(--ink2); }
   pre.text { color:var(--ink); }
+  .box { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }
+  .ans-now { margin:0 0 14px; color:var(--ink2); }
+  .ans-now b { color:var(--ink); }
+  .ans-now pre { margin-top:8px; }
+  form { display:grid; gap:10px; }
+  .opts { display:flex; gap:8px; flex-wrap:wrap; }
+  .opts label { display:flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid var(--line);
+    border-radius:99px; cursor:pointer; color:var(--ink2); }
+  .opts label:has(input:checked) { border-color:var(--acc); color:var(--ink); background:#16324f; }
+  .opts input { accent-color:var(--acc); margin:0; }
+  input[type=text], textarea { width:100%; background:var(--bg); color:var(--ink); border:1px solid var(--line);
+    border-radius:10px; padding:9px 11px; font:inherit; }
+  textarea { min-height:120px; resize:vertical; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { font:inherit; font-weight:600; padding:8px 16px; border-radius:10px; border:0; cursor:pointer;
+    background:var(--acc); color:#fff; }
+  button.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); font-weight:500; }
+  .err { color:#ffb4a3; background:#4a1f1a; padding:8px 12px; border-radius:10px; margin:0 0 12px; }
+  .ans { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; white-space:nowrap; }
+  .a-fixed { background:#163d2a; color:#8fe3b0; }
+  .a-reply { background:#16324f; color:#9cc8f5; }
+  .a-wait { background:#232735; color:var(--muted); }
   .nav { display:flex; justify-content:space-between; margin-top:22px; font-size:14px; }
   .muted { color:var(--muted); }
 """
 
 
-def report_page(id_, nonce=""):
+def answer_html(id_, kind, token, ans, ans_text, ans_v, ans_at, ans_got, error=None, form=None):
+    """Раздел «Ответ человеку» на странице отчёта: что уже ответили и форма."""
+    err = f'<p class="err">{escape(error)}</p>' if error else ""
+    if kind != "user":
+        return err
+    if not token:
+        return (f'<h2>Ответ человеку</h2>{err}<p class="muted">Ответить нельзя: сообщение пришло '
+                'из Axiom, который ещё не умел получать ответы.</p>')
+    now = ""
+    if ans:
+        when = f'<time data-utc="{escape(ans_at or "")}">{escape((ans_at or "").replace("T", " "))}</time>'
+        got = (f'Браузер забрал ответ <time data-utc="{escape(ans_got)}">{escape(ans_got.replace("T", " "))}</time> — '
+               'человек его видит.' if ans_got else
+               'Браузер ещё не забрал ответ: он спрашивает раз в 20 минут, пока Axiom открыт.')
+        ver = f" · версия {escape(ans_v)}" if ans_v else ""
+        body = f'<pre class="text">{escape(ans_text)}</pre>' if ans_text else ""
+        now = (f'<div class="ans-now"><b>Ответ: {escape(ANSWERS.get(ans, ans))}</b>{ver} · {when}<br>'
+               f'{got}{body}</div>')
+    # После ошибки форма сохраняет то, что ввели.
+    f = form if form is not None else {"s": ans or "fixed", "text": ans_text or "", "v": ans_v or ""}
+    s = f.get("s") if f.get("s") in ANSWERS else "fixed"
+    opts = "".join(
+        f'<label><input type="radio" name="s" value="{k}"{" checked" if k == s else ""}> {label}</label>'
+        for k, label in (("fixed", "Исправлено"), ("reply", "Ответ")))
+    clear = '<button class="ghost" name="do" value="clear">Убрать ответ</button>' if ans else ""
+    return f"""<h2>Ответ человеку</h2>
+  <div class="box">{err}{now}
+  <form method="post" action="{report_href(id_)}" accept-charset="utf-8">
+    <div class="opts">{opts}</div>
+    <input type="text" name="v" value="{escape(f.get("v", ""))}" maxlength="40"
+      placeholder="В какой версии исправлено (можно пусто): 0.6.1-beta.150">
+    <textarea name="text" maxlength="{MAX_ANSWER_TEXT}"
+      placeholder="Что сделали или что ответить. Для «Исправлено» можно пусто.">{escape(f.get("text", ""))}</textarea>
+    <div class="row"><button>{"Изменить ответ" if ans else "Отправить ответ"}</button>{clear}
+      <span class="muted">Человек увидит ответ в Axiom в течение 20 минут.</span></div>
+  </form></div>"""
+
+
+def report_page(id_, nonce="", error=None, form=None):
     """Один отчёт целиком. Всё, что прислал браузер, — только через escape()."""
     con = db()
     row = con.execute(
-        "SELECT id, at, kind, v, os, text, log FROM reports WHERE id=?", (id_,)).fetchone()
+        """SELECT id, at, kind, v, os, text, log, token, ans, ans_text, ans_v, ans_at, ans_got
+           FROM reports WHERE id=?""", (id_,)).fetchone()
     older = con.execute("SELECT MAX(id) FROM reports WHERE id<?", (id_,)).fetchone()[0]
     newer = con.execute("SELECT MIN(id) FROM reports WHERE id>?", (id_,)).fetchone()[0]
     con.close()
     if not row:
         return None
-    _, at, kind, v, os_, text, log = row
+    _, at, kind, v, os_, text, log, *answer = row
     what = REPORT_KINDS.get(kind, kind)
+    answer = answer_html(id_, kind, *answer, error=error, form=form)
     log_html = (f'<pre class="log">{escape(log)}</pre>' if log.strip()
                 else '<p class="muted">Журнал не приложен.</p>')
     nav = (f'<a href="{report_href(newer)}">← новее</a>' if newer else "<span></span>") + \
@@ -597,6 +766,7 @@ def report_page(id_, nonce=""):
     · версия {escape(v)} · {escape(os_)}</div>
   <h2>Что случилось</h2>
   <pre class="text">{escape(text) or "—"}</pre>
+  {answer}
   <h2>Журнал</h2>
   {log_html}
   <div class="nav">{nav}</div>
@@ -712,6 +882,10 @@ def render(s, nonce=""):
   .k-crash {{ background:#4a1f1a; color:#ffb4a3; }}
   .k-renderer {{ background:#3d3315; color:#f1d48a; }}
   .k-user {{ background:#16324f; color:#9cc8f5; }}
+  .ans {{ display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; white-space:nowrap; }}
+  .a-fixed {{ background:#163d2a; color:#8fe3b0; }}
+  .a-reply {{ background:#16324f; color:#9cc8f5; }}
+  .a-wait {{ background:#232735; color:var(--muted); }}
   details {{ margin-top:30px; color:var(--ink2); font-size:14px; }}
   summary {{ cursor:pointer; color:var(--muted); font-size:13px; }}
   details ul {{ padding-left:18px; margin:10px 0 0; }}
@@ -815,7 +989,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass  # не пишем лог доступа — там были бы IP
 
-    def _send(self, code, body=b"", ctype="text/plain; charset=utf-8", nonce=None):
+    def _send(self, code, body=b"", ctype="text/plain; charset=utf-8", nonce=None, forms=False):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -823,10 +997,12 @@ class Handler(BaseHTTPRequestHandler):
         if nonce is not None:
             # Панель показывает присланный кем угодно текст: даже если escape() где-то
             # пропустят, чужой скрипт не выполнится. Ключ в адресе не уйдёт в Referer.
+            # Формы — только на странице отчёта (ответ человеку) и только на этот же сервер.
+            action = "'self'" if forms else "'none'"
             self.send_header(
                 "Content-Security-Policy",
                 f"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; "
-                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+                f"base-uri 'none'; form-action {action}; frame-ancestors 'none'")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -841,21 +1017,32 @@ class Handler(BaseHTTPRequestHandler):
                 break
             left -= len(chunk)
 
-    def do_POST(self):
-        path = self.path
-        if path not in LIMITERS:
-            return self._send(404, b"not found")
-        limit = MAX_BODY if path == "/p" else MAX_REPORT_BODY
+    def body(self, limit):
+        """Тело запроса или None (ответ об ошибке уже отправлен)."""
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
-            return self._send(400, b"bad")
+            self._send(400, b"bad")
+            return None
         # Тело дочитываем и при отказе: закрытый с непрочитанными данными сокет
         # даёт клиенту RST вместо ответа.
         if length > limit:
             self.drain(length)
-            return self._send(413, b"too large")
-        raw = self.rfile.read(length) if length > 0 else b""
+            self._send(413, b"too large")
+            return None
+        return self.rfile.read(length) if length > 0 else b""
+
+    def do_POST(self):
+        path = self.path
+        m = re.fullmatch(r"/d/([^/?#]+)/r/(\d{1,12})/?", path)
+        if m:
+            return self.post_answer(m)
+        if path not in LIMITERS:
+            return self._send(404, b"not found")
+        limit = {"/p": MAX_BODY, "/a": MAX_ASK_BODY}.get(path, MAX_REPORT_BODY)
+        raw = self.body(limit)
+        if raw is None:
+            return
         ip = client_ip(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
         if not LIMITERS[path].allow(ip):
             return self._send(429, b"too many")
@@ -865,6 +1052,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             return self._send(400, b"bad")
+        if path == "/a":
+            tokens = check_ask(payload)
+            if tokens is None:
+                return self._send(400, b"bad")
+            out = json.dumps({"answers": answers(tokens)}, ensure_ascii=False).encode("utf-8")
+            return self._send(200, out, "application/json; charset=utf-8")
         if path == "/p":
             ok = isinstance(payload, dict) and record(payload)
         else:
@@ -874,6 +1067,35 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, b"bad")
         self._send(204)
 
+    def post_answer(self, m):
+        """Ответ человеку с формы на странице отчёта (или `curl --data-urlencode`)."""
+        raw = self.body(MAX_ANSWER_BODY)
+        if raw is None:
+            return
+        if not KEY or not hmac.compare_digest(m[1].encode(), KEY.encode()):
+            return self._send(404, b"not found")
+        try:
+            form = {k: v[0] for k, v in parse_qs(
+                raw.decode("utf-8"), keep_blank_values=True, max_num_fields=10).items()}
+        except (UnicodeDecodeError, ValueError):
+            return self._send(400, b"bad")
+        if form.get("do") == "clear":
+            form["s"] = "clear"
+        id_ = int(m[2])
+        error = set_answer(id_, form)
+        if error is None:
+            # Назад на страницу отчёта: обновление страницы не пришлёт форму второй раз.
+            self.send_response(303)
+            self.send_header("Location", report_href(id_))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        nonce = secrets.token_urlsafe(16)
+        page = report_page(id_, nonce, error=error, form=form)
+        if page is None:
+            return self._send(404, b"not found")
+        self._send(400, page.encode("utf-8"), "text/html; charset=utf-8", nonce, forms=True)
+
     def do_GET(self):
         if self.path == "/health":
             return self._send(200, b"ok")
@@ -882,7 +1104,8 @@ class Handler(BaseHTTPRequestHandler):
             nonce = secrets.token_urlsafe(16)
             page = dashboard(nonce) if m[2] is None else report_page(int(m[2]), nonce)
             if page is not None:
-                return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8", nonce)
+                return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8", nonce,
+                                  forms=m[2] is not None)
         self._send(404, b"not found")
 
     do_HEAD = do_GET

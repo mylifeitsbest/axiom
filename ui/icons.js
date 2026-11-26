@@ -63,6 +63,7 @@ const ICONS = {
   mic: '<rect x="9" y="3.5" width="6" height="10.5" rx="3"/><path d="M5.8 11a6.2 6.2 0 0 0 12.4 0M12 17.2v3.3"/>',
   camera: '<rect x="3.5" y="6.5" width="12" height="11" rx="2.2"/><path d="M15.5 10.5l5-2.8v8.6l-5-2.8"/>',
   pin: '<path d="M12 20.5s-6.3-5.4-6.3-10.3a6.3 6.3 0 0 1 12.6 0c0 4.9-6.3 10.3-6.3 10.3z"/><circle cx="12" cy="10.2" r="2.3"/>',
+  chat: '<path d="M6.5 5.5h11a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H11.5l-4 3v-3h-1a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"/>',
   bell: '<path d="M18.5 16.5h-13l1.3-1.8V10.5a5.2 5.2 0 0 1 10.4 0v4.2z"/><path d="M10 19.5a2.2 2.2 0 0 0 4 0"/>',
   clipboard: '<rect x="5.5" y="5" width="13" height="15.5" rx="2"/><path d="M9.5 5V4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V5M9 11h6M9 15h4"/>',
   midi: '<path d="M9.5 17V5.8l9-2.3v11.3"/><circle cx="7" cy="17" r="2.5"/><circle cx="16" cy="14.8" r="2.5"/>',

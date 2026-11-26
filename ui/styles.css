@@ -546,6 +546,11 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .sheet .bug-box textarea{min-height:96px;font:inherit;font-size:calc(var(--fs) + 1px);line-height:1.5}
 .bug-log{display:flex;align-items:center;gap:14px;margin-top:12px;cursor:pointer}
 .bug-log .sl b{font-size:calc(var(--fs) + 1px)}
+.bug-hint{align-self:center;margin-left:auto;color:var(--t3);font-size:calc(var(--fs) - 1px)}
+.msgs{display:flex;flex-direction:column;gap:8px;padding:12px 0 16px;border-top:1px solid var(--line)}
+.msgs[hidden]{display:none}
+.msgs-t{font-weight:600;color:var(--t1);font-size:calc(var(--fs) + 1px)}
+.msg,.ans-card{padding:10px 12px;border-radius:calc(var(--r)*.75);background:var(--bg);box-shadow:inset 0 0 0 1px var(--line)}
 .keys{padding:6px 20px}
 .krow{display:flex;align-items:center;justify-content:space-between;min-height:46px;color:var(--t2);font-size:calc(var(--fs) + 1px)}
 .krow+.krow{border-top:1px solid var(--line)}
@@ -874,6 +879,17 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .upp.on>*{animation:rise var(--d2) var(--e) both}
 .upp.on>:nth-child(2){animation-delay:calc(30ms*var(--k))}
 /* «Что нового»: список изменений в том же окошке */
+/* Ответ разработчика (ui/answers.js): окошко под кнопкой «Вам ответили» и «Ваши сообщения» в настройках */
+.ans-list{display:flex;flex-direction:column;gap:8px;min-height:0;margin-top:12px;overflow:auto}
+.ans-quote small{display:block;color:var(--t3);font-size:calc(var(--fs) - 1px)}
+.ans-quote p{margin:3px 0 0;color:var(--t2);line-height:1.45;white-space:pre-line;word-break:break-word;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.ans-st{display:flex;align-items:center;flex-wrap:wrap;gap:6px 9px;margin-top:10px}
+.ans-st small{color:var(--t3);font-size:calc(var(--fs) - 1px)}
+.ans-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px 0 7px;border-radius:999px;background:color-mix(in oklab,var(--acc) 16%,transparent);color:var(--acc);font-weight:600;font-size:calc(var(--fs) - .5px)}
+.ans-chip.ok{background:color-mix(in oklab,#30a46c 18%,transparent);color:#3dd68c}
+[data-mode=light] .ans-chip.ok{color:#218358}
+.ans-chip .i{width:13px;height:13px;stroke-width:2px}
+.ans-text{margin:8px 0 0;color:var(--t1);line-height:1.5;white-space:pre-line;word-break:break-word}
 .dlp.upp.notes{max-height:min(560px,calc(100vh - 70px))}
 .upn{min-height:0;overflow:auto;margin:12px -8px 0;padding:0 8px 2px;overscroll-behavior:contain;scrollbar-width:thin}
 .upn-sec+.upn-sec{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}

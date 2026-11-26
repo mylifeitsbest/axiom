@@ -933,11 +933,16 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
    скругление обычное, на страницу она не заходит. */
 .isl.wide{width:400px}
 .isl.wide .isl-t{text-align:left}
+/* Низ чёлки (8 px) закрыт островом с видео (sendDock в island.js: top = H - 8), видно
+   только 22 px — ряд стоит в них, иначе подсветка кнопок уходит под видео и обрезается. */
+.isl.vid:not(.panel) .isl-c{height:22px}
+.isl.vid:not(.panel) .isl-r{height:20px}
+.isl.vid:not(.panel) .isl-r .ib{height:20px}
 .isl-r .ib{width:24px;height:24px;color:#d0d0d0}
 .isl-r .ib .i{width:14px;height:14px}
 .isl-r .ib:hover{background:#262626;color:#fff}
 .isl-r .isl-ring{margin-right:6px}
-.isl-c{position:absolute;left:0;right:0;top:0;height:30px;display:flex;align-items:center;gap:9px;padding:0 12px 0 7px;transition:opacity calc(160ms*var(--k))}
+.isl-c{position:absolute;left:0;right:0;top:0;height:30px;display:flex;align-items:center;gap:9px;padding:0 12px 0 7px;transition:opacity calc(160ms*var(--k)),height calc(300ms*var(--k)) var(--e)}
 .isl.open .isl-c{opacity:0;pointer-events:none}
 .isl-l{display:grid;place-items:center;width:18px;height:18px;flex:none}
 .isl-l .fav{width:18px;height:18px}

@@ -402,12 +402,9 @@ function createPanels(ax) {
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
       $('#forceDarkRow').hidden = sys.platform !== 'windows';
       $('#gpuRow').hidden = sys.platform !== 'linux';
-      $('#islVideoRow').hidden = !win;
+      $('#islVideoRow').hidden = !win && sys.platform !== 'linux';
+      // «Картинки в картинке» в WebKitGTK нет.
       $('#islPipRow').hidden = !win;
-      // На Linux видео в чёлке нет: в ней название и кнопки видео с другой вкладки.
-      $('#islRow small').textContent = sys.platform === 'linux'
-        ? 'Чёлка сверху: что играет на других вкладках (пауза, дальше, назад) и загрузки'
-        : 'Чёлка сверху: видео на других вкладках и загрузки';
       ax.translate.syncSheet();
       ax.perms.syncSheet();
     }

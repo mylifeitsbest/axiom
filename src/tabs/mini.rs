@@ -10,6 +10,10 @@
 //! Мышь над видео интерфейс не видит (там webview страницы), поэтому «увёл мышь» решает
 //! [`watch`] по положению курсора: курсор не над чёлкой и не над островом дольше
 //! [`LEAVE`] — показ кончается.
+//!
+//! Linux: webview вкладки — дочернее окно GDK внутри окна браузера; остров — его форма
+//! (`gdk_window_shape_combine_region`: вне неё окно не рисуется и мышь не ловит), а
+//! курсор берётся у GDK относительно своего окна — координат экрана на Wayland нет.
 
 use std::{
     sync::{Arc, Mutex},
@@ -21,13 +25,13 @@ pub const PAD: f64 = 8.0;
 /// Скругление острова снизу, логические px.
 pub const RADIUS: f64 = 22.0;
 /// Сколько курсор может быть вне чёлки и острова, прежде чем видео спрячется.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub const LEAVE: Duration = Duration::from_millis(350);
 /// Кадров анимации выезда и уезда.
 pub const FRAMES: u8 = 14;
 pub const FRAME: Duration = Duration::from_millis(14);
 
-/// Прямоугольник в логических px окна (или в px экрана — см. [`Shared`]).
+/// Прямоугольник в логических px окна (или в px экрана на Windows — см. [`Shared`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Area {
     pub x: f64,
@@ -37,8 +41,8 @@ pub struct Area {
 }
 
 impl Area {
-    // Курсор отслеживается только на Windows (видео в островке есть только там).
-    #[cfg(any(windows, test))]
+    // Курсор отслеживается там, где есть видео в островке: Windows и Linux.
+    #[cfg(any(windows, target_os = "linux", test))]
     pub fn contains(self, x: f64, y: f64, margin: f64) -> bool {
         x >= self.x - margin
             && x < self.x + self.w + margin
@@ -155,7 +159,8 @@ pub fn video_size(raw: &str) -> Option<(f64, f64)> {
 /// Общее с потоком слежения за мышью: где чёлка и остров на экране и не пора ли уйти.
 #[derive(Debug, Default)]
 pub struct Shared {
-    /// Чёлка и остров в px экрана; `None` — показа больше нет.
+    /// Чёлка и остров: на Windows в px экрана, на Linux в логических px окна (как
+    /// [`crate::tabs::webview::pointer`]); `None` — показа больше нет.
     pub areas: Option<(Area, Area)>,
     pub stop: bool,
 }
@@ -195,21 +200,63 @@ pub fn watch(shared: Handle, done: impl FnOnce() + Send + 'static) {
     });
 }
 
-/// Linux: видео в островке нет — ни обрезки webview по форме, ни курсора на Wayland.
-#[cfg(not(windows))]
+/// Linux: то же в главном потоке — GDK знает курсор только там. Курсор над своим окном,
+/// без координат экрана: так работает и Wayland.
+#[cfg(target_os = "linux")]
+pub fn watch(shared: Handle, done: impl FnOnce() + Send + 'static) {
+    use gtk::glib;
+    use std::time::Instant;
+    let mut inside = Instant::now();
+    let mut done = Some(done);
+    glib::timeout_add_local(Duration::from_millis(30), move || {
+        let (areas, stop) = match shared.lock() {
+            Ok(s) => (s.areas, s.stop),
+            Err(_) => (None, true),
+        };
+        let leave = match areas.filter(|_| !stop) {
+            None => true,
+            Some((notch, island)) => {
+                let at = crate::tabs::webview::pointer();
+                let over = at
+                    .is_some_and(|(x, y)| notch.contains(x, y, 6.0) || island.contains(x, y, 6.0))
+                    || hold_for_tests();
+                if over {
+                    inside = Instant::now();
+                    false
+                } else if inside.elapsed() >= LEAVE {
+                    log_for_tests(&format!(
+                        "leave: cursor {at:?}, notch {notch:?}, island {island:?}"
+                    ));
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if !leave {
+            return glib::ControlFlow::Continue;
+        }
+        if let Some(done) = done.take() {
+            done();
+        }
+        glib::ControlFlow::Break
+    });
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn watch(_shared: Handle, done: impl FnOnce() + Send + 'static) {
     done();
 }
 
 /// Только debug-сборка: `AXIOM_PEEK_HOLD=1` держит видео без мыши (тесты через DevTools
 /// настоящий курсор не двигают).
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn hold_for_tests() -> bool {
     cfg!(debug_assertions) && std::env::var_os("AXIOM_PEEK_HOLD").is_some()
 }
 
 /// Только debug-сборка: `AXIOM_PEEK_LOG=<файл>` — куда записать, почему видео уехало.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn log_for_tests(line: &str) {
     use std::io::Write;
     if !cfg!(debug_assertions) {
@@ -236,11 +283,11 @@ fn cursor() -> Option<(f64, f64)> {
     (unsafe { GetCursorPos(&mut p) } != 0).then(|| (f64::from(p[0]), f64::from(p[1])))
 }
 
-/// Оставляет от webview только вырез `x, w, h` от его верха (px экрана) со скруглёнными
-/// нижними углами; `None` — снова весь. Верхние углы прямые: там остров заходит под чёлку.
-/// Вне выреза webview не рисуется и мышь не ловит.
+/// Оставляет от webview только вырез `w × h` от его левого верхнего угла (логические px)
+/// со скруглёнными нижними углами `radius`; `None` — снова весь. Верхние углы прямые: там
+/// остров заходит под чёлку. Вне выреза webview не рисуется и мышь не ловит.
 #[cfg(windows)]
-pub fn round_bottom(webview: &wry::WebView, cut: Option<(i32, i32, i32)>, radius: i32) {
+pub fn round_bottom(webview: &wry::WebView, cut: Option<(f64, f64)>, radius: f64, scale: f64) {
     use windows::Win32::Foundation::HWND;
     use wry::WebViewExtWindows;
     #[link(name = "gdi32")]
@@ -251,6 +298,7 @@ pub fn round_bottom(webview: &wry::WebView, cut: Option<(i32, i32, i32)>, radius
     unsafe extern "system" {
         fn SetWindowRgn(hwnd: HWND, rgn: isize, redraw: i32) -> i32;
     }
+    let px = |v: f64| (v * scale).round() as i32;
     let mut hwnd = HWND::default();
     // SAFETY: контроллер принадлежит живому webview; его родитель — окно-контейнер wry
     // внутри нашего окна. После SetWindowRgn регионом владеет система.
@@ -259,9 +307,9 @@ pub fn round_bottom(webview: &wry::WebView, cut: Option<(i32, i32, i32)>, radius
             return;
         }
         let rgn = match cut {
-            Some((x, w, h)) => {
-                let d = 2 * radius;
-                CreateRoundRectRgn(x, -d, x + w + 1, h + 1, d, d)
+            Some((w, h)) => {
+                let d = 2 * px(radius);
+                CreateRoundRectRgn(0, -d, px(w) + 1, px(h) + 1, d, d)
             }
             None => 0,
         };
@@ -269,8 +317,109 @@ pub fn round_bottom(webview: &wry::WebView, cut: Option<(i32, i32, i32)>, radius
     }
 }
 
-#[cfg(not(windows))]
-pub fn round_bottom(_webview: &wry::WebView, _cut: Option<(i32, i32, i32)>, _radius: i32) {}
+/// Linux: webview WebKitGTK на GTK3 — дочернее окно GDK, оно рисуется вместе с окном
+/// браузера. Картинку режет обработчик `draw` самого webview: он срабатывает раньше, чем
+/// WebKitGTK рисует страницу, и обрезает кадр по вырезу (полосы — прямоугольники, такую
+/// обрезку понимает и рисование через GL). Мышь режет форма окна GDK: вне выреза клики и
+/// колесо достаются странице под ним. Координаты GDK — уже логические.
+#[cfg(target_os = "linux")]
+pub fn round_bottom(webview: &wry::WebView, cut: Option<(f64, f64)>, radius: f64, _scale: f64) {
+    use gtk::{cairo, gdk, glib, glib::translate::ToGlibPtr, prelude::*};
+    use std::{cell::RefCell, rc::Rc};
+    use wry::WebViewExtUnix;
+
+    type Rows = Rc<RefCell<Vec<(i32, i32, i32, i32)>>>;
+    thread_local! {
+        /// Webview под чёлкой, его обработчик `draw` и вырез, по которому тот режет кадр.
+        static CLIP: RefCell<Option<(glib::WeakRef<gtk::Widget>, glib::SignalHandlerId, Rows)>> =
+            const { RefCell::new(None) };
+    }
+
+    let widget = webview.webview().upcast::<gtk::Widget>();
+    let rows =
+        cut.map(|(w, h)| rounded_rows(w.round() as i32, h.round() as i32, radius.round() as i32));
+    CLIP.with(|clip| {
+        let mut clip = clip.borrow_mut();
+        let same = clip
+            .as_ref()
+            .is_some_and(|(w, _, _)| w.upgrade().is_some_and(|w| w == widget));
+        // Показ кончился или перешёл на другую вкладку — прежний обработчик долой.
+        if (rows.is_none() || !same)
+            && let Some((w, id, _)) = clip.take()
+            && let Some(w) = w.upgrade()
+        {
+            w.disconnect(id);
+        }
+        let Some(rows) = &rows else {
+            return;
+        };
+        if let Some((_, _, now)) = clip.as_ref() {
+            *now.borrow_mut() = rows.clone();
+            return;
+        }
+        let now: Rows = Rc::new(RefCell::new(rows.clone()));
+        let cut = now.clone();
+        let id = widget.connect_draw(move |_, cr| {
+            for &(x, y, w, h) in cut.borrow().iter() {
+                cr.rectangle(f64::from(x), f64::from(y), f64::from(w), f64::from(h));
+            }
+            cr.clip();
+            glib::Propagation::Proceed
+        });
+        *clip = Some((widget.downgrade(), id, now));
+    });
+    widget.queue_draw();
+    // Без своего окна `window()` — окно родителя: обрезали бы весь браузер.
+    if !widget.has_window() {
+        return;
+    }
+    let Some(window) = widget.window() else {
+        return;
+    };
+    let region = rows.map(|rows| {
+        let rects: Vec<_> = rows
+            .into_iter()
+            .map(|(x, y, w, h)| cairo::RectangleInt::new(x, y, w, h))
+            .collect();
+        cairo::Region::create_rectangles(&rects)
+    });
+    window.shape_combine_region(region.as_ref(), 0, 0);
+    // SAFETY: живое окно GDK; NULL снимает форму для мыши, регион GDK копирует.
+    unsafe {
+        let raw = region
+            .as_ref()
+            .map_or(std::ptr::null_mut(), |r| r.to_raw_none());
+        gdk::ffi::gdk_window_input_shape_combine_region(
+            window.to_glib_none().0,
+            raw.cast_const(),
+            0,
+            0,
+        );
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn round_bottom(_webview: &wry::WebView, _cut: Option<(f64, f64)>, _radius: f64, _scale: f64) {}
+
+/// Вырез `w × h` со скруглёнными нижними углами радиуса `r` — полосами (x, y, ширина,
+/// высота): верх целиком, ниже — по строке на каждый пиксель скругления.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn rounded_rows(w: i32, h: i32, r: i32) -> Vec<(i32, i32, i32, i32)> {
+    let (w, h) = (w.max(1), h.max(1));
+    let r = r.clamp(0, (w / 2).min(h));
+    let mut rows = Vec::with_capacity(r as usize + 1);
+    if h > r {
+        rows.push((0, 0, w, h - r));
+    }
+    let rf = f64::from(r);
+    for i in 0..r {
+        // Середина строки — на `dy` ниже центров скруглений.
+        let dy = f64::from(i) + 0.5;
+        let inset = (rf - (rf * rf - dy * dy).max(0.0).sqrt()).round() as i32;
+        rows.push((inset, h - r + i, (w - 2 * inset).max(1), 1));
+    }
+    rows
+}
 
 #[cfg(test)]
 mod tests {
@@ -312,6 +461,27 @@ mod tests {
         };
         assert!(panel.notch().contains(120.0, 100.0, 0.0));
         assert!(!panel.notch().contains(120.0, 50.0, 0.0));
+    }
+
+    #[test]
+    fn rounded_cut() {
+        let rows = rounded_rows(400, 232, 22);
+        // Верх целиком, потом 22 строки скругления.
+        assert_eq!(rows[0], (0, 0, 400, 210));
+        assert_eq!(rows.len(), 23);
+        // Сразу под прямой частью — во всю ширину, внизу — уже всего, симметрично.
+        assert_eq!(rows[1], (0, 210, 400, 1));
+        let last = rows[22];
+        assert_eq!(last.1, 231);
+        assert!(last.0 > 10 && last.0 + last.2 == 400 - last.0);
+        // Пока остров только выезжает (ниже радиуса) — без прямой части и без паники.
+        let low = rounded_rows(400, 5, 22);
+        assert_eq!(low.len(), 5);
+        assert!(
+            low.iter()
+                .all(|&(x, y, w, h)| x >= 0 && (0..5).contains(&y) && w >= 1 && h == 1)
+        );
+        assert_eq!(rounded_rows(0, 0, 22), vec![(0, 0, 1, 1)]);
     }
 
     #[test]

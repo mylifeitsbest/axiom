@@ -271,12 +271,12 @@ impl App {
             return;
         }
         let webview = self.tabs.get(id).and_then(|t| t.webview.as_ref());
-        // Видео в островке — только Windows (см. `tabs::mini`).
+        // Видео в островке — Windows и Linux (см. `tabs::mini`).
         let (Some(webview), Some(_), false, true) = (
             webview,
             self.island_dock,
             self.tabs.active == Some(id),
-            cfg!(windows),
+            cfg!(any(windows, target_os = "linux")),
         ) else {
             self.send(&ToUi::Peek {
                 id,
@@ -329,7 +329,13 @@ impl App {
         self.place_mini(0.0);
         if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
             let _ = webview.set_visible(true);
-            tab_webview::set_behind(webview, false);
+            tab_webview::raise(webview);
+        }
+        // Linux: спрятанному webview GTK места не даёт (`gtk_place`), а окна GDK для формы
+        // у него может ещё не быть — ставим остров ещё раз, уже показанному. Кадр
+        // нарисуется после, так что вкладка целиком не мелькнёт.
+        if cfg!(target_os = "linux") {
+            self.place_mini(0.0);
         }
         self.sync_mini_areas();
         let events = self.events.clone();
@@ -399,7 +405,7 @@ impl App {
         let active = self.tabs.active == Some(id);
         if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
             script::run(webview, &media::action(media::Action::Unpeek));
-            mini::round_bottom(webview, None, 0);
+            mini::round_bottom(webview, None, 0.0, self.window.scale_factor());
             if !active {
                 let _ = webview.set_visible(false);
             }
@@ -435,18 +441,18 @@ impl App {
         };
         let size = content.size.to_logical::<f64>(scale);
         let island = dock.island(vw, vh);
-        tab_webview::set_bounds(
+        tab_webview::set_bounds_hanging(
             webview,
             Rect {
                 position: LogicalPosition::new(island.x, island.y).into(),
                 size: LogicalSize::new(size.width, size.height).into(),
             },
         );
-        let px = |v: f64| (v * scale).round() as i32;
         mini::round_bottom(
             webview,
-            Some((0, px(island.w), px(island.grown(k).h))),
-            px(mini::RADIUS),
+            Some((island.w, island.grown(k).h)),
+            mini::RADIUS,
+            scale,
         );
         let video = (
             mini::PAD,
@@ -476,7 +482,8 @@ impl App {
         })
     }
 
-    /// Чёлка и остров в px экрана — для слежения за мышью.
+    /// Чёлка и остров для слежения за мышью: на Windows в px экрана, на Linux — в
+    /// логических px окна (на Wayland окно не знает, где оно на экране).
     fn sync_mini_areas(&self) {
         let Some(show) = &self.mini else {
             return;
@@ -486,6 +493,9 @@ impl App {
             let dock = self.mini_dock()?;
             if self.window.is_minimized() {
                 return None;
+            }
+            if cfg!(target_os = "linux") {
+                return Some((dock.notch(), dock.island(vw, vh)));
             }
             let scale = self.window.scale_factor();
             let origin = self.window.inner_position().ok()?;
@@ -519,7 +529,7 @@ impl App {
         if let Some(show) = &self.mini
             && let Some(webview) = self.tabs.get(show.id).and_then(|t| t.webview.as_ref())
         {
-            tab_webview::set_behind(webview, false);
+            tab_webview::raise(webview);
         }
     }
 }

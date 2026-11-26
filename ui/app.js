@@ -304,12 +304,14 @@
     style.textContent = cssCut ? '' : css;
   }
 
-  // Видео из чёлки и «Видео в окне» — только Windows: на Linux чёлка с кнопками и загрузками.
-  // Снимка страницы под окнами на Linux нет (src/tabs/snapshot.rs): там раскрытый островок
-  // не заходит на страницу (`overPage`), иначе она спряталась бы до серого фона.
+  // Видео из чёлки — Windows и Linux, «Видео в окне» — только Windows (в WebKitGTK нет
+  // «картинки в картинке»). Снимка страницы под окнами на Linux нет (src/tabs/snapshot.rs):
+  // там раскрытый островок не заходит на страницу (`overPage`), иначе она спряталась бы до
+  // серого фона; видео из чёлки — сама вкладка поверх страницы, ему снимок не нужен.
   function configureIsland() {
     const win = SYS.platform === 'windows';
-    isl.configure({ enabled: A.island !== false, video: win && A.islandVideo !== false, pip: win && A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide, down: barDown(), overPage: SYS.platform !== 'linux' });
+    const video = win || SYS.platform === 'linux';
+    isl.configure({ enabled: A.island !== false, video: video && A.islandVideo !== false, pip: win && A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide, down: barDown(), overPage: SYS.platform !== 'linux' });
   }
   function applyAppearance() {
     const mode =A.mode === 'system' ? (darkScheme.matches ? 'dark' : 'light') : (A.mode === 'light' ? 'light' : 'dark');

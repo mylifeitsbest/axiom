@@ -63,6 +63,9 @@ pub struct Settings {
     pub double_search: bool,
     /// Прокси только для панели ИИ: `http://host:port` или `socks5://host:port`.
     pub ai_proxy: String,
+    /// Закрытая панель ИИ при следующем открытии начинает новый разговор,
+    /// а не показывает прежний (см. `App::ai_step`).
+    pub ai_new_chat: bool,
     /// Через сколько минут неактивности усыплять вкладку (0 — никогда).
     pub sleep_minutes: u32,
     /// Сколько фоновых вкладок держать загруженными (0 — без ограничения).
@@ -113,6 +116,7 @@ impl Default for Settings {
             search_custom: String::new(),
             double_search: true,
             ai_proxy: String::new(),
+            ai_new_chat: true,
             sleep_minutes: 5,
             live_tabs: 3,
             no_sleep_sites: Vec::new(),
@@ -167,6 +171,9 @@ impl Settings {
         }
         if let Some(on) = incoming.crash_reports {
             self.crash_reports = on;
+        }
+        if let Some(on) = incoming.ai_new_chat {
+            self.ai_new_chat = on;
         }
         // Переключатель есть не у всех: у кого его нет, приходит null.
         if let Some(on) = incoming.beta {
@@ -406,6 +413,32 @@ mod tests {
         let old = serde_json::from_str::<Settings>(r#"{"live_tabs":0}"#)?.sanitized();
         assert!(old.no_sleep_sites.is_empty());
         assert_eq!(old.live_tabs, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn new_ai_chat_by_default() -> serde_json::Result<()> {
+        assert!(Settings::default().ai_new_chat);
+        // Файл настроек прежних версий: без поля — включено.
+        let old = serde_json::from_str::<Settings>(r#"{"double_search":false}"#)?.sanitized();
+        assert!(old.ai_new_chat);
+        let off = serde_json::from_str::<Settings>(r#"{"ai_new_chat":false}"#)?.sanitized();
+        assert!(!off.ai_new_chat);
+        assert_eq!(serde_json::to_value(&off)?["ai_new_chat"], false);
+
+        let with = |on: Option<bool>| -> serde_json::Result<SettingsIn> {
+            let mut v = incoming("duckduckgo", "")?;
+            v.ai_new_chat = on;
+            Ok(v)
+        };
+        let mut s = Settings::default();
+        s.apply(with(Some(false))?);
+        assert!(!s.ai_new_chat);
+        // Интерфейс без переключателя поле не шлёт — не трогаем.
+        s.apply(with(None)?);
+        assert!(!s.ai_new_chat);
+        s.apply(with(Some(true))?);
+        assert!(s.ai_new_chat);
         Ok(())
     }
 

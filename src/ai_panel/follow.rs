@@ -63,12 +63,21 @@ pub fn on_search(mode: Mode, query: &str, shown: Option<&str>, active: bool) -> 
     }
 }
 
-/// Человек открыл панель сам. `open` — панель уже на экране.
-pub fn on_open(mode: Mode, open: bool, query: Option<&str>, shown: Option<&str>) -> (Mode, Step) {
+/// Человек открыл панель сам. `open` — панель уже на экране, `tab` — запрос
+/// активной вкладки: пустая панель (новый разговор после закрытия, уснувшая)
+/// показывает на ней ответ на этот запрос, как и при переходе на эту вкладку.
+pub fn on_open(
+    mode: Mode,
+    open: bool,
+    query: Option<&str>,
+    tab: Option<&str>,
+    shown: Option<&str>,
+) -> (Mode, Step) {
     // Интерфейс вслед за двойным поиском присылает тот же запрос: он уже в панели.
     if open && query.is_some() && query == shown {
         return (mode, Step::Keep);
     }
+    let query = query.or(tab.filter(|_| !open && shown.is_none()));
     (Mode::Manual, Step::Show(query.and_then(|q| load(q, shown))))
 }
 
@@ -172,16 +181,21 @@ mod tests {
     fn user_open_is_manual() {
         // Ctrl+K на вкладке без запроса — общая панель с прежним содержимым.
         assert_eq!(
-            on_open(Mode::Search, false, None, Some("a")),
+            on_open(Mode::Search, false, None, None, Some("a")),
             (Mode::Manual, Step::Show(None))
         );
         assert_eq!(
-            on_open(Mode::Closed, false, Some("b"), Some("a")),
+            on_open(Mode::Closed, false, Some("b"), None, Some("a")),
             (Mode::Manual, show("b"))
         );
         // Тот же запрос в закрытой панели: показываем, не спрашивая заново.
         assert_eq!(
-            on_open(Mode::Closed, false, Some("a"), Some("a")),
+            on_open(Mode::Closed, false, Some("a"), None, Some("a")),
+            (Mode::Manual, Step::Show(None))
+        );
+        // Панель с ответом не меняется и на вкладке со своим поиском.
+        assert_eq!(
+            on_open(Mode::Closed, false, None, Some("b"), Some("a")),
             (Mode::Manual, Step::Show(None))
         );
     }
@@ -189,13 +203,47 @@ mod tests {
     #[test]
     fn echo_of_double_search_keeps_mode() {
         assert_eq!(
-            on_open(Mode::Search, true, Some("a"), Some("a")),
+            on_open(Mode::Search, true, Some("a"), None, Some("a")),
             (Mode::Search, Step::Keep)
         );
         // Другой запрос в открытой панели — это уже вопрос человека.
         assert_eq!(
-            on_open(Mode::Search, true, Some("b"), Some("a")),
+            on_open(Mode::Search, true, Some("b"), Some("a"), Some("a")),
             (Mode::Manual, show("b"))
         );
+    }
+
+    /// «Новый разговор при каждом открытии»: закрытая панель забывает ответ
+    /// (`shown` — `None`), и открывается то, что положено вкладке.
+    #[test]
+    fn reopened_panel_starts_over() {
+        // Вкладка без поиска — стартовая страница AI Mode.
+        assert_eq!(
+            on_open(Mode::Closed, false, None, None, None),
+            (Mode::Manual, Step::Show(None))
+        );
+        // Вкладка своего поиска — его ответ, заново, без прежней переписки.
+        assert_eq!(
+            on_open(Mode::Closed, false, None, Some("a"), None),
+            (Mode::Manual, show("a"))
+        );
+        // «Спросить ИИ» — свой вопрос важнее запроса вкладки.
+        assert_eq!(
+            on_open(Mode::Closed, false, Some("b"), Some("a"), None),
+            (Mode::Manual, show("b"))
+        );
+        // Двойной поиск после закрытия тоже спрашивает заново, а панель снова
+        // следует за своей вкладкой.
+        assert_eq!(
+            on_search(Mode::Closed, "a", None, true),
+            (Mode::Search, show("a"))
+        );
+        assert_eq!(on_activate(Mode::Search, None, Some("a")), Step::Hide);
+        assert_eq!(
+            on_activate(Mode::Search, Some("a"), Some("a")),
+            Step::Show(None)
+        );
+        // Закрытая панель на переключение вкладок не открывается.
+        assert_eq!(on_activate(Mode::Closed, Some("a"), None), Step::Keep);
     }
 }

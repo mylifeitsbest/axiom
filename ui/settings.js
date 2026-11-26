@@ -249,7 +249,9 @@ function createPanels(ax) {
           ${row('Прокси только для AI Mode', 'Вкладки ходят напрямую. Пусто — без прокси.', '')}
           <div class="srow"><span class="inline"><input type="text" id="proxyIn" placeholder="socks5://127.0.0.1:1080" spellcheck="false"><button class="btn primary" data-act="proxy">Применить</button></span></div>
           ${row('Ширина панели', 'Или потяните за край панели', `${range('min="280" max="900" step="10" data-key="aiWidth"')}<output data-out="aiWidth"></output>`)}
-        </div>`,
+          ${row('Новый разговор при каждом открытии', 'Закрыли панель — в следующий раз AI Mode начнёт с чистого листа. Выключите, чтобы панель помнила прежний разговор', toggle('data-bkey', 'ai_new_chat'), 'data-kw="разговор чат контекст история очищать сбрасывать новый"')}
+        </div>
+        <div class="note">${icon('sparkles')}<span>В панели открывается только AI Mode. Ссылки из ответа, обычная выдача Google и другие сайты открываются в новой вкладке.</span></div>`,
       translate: ax.translate.sectionHtml(),
       memory: `
         <div class="card">

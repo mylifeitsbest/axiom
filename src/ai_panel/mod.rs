@@ -4,6 +4,7 @@
 //! поэтому прокси применяется только к ней, а вкладки ходят напрямую.
 
 pub mod follow;
+pub mod pages;
 pub mod proxy;
 
 use std::time::{Duration, Instant};
@@ -124,7 +125,13 @@ impl AiPanel {
                     .with_url(start)
                     .with_bounds(bounds.unwrap_or_default())
                     .with_visible(bounds.is_some())
-                    .with_navigation_handler(|url| omnibox::is_navigable(&url))
+                    // Когда был клик — для переходов, которые панель отдаёт во вкладки.
+                    .with_initialization_script(crate::tabs::links::TRACKER)
+                    // В панели — только AI Mode, остальное во вкладках (см. `pages`).
+                    .with_navigation_handler({
+                        let events = events.clone();
+                        move |url| pages::on_navigation(&url, &events)
+                    })
                     .with_new_window_req_handler({
                         let events = events.clone();
                         move |url, _| {
@@ -143,6 +150,7 @@ impl AiPanel {
                 let webview = crate::tabs::webview::build_child(builder, window)
                     .context("не удалось создать панель ИИ")?;
                 hotkeys::install(&webview, events.clone());
+                pages::guard(&webview, events.clone());
                 crate::tabs::popups::install(&webview);
                 crate::tabs::fullscreen::install(
                     &webview,
@@ -157,6 +165,15 @@ impl AiPanel {
             }
         }
         Ok(())
+    }
+
+    /// Новый разговор: панель забывает ответ и переписку. Спрятанная панель сразу
+    /// грузит стартовую страницу AI Mode, чтобы при открытии не мелькнул старый разговор.
+    pub fn forget(&mut self) {
+        self.query = None;
+        if let Some(webview) = &self.webview {
+            let _ = webview.load_url(omnibox::AI_HOME);
+        }
     }
 
     pub fn hide(&mut self) {

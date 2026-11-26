@@ -1,13 +1,18 @@
 //! Панель ИИ и вкладки: двойной поиск привязывает панель к своей вкладке,
 //! панель, открытая человеком, общая. Решения — в `ai_panel::follow`, здесь
-//! они применяются к панели.
+//! они применяются к панели. Страницы не из AI Mode панель отдаёт вкладкам
+//! (`ai_panel::pages`).
 
 use anyhow::Result;
 
 use super::App;
 use crate::{
-    ai_panel::follow::{self, Mode, Step},
-    tabs::{TabId, omnibox},
+    ai_panel::{
+        follow::{self, Mode, Step},
+        pages,
+    },
+    events::UserEvent,
+    tabs::{TabId, omnibox, script},
 };
 
 impl App {
@@ -18,10 +23,38 @@ impl App {
             return self.ai_step(Step::Close);
         }
         let query = query.map(str::trim).filter(|q| !q.is_empty());
-        let (mode, step) =
-            follow::on_open(self.ai.mode, self.ai.open, query, self.ai.shown_query());
+        let tab = self.tabs.active_tab().and_then(|t| t.ai_query.as_deref());
+        let (mode, step) = follow::on_open(
+            self.ai.mode,
+            self.ai.open,
+            query,
+            tab,
+            self.ai.shown_query(),
+        );
         self.ai.mode = mode;
         self.ai_step(step)
+    }
+
+    /// Панель не пустила к себе `url` — страницу не из AI Mode. Если человек сам
+    /// по ней щёлкнул, она открывается во вкладке, как ссылка из панели в новом окне.
+    /// Переадресация и скрипт страницы без клика, а также всё, что случилось
+    /// в спрятанной панели (новый разговор грузится в ней сам), вкладок не открывают.
+    pub(super) fn ai_left(&mut self, url: String) {
+        let Some(webview) = self.ai.webview.as_ref().filter(|_| self.ai.open) else {
+            return;
+        };
+        let events = self.events.clone();
+        script::ask(webview, pages::CLICK_PROBE, move |raw| {
+            if pages::clicked(&raw) {
+                let _ = events.send_event(UserEvent::OpenTab {
+                    url: url.clone(),
+                    ai: true,
+                    from: None,
+                });
+            } else {
+                eprintln!("панель ИИ: переход без клика остановлен");
+            }
+        });
     }
 
     /// Панель следует за активной вкладкой: панель двойного поиска видна только
@@ -81,6 +114,8 @@ impl App {
             Step::Keep => {}
             Step::Show(query) => self.open_ai(query.as_deref())?,
             Step::Hide | Step::Close => {
+                // Панель показывала что-то с прошлого закрытия.
+                let used = self.ai.mode != Mode::Closed;
                 if step == Step::Close {
                     self.ai.mode = Mode::Closed;
                 }
@@ -90,6 +125,12 @@ impl App {
                     if self.fullscreen.is_on() {
                         self.sync_fullscreen();
                     }
+                }
+                // «Новый разговор при каждом открытии»: закрытая панель (человеком или
+                // вместе с вкладкой своего поиска) откроется с чистого листа. Спрятанная
+                // при переходе на другую вкладку — нет: она ещё следует за поиском.
+                if step == Step::Close && used && self.settings.ai_new_chat {
+                    self.ai.forget();
                 }
             }
         }

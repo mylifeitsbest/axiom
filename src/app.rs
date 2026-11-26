@@ -221,6 +221,7 @@ impl App {
                 let url = self.untracked(url);
                 self.open_from_page(url, ai, from);
             }
+            UserEvent::AiLeft(url) => self.ai_left(url),
             UserEvent::PageTab {
                 url,
                 ai,

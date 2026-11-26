@@ -1,7 +1,8 @@
 //! Тихий счётчик: раз в час Axiom шлёт на наш сервер всего несколько байт —
 //! версию, систему и флаги «первый запуск за день/неделю/месяц», «новая
-//! установка», «только что обновился» и «перенёс данные из другого браузера»
-//! (один раз на профиль, без названия браузера и без того, что перенесено).
+//! установка», «только что обновился», «перенёс данные из другого браузера»
+//! (один раз на профиль, без названия браузера и без того, что перенесено) и
+//! «в счёт часа» — по нему сервер считает, сколько браузеров открыто сейчас.
 //! Ни идентификатора, ни истории, ни адресов; IP на сервере не сохраняется.
 //! Этого хватает, чтобы видеть DAU/WAU/MAU, установки, обновления и переезды,
 //! но по данным нельзя узнать конкретного человека.
@@ -54,6 +55,10 @@ struct State {
     /// Профиль уже проверили на импорт, сделанный до этого счётчика.
     #[serde(default)]
     scanned: bool,
+    /// Когда (секунды UTC) отправили последнюю отметку «в счёт часа».
+    /// 0 — ещё ни разу (или файл записала версия до этого поля).
+    #[serde(default)]
+    at: u64,
 }
 
 /// Импорт считается один раз на профиль: сервер видит, сколько людей переехало,
@@ -108,9 +113,19 @@ struct Flags {
     im: bool,
     /// Переносили ещё до счётчика.
     imo: bool,
+    /// Отметка «в счёт часа»: сервер складывает только такие, когда считает,
+    /// сколько браузеров открыто. Открытый браузер даёт одну такую в час, а
+    /// отметка при перезапуске (обновление, вылет, закрыл и открыл) — нет.
+    o: bool,
 }
 
-fn flags(prev: &State, day: &str, week: &str, month: &str) -> Flags {
+/// Пора ли отметиться «в счёт часа»: прошлая такая отметка была час назад или
+/// раньше. `now < at` — часы перевели назад, считаем, что пора.
+fn online(at: u64, now: u64) -> bool {
+    at == 0 || now < at || now - at >= EVERY.as_secs()
+}
+
+fn flags(prev: &State, now: u64, day: &str, week: &str, month: &str) -> Flags {
     let up = match prev.ver.as_str() {
         // Старый формат файла: если в нём уже есть отметка — его писала
         // предыдущая версия, то есть сейчас первая отметка после обновления.
@@ -127,6 +142,7 @@ fn flags(prev: &State, day: &str, week: &str, month: &str) -> Flags {
         vd: d || up,
         im: prev.import == Import::Pending,
         imo: prev.import == Import::Earlier,
+        o: online(prev.at, now),
     }
 }
 
@@ -219,6 +235,9 @@ pub fn start(profile_root: &Path) {
     thread::spawn(move || {
         thread::sleep(WARMUP);
         scan(&file);
+        // last — от какого времени отсчитывать час и день прошлой отметки. Час
+        // идёт от последней отметки «в счёт часа», даже если её отправил прошлый
+        // запуск: после перезапуска браузер не начинает свой час заново.
         let mut last: Option<(u64, String)> = None;
         loop {
             let now = now_secs();
@@ -227,27 +246,29 @@ pub fn start(profile_root: &Path) {
                 *last_day != day || now < *at || now - at >= EVERY.as_secs()
             });
             if due {
-                tick(&file);
-                last = Some((now, day));
+                let at = tick(&file, now_secs(), send);
+                last = Some((at, day));
             }
             thread::sleep(POLL);
         }
     });
 }
 
-/// Один цикл: вычислить флаги, отправить, обновить файл состояния.
-fn tick(file: &Path) {
-    let now = now_secs();
+/// Один цикл: вычислить флаги, отправить, обновить файл состояния. Возвращает,
+/// от какого времени ждать следующий час.
+fn tick(file: &Path, now: u64, send: impl FnOnce(&str) -> Result<(), ()>) -> u64 {
     let (day, week, month) = buckets(now);
 
     let prev = {
         let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::storage::read_json::<State>(file).unwrap_or_default()
     };
-    let f = flags(&prev, &day, &week, &month);
+    let f = flags(&prev, now, &day, &week, &month);
+    // Не в счёт часа — значит, тот час ещё идёт: следующая отметка в его конце.
+    let at = if f.o { now } else { prev.at };
 
     let body = format!(
-        "{{\"v\":\"{}\",\"os\":\"{}\",\"new\":{},\"d\":{},\"w\":{},\"m\":{},\"up\":{},\"vd\":{},\"im\":{},\"imo\":{}}}",
+        "{{\"v\":\"{}\",\"os\":\"{}\",\"new\":{},\"d\":{},\"w\":{},\"m\":{},\"up\":{},\"vd\":{},\"im\":{},\"imo\":{},\"o\":{}}}",
         VERSION,
         os_name(),
         f.new,
@@ -258,6 +279,7 @@ fn tick(file: &Path) {
         f.vd,
         f.im,
         f.imo,
+        f.o,
     );
 
     if send(&body).is_ok() {
@@ -278,9 +300,12 @@ fn tick(file: &Path) {
                 cur.import
             },
             scanned: cur.scanned,
+            at,
         };
         let _ = crate::storage::write_json(file, &state);
     }
+    // Не дошла — следующая попытка через час, как и раньше, а не каждую минуту.
+    at
 }
 
 /// Ключи «день / неделя / месяц» по времени UTC. Недели считаем с понедельника
@@ -401,6 +426,9 @@ pub(crate) fn curl() -> Command {
 mod tests {
     use super::*;
 
+    /// «Сейчас» в тестах; прошлая отметка в счёт часа — за 10 минут до него.
+    const T: u64 = 1_795_500_000;
+
     fn state(day: &str, ver: &str) -> State {
         State {
             day: day.into(),
@@ -410,6 +438,7 @@ mod tests {
             ver: ver.into(),
             import: Import::No,
             scanned: true,
+            at: T - 600,
         }
     }
 
@@ -469,7 +498,7 @@ mod tests {
         let s: State = crate::storage::read_json(&file).unwrap();
         assert_eq!(s.import, Import::Earlier);
         assert!(s.scanned);
-        let f = flags(&s, "2026-11-25", "w1", "2026-11");
+        let f = flags(&s, T, "2026-11-25", "w1", "2026-11");
         assert!(f.imo && !f.im);
 
         // Уже посчитанный профиль второй раз не всплывает.
@@ -489,14 +518,20 @@ mod tests {
             new: true,
             ..State::default()
         };
-        let f = flags(&prev, "2026-11-24", "w1", "2026-11");
+        let f = flags(&prev, T, "2026-11-24", "w1", "2026-11");
         assert!(f.new && f.d && f.w && f.m && f.vd);
         assert!(!f.up);
     }
 
     #[test]
     fn same_version_later_today_sends_nothing_new() {
-        let f = flags(&state("2026-11-24", VERSION), "2026-11-24", "w1", "2026-11");
+        let f = flags(
+            &state("2026-11-24", VERSION),
+            T,
+            "2026-11-24",
+            "w1",
+            "2026-11",
+        );
         assert_eq!(
             f,
             Flags {
@@ -507,7 +542,8 @@ mod tests {
                 up: false,
                 vd: false,
                 im: false,
-                imo: false
+                imo: false,
+                o: false
             }
         );
     }
@@ -516,9 +552,9 @@ mod tests {
     fn import_is_sent_once() {
         let mut prev = state("2026-11-24", VERSION);
         prev.import = Import::Pending;
-        assert!(flags(&prev, "2026-11-24", "w1", "2026-11").im);
+        assert!(flags(&prev, T, "2026-11-24", "w1", "2026-11").im);
         prev.import = Import::Sent;
-        assert!(!flags(&prev, "2026-11-24", "w1", "2026-11").im);
+        assert!(!flags(&prev, T, "2026-11-24", "w1", "2026-11").im);
     }
 
     #[test]
@@ -535,15 +571,84 @@ mod tests {
 
     #[test]
     fn update_on_the_same_day_counts_for_the_new_version() {
-        let f = flags(&state("2026-11-24", "0.0.1"), "2026-11-24", "w1", "2026-11");
+        let f = flags(
+            &state("2026-11-24", "0.0.1"),
+            T,
+            "2026-11-24",
+            "w1",
+            "2026-11",
+        );
         assert!(f.up && f.vd);
         assert!(!f.d, "человек уже отметился сегодня на старой версии");
     }
 
     #[test]
     fn file_from_before_the_ver_field_means_update() {
-        let f = flags(&state("2026-11-23", ""), "2026-11-24", "w1", "2026-11");
+        let f = flags(&state("2026-11-23", ""), T, "2026-11-24", "w1", "2026-11");
         assert!(f.up && f.d && f.vd);
+    }
+
+    #[test]
+    fn open_browser_counts_once_an_hour() {
+        assert!(online(0, T), "первая отметка в жизни профиля");
+        assert!(!online(T - 600, T), "перезапуск через 10 минут");
+        assert!(!online(T - 3599, T));
+        assert!(online(T - 3600, T), "прошёл час");
+        assert!(online(T + 600, T), "часы перевели назад");
+    }
+
+    #[test]
+    fn restart_within_the_hour_is_not_counted_but_still_reports() {
+        // Обновился через 20 минут после отметки: «обновился» уходит сразу,
+        // а в счёт часа — нет, человек уже посчитан.
+        let mut prev = state("2026-11-24", "0.0.1");
+        prev.at = T - 1200;
+        let f = flags(&prev, T, "2026-11-24", "w1", "2026-11");
+        assert!(f.up && !f.o);
+        prev.at = T - 3700;
+        assert!(flags(&prev, T, "2026-11-24", "w1", "2026-11").o);
+    }
+
+    #[test]
+    fn restart_keeps_the_hour_of_the_previous_run() {
+        let dir = std::env::temp_dir().join(format!("axiom-stats-tick-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("stats.json");
+        let _ = std::fs::remove_file(&file);
+        let sent = std::cell::RefCell::new(Vec::<String>::new());
+        let ok = |body: &str| {
+            sent.borrow_mut().push(body.to_string());
+            Ok(())
+        };
+
+        // Первый запуск: в счёт часа.
+        assert_eq!(tick(&file, T, ok), T);
+        // Перезапуск через 20 минут: отметка уходит, но не в счёт, и следующую
+        // надо слать через час от первой, а не от перезапуска.
+        assert_eq!(tick(&file, T + 1200, ok), T);
+        // Связь пропала ровно к концу часа: следующая попытка — через час.
+        assert_eq!(tick(&file, T + 3600, |_| Err(())), T + 3600);
+        // Вернулась: прошлая отметка в счёт была больше часа назад — в счёт.
+        assert_eq!(tick(&file, T + 7200, ok), T + 7200);
+
+        let sent = sent.into_inner();
+        assert_eq!(sent.len(), 3);
+        assert!(sent[0].ends_with(r#""o":true}"#), "{}", sent[0]);
+        assert!(sent[1].ends_with(r#""o":false}"#), "{}", sent[1]);
+        assert!(sent[2].ends_with(r#""o":true}"#), "{}", sent[2]);
+        let s: State = crate::storage::read_json(&file).unwrap();
+        assert_eq!(s.at, T + 7200);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn file_without_at_field_counts_right_away() {
+        let s: State = serde_json::from_str(
+            r#"{"day":"2026-11-24","week":"w1","month":"2026-11","ver":"0.6.1"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.at, 0);
+        assert!(flags(&s, T, "2026-11-24", "w1", "2026-11").o);
     }
 
     #[test]
@@ -552,7 +657,7 @@ mod tests {
             ver: VER_BEFORE_STATS.into(),
             ..State::default()
         };
-        let f = flags(&prev, "2026-11-24", "w1", "2026-11");
+        let f = flags(&prev, T, "2026-11-24", "w1", "2026-11");
         assert!(f.up && !f.new);
     }
 }

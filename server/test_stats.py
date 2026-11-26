@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Проверки сборщика: приём отчётов об ошибках, экранирование в панели,
-ограничение частоты и миграция базы.
+ограничение частоты, миграция базы и счёт «сейчас».
 
 Запуск из корня репозитория: python -m unittest discover -s server -v
 """
@@ -256,6 +256,81 @@ class Server(unittest.TestCase):
             stats.DB = saved
         self.assertTrue({"hits", "recent", "reports"} <= tables)
         self.assertEqual(vdau, 2)
+
+
+class Online(unittest.TestCase):
+    """«Сейчас» и столбики по часам: сколько браузеров открыто, а не сколько отметок."""
+
+    NOW = stats.datetime(2026, 11, 26, 18, 8, tzinfo=stats.timezone.utc)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = stats.DB, stats.utcnow
+        stats.DB = os.path.join(self.tmp.name, "online.db")
+        stats.init()
+
+    def tearDown(self):
+        stats.DB, stats.utcnow = self.saved
+        self.tmp.cleanup()
+
+    def ping(self, hh, mm, **flags):
+        at = self.NOW.replace(hour=hh, minute=mm)
+        stats.utcnow = lambda: at
+        self.assertTrue(stats.record({"v": "0.6.1", "os": "windows", **flags}))
+
+    def online(self):
+        con = stats.db()
+        try:
+            return stats.online_now(con, self.NOW)
+        finally:
+            con.close()
+
+    def test_restart_within_the_hour_does_not_count(self):
+        self.ping(17, 15, d=True, o=True)
+        self.ping(17, 40, up=True, vd=True, o=False)  # тот же человек обновился
+        self.ping(17, 50, d=True, o=True)
+        self.assertEqual(self.online(), 2)
+
+    def test_old_browsers_without_the_flag_count_every_ping(self):
+        self.ping(17, 15, d=True)
+        self.ping(17, 40, up=True)
+        self.assertEqual(self.online(), 1, "но не больше, чем людей сегодня")
+        self.ping(17, 45, d=True)
+        self.assertEqual(self.online(), 2)
+        self.ping(17, 55, d=True)
+        self.assertEqual(self.online(), 3)
+
+    def test_window_is_one_hour_not_seventy_minutes(self):
+        # В 18:08 граница часа — 17:08: из ячейки 17:00–17:10 идут две десятых.
+        for _ in range(5):
+            self.ping(17, 3, d=True, o=True)
+        self.ping(17, 45, d=True, o=True)
+        self.ping(16, 55, d=True, o=True)  # раньше часа — мимо
+        self.assertEqual(self.online(), 2)
+
+    def test_dashboard_shows_people_not_pings(self):
+        self.ping(17, 15, d=True, o=True)
+        for m in (20, 25, 30):
+            self.ping(17, m, o=False)  # перезапуски
+        stats.utcnow = lambda: self.NOW
+        page = stats.dashboard()
+        self.assertIn('<div class="n">≈1</div>', page)
+        self.assertIn('data-fmt="hour-tip" data-n="1"', page)
+
+    def test_migration_copies_pings_to_online(self):
+        con = stats.db()
+        with con:
+            con.execute("DROP TABLE recent")
+            con.execute("""CREATE TABLE recent(slot TEXT, v TEXT, pings INTEGER DEFAULT 0,
+                installs INTEGER DEFAULT 0, updates INTEGER DEFAULT 0, PRIMARY KEY(slot, v))""")
+            con.execute("INSERT INTO recent(slot, v, pings) VALUES('2026-11-26T17:50','0.6.1',4)")
+        con.close()
+        stats.init()
+        stats.init()  # повторный запуск не копирует второй раз
+        con = stats.db()
+        online = con.execute("SELECT online FROM recent").fetchone()[0]
+        con.close()
+        self.assertEqual(online, 4)
 
 
 if __name__ == "__main__":

@@ -52,7 +52,8 @@
   // ---------- состояние ----------
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: null, maximized: false };
   let A = { ...DEFAULTS };
-  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
+  // no_sleep_sites: null — настройки ещё не пришли, Rust список не трогает.
+  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, no_sleep_sites: null, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -339,7 +340,8 @@
         double_search: !!B.double_search,
         ai_proxy: String(B.ai_proxy || ''),
         sleep_minutes: Math.round(clamp(B.sleep_minutes, 0, 1440, 5)),
-        live_tabs: Math.round(clamp(B.live_tabs, 0, 20, 3)),
+        live_tabs: Math.round(clamp(B.live_tabs, 0, 30, 3)),
+        no_sleep_sites: Array.isArray(B.no_sleep_sites) ? B.no_sleep_sites.map(String) : null,
         onboarded: !!B.onboarded,
         force_dark: !!B.force_dark,
         check_updates: B.check_updates !== false,
@@ -409,10 +411,11 @@
       el.classList.toggle('on', t.id === S.active);
       el.classList.toggle('zz', !!t.sleeping);
       el.classList.toggle('ld', !!t.loading && !t.sleeping);
-      el.classList.toggle('nosleep', !!t.no_sleep);
+      const awake = !!t.no_sleep || !!t.site_no_sleep;
+      el.classList.toggle('nosleep', awake);
       const title = t.title || (t.url === NEWTAB ? 'Новая вкладка' : t.url);
       el.querySelector('.tt').textContent = title;
-      el.title = t.sleeping ? `${title} — спит` : t.no_sleep ? `${title} — не засыпает` : title;
+      el.title = t.sleeping ? `${title} — спит` : awake ? `${title} — не засыпает` : title;
       renderTabSound(el, t);
       const key = parseUrl(t.url)?.origin || t.url;
       const slot = el.querySelector('.favslot');
@@ -828,16 +831,21 @@
   $('#starBtn').addEventListener('click', () => send({ cmd: 'toggle_bookmark' }));
 
   // «Не усыплять»: вкладку не усыпят ни таймер, ни нехватка памяти, ни лимит живых вкладок.
+  // Кружка горит и у вкладки, чей сайт в списке «не усыплять»: тогда она убирает сайт из списка.
   function renderAwake() {
     const t = activeTab();
     const b = $('#awakeBtn');
-    const on = !!t?.no_sleep;
+    const site = !!t?.site_no_sleep;
+    const on = !!t?.no_sleep || site;
     b.hidden = !isPage(t);
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', String(on));
-    b.title = on ? 'Вкладка не засыпает — разрешить сон' : 'Не усыплять вкладку';
+    b.title = site ? 'Сайт не засыпает — снова усыплять на этом сайте' : on ? 'Вкладка не засыпает — разрешить сон' : 'Не усыплять вкладку';
   }
-  $('#awakeBtn').addEventListener('click', () => { if (S.active != null) send({ cmd: 'toggle_no_sleep', id: S.active }); });
+  $('#awakeBtn').addEventListener('click', () => {
+    const t = activeTab();
+    if (t) send({ cmd: t.site_no_sleep ? 'toggle_site_no_sleep' : 'toggle_no_sleep', id: t.id });
+  });
 
   // ---------- поиск на странице ----------
   function startFind() {
@@ -1072,12 +1080,13 @@
     isl.sync();
   }
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  const sitesIn = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
   let firstSettings = true;
   const handlers = {
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, no_sleep_sites: sitesIn(s.no_sleep_sites), onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
@@ -1093,6 +1102,11 @@
         else if (!B.onboarded) panels.openOnboarding();
       }
       firstSettings = false;
+    },
+    // Список сайтов «не усыплять» поменял Rust: меню вкладки или чистка вписанного.
+    no_sleep_sites(m) {
+      B.no_sleep_sites = sitesIn(m.sites);
+      panels.sync();
     },
     state(m) {
       Object.assign(S, {

@@ -125,6 +125,9 @@ pub struct SettingsIn {
     pub ai_proxy: String,
     pub sleep_minutes: u32,
     pub live_tabs: u32,
+    /// Сайты «не усыплять»; чистят настройки. Нет поля или не список — не менять.
+    #[serde(default, deserialize_with = "crate::tabs::identity::lenient")]
+    pub no_sleep_sites: Option<Vec<String>>,
     #[serde(default)]
     pub onboarded: bool,
     #[serde(default)]
@@ -234,6 +237,10 @@ pub enum UiCmd {
     ToggleBookmark,
     /// Кнопка «не усыплять» в адресной строке.
     ToggleNoSleep {
+        id: u64,
+    },
+    /// Меню вкладки: «Не усыплять на этом сайте» и «Снова усыплять на этом сайте».
+    ToggleSiteNoSleep {
         id: u64,
     },
     /// Крестик на плитке новой вкладки (`hidden: true`) и «Вернуть» (`false`).
@@ -450,7 +457,10 @@ pub struct TabView<'a> {
     pub waking: bool,
     pub ai: bool,
     pub bookmarked: bool,
+    /// «Не усыплять» у самой вкладки (кнопка в адресной строке).
     pub no_sleep: bool,
+    /// Сайт вкладки в списке «не усыплять»: она не засыпает, даже без своего флага.
+    pub site_no_sleep: bool,
     /// Страница играет звук (значок динамика на вкладке).
     pub audible: bool,
     /// Звук вкладки выключен (перечёркнутый динамик).
@@ -506,6 +516,10 @@ pub enum ToUi<'a> {
     },
     Settings {
         settings: &'a crate::settings::Settings,
+    },
+    /// Список сайтов «не усыплять» поменял Rust (меню вкладки или чистка вписанного).
+    NoSleepSites {
+        sites: &'a [String],
     },
     Suggestions {
         q: &'a str,
@@ -677,6 +691,28 @@ mod tests {
             Ok(UiCmd::ToggleNoSleep { id: 7 })
         ));
         assert!(parse(r#"{"cmd":"toggle_no_sleep"}"#).is_err());
+        assert!(matches!(
+            parse(r#"{"cmd":"toggle_site_no_sleep","id":7}"#),
+            Ok(UiCmd::ToggleSiteNoSleep { id: 7 })
+        ));
+        assert!(parse(r#"{"cmd":"toggle_site_no_sleep"}"#).is_err());
+    }
+
+    #[test]
+    fn no_sleep_sites_setting_is_optional() {
+        let sites = |extra: &str| match parse(&format!(
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+        )) {
+            Ok(UiCmd::SaveSettings { settings }) => Some(settings.no_sleep_sites),
+            _ => None,
+        };
+        assert_eq!(sites(""), Some(None));
+        assert_eq!(
+            sites(r#","no_sleep_sites":["youtube.com"]"#),
+            Some(Some(vec!["youtube.com".to_string()]))
+        );
+        // Не список — сохраняется всё остальное, а сайты не трогаются.
+        assert_eq!(sites(r#","no_sleep_sites":"youtube.com""#), Some(None));
     }
 
     #[test]

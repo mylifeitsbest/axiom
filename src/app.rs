@@ -41,7 +41,7 @@ use crate::{
         identity::{Agent, Referer},
         omnibox::{self, NEWTAB},
         script,
-        sleep::{self, PageState},
+        sleep::{self, PageState, SiteToggle},
         snapshot::{self, Part, Snapshots},
         webview::{self as tab_webview, Look, TabSpec},
     },
@@ -378,6 +378,7 @@ impl App {
             }
             UiCmd::ToggleBookmark => self.toggle_bookmark(),
             UiCmd::ToggleNoSleep { id } => self.toggle_no_sleep(id),
+            UiCmd::ToggleSiteNoSleep { id } => self.toggle_site_no_sleep(id),
             UiCmd::HideSite { url, hidden } => {
                 if self.history.set_hidden(&url, hidden) {
                     if let Err(err) = self.history.save_hidden(&self.paths) {
@@ -1272,6 +1273,8 @@ impl App {
         };
         let engine = incoming.search_engine;
         let (agent, referer) = (incoming.user_agent, incoming.referer);
+        let sent_sites = incoming.no_sleep_sites.clone();
+        let old_sites = self.settings.no_sleep_sites.clone();
         self.settings.apply(incoming);
         crate::reports::set_auto(self.settings.crash_reports);
         let beta = self
@@ -1301,6 +1304,15 @@ impl App {
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }
+        if self.settings.no_sleep_sites != old_sites {
+            self.sites_changed();
+        }
+        // Список сайтов настройки привели к своему виду: интерфейс показывает его.
+        if sent_sites.is_some_and(|sites| sites != self.settings.no_sleep_sites) {
+            self.send(&ToUi::NoSleepSites {
+                sites: &self.settings.no_sleep_sites,
+            });
+        }
         self.limit_live_tabs();
         self.persist_settings();
         if let Some(text) = rejected {
@@ -1324,7 +1336,7 @@ impl App {
             .tabs
             .iter()
             .filter(|t| t.ai && Some(t.id) != active && t.webview.is_some() && !t.keep_alive)
-            .filter(|t| !t.no_sleep)
+            .filter(|t| !t.kept_awake(&self.settings.no_sleep_sites))
             .map(|t| t.id)
             .collect();
         for id in ids {
@@ -1671,12 +1683,14 @@ impl App {
     }
 
     /// Загруженные фоновые вкладки, которые можно усыпить: без звука, без недописанного
-    /// текста, без идущих загрузок, без «не усыплять» и без уже отправленного запроса.
+    /// текста, без идущих загрузок, без «не усыплять» (у вкладки или её сайта)
+    /// и без уже отправленного запроса.
     fn sleep_candidates(&self) -> Vec<(Instant, TabId)> {
         let active = self.tabs.active;
+        let sites = &self.settings.no_sleep_sites;
         self.tabs
             .iter()
-            .filter(|t| Some(t.id) != active && t.may_sleep())
+            .filter(|t| Some(t.id) != active && t.may_sleep(sites))
             .filter(|t| !self.downloads.is_busy(t.id))
             .filter(|t| {
                 t.webview
@@ -1711,13 +1725,15 @@ impl App {
     fn drop_unanswered(&mut self) {
         let mut changed = false;
         let downloads = &self.downloads;
+        let sites = &self.settings.no_sleep_sites;
         for tab in self.tabs.iter_mut() {
             if !tab.sleep_requested.is_some_and(|at| at.elapsed() >= TICK) {
                 continue;
             }
             tab.sleep_requested = None;
-            // Пока ждали ответа, в странице началась загрузка — не усыпляем.
-            if !downloads.is_busy(tab.id) {
+            // Пока ждали ответа, в странице началась загрузка или вкладка ушла на сайт
+            // из списка «не усыплять» — не усыпляем.
+            if !downloads.is_busy(tab.id) && !tab.kept_awake(sites) {
                 tab.webview = None;
                 changed = true;
             }
@@ -1736,8 +1752,9 @@ impl App {
             return;
         }
         tab.sleep_requested = None;
-        // Пока страница отвечала, в ней началась загрузка.
-        if self.downloads.is_busy(id) {
+        // Пока страница отвечала, в ней началась загрузка или открылся сайт
+        // из списка «не усыплять».
+        if self.downloads.is_busy(id) || tab.kept_awake(&self.settings.no_sleep_sites) {
             return;
         }
         if page.keep {
@@ -1768,6 +1785,58 @@ impl App {
         };
         self.session_dirty = true;
         self.send(&ToUi::Toast { text });
+        self.push_state();
+    }
+
+    /// «Не усыплять на этом сайте» и «Снова усыплять на этом сайте» (меню вкладки,
+    /// кружка у вкладки, чей сайт в списке): сайт вкладки — в список или из него.
+    fn toggle_site_no_sleep(&mut self, id: TabId) {
+        let Some(url) = self
+            .tabs
+            .get(id)
+            .filter(|t| !t.is_internal())
+            .map(|t| t.url.clone())
+        else {
+            return;
+        };
+        let (text, changed) = match sleep::toggle_site(&mut self.settings.no_sleep_sites, &url) {
+            Some(SiteToggle::Added(site)) => (format!("Вкладки {site} не будут засыпать"), true),
+            Some(SiteToggle::Removed(sites)) => (
+                format!("Вкладки {} снова могут засыпать", sites.join(", ")),
+                true,
+            ),
+            Some(SiteToggle::Full) => (
+                format!(
+                    "В списке уже {} сайтов: уберите лишние в настройках",
+                    sleep::MAX_SITES
+                ),
+                false,
+            ),
+            None => (
+                "Этот адрес не подходит для списка сайтов".to_string(),
+                false,
+            ),
+        };
+        self.send(&ToUi::Toast { text: &text });
+        if !changed {
+            return;
+        }
+        self.persist_settings();
+        self.send(&ToUi::NoSleepSites {
+            sites: &self.settings.no_sleep_sites,
+        });
+        self.sites_changed();
+    }
+
+    /// Список сайтов «не усыплять» поменялся. Запрос на усыпление их вкладок мог уже
+    /// уйти — без него ответ страницы ничего не сделает; значки — по новому списку.
+    fn sites_changed(&mut self) {
+        let sites = &self.settings.no_sleep_sites;
+        for tab in self.tabs.iter_mut() {
+            if sleep::site_kept(sites, &tab.url) {
+                tab.sleep_requested = None;
+            }
+        }
         self.push_state();
     }
 
@@ -1856,6 +1925,7 @@ impl App {
                 ai: t.ai,
                 bookmarked: self.bookmarks.contains(&t.url),
                 no_sleep: t.no_sleep,
+                site_no_sleep: sleep::site_kept(&self.settings.no_sleep_sites, &t.url),
                 // У спящей вкладки звука нет, но выключенный звук она помнит.
                 audible: t.audible && t.webview.is_some(),
                 muted: t.muted,

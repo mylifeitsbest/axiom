@@ -10,12 +10,14 @@ use crate::{
     tabs::{
         identity::{self, Agent, Referer},
         omnibox::{self, Engine, Search},
+        sleep,
     },
 };
 
 pub const FILE: &str = "settings.json";
 const MAX_SLEEP_MINUTES: u32 = 24 * 60;
-const MAX_LIVE_TABS: u32 = 20;
+/// Ползунок «Фоновых вкладок в памяти»: 1–30 и «без ограничения» (0).
+const MAX_LIVE_TABS: u32 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -66,6 +68,10 @@ pub struct Settings {
     /// Сколько фоновых вкладок держать загруженными (0 — без ограничения).
     /// Лишние, самые давние, засыпают сразу.
     pub live_tabs: u32,
+    /// Сайты, вкладки которых не засыпают, как с «не усыплять»: `youtube.com` —
+    /// это и `www.youtube.com`, и `m.youtube.com` (см. `tabs::sleep::site`).
+    #[serde(deserialize_with = "sleep::lenient_sites")]
+    pub no_sleep_sites: Vec<String>,
     /// Цвета темы, чтобы новые webview не мигали белым.
     pub colors: ThemeColors,
     /// Пройдено ли приветствие первого запуска.
@@ -109,6 +115,7 @@ impl Default for Settings {
             ai_proxy: String::new(),
             sleep_minutes: 5,
             live_tabs: 3,
+            no_sleep_sites: Vec::new(),
             colors: ThemeColors::default(),
             onboarded: false,
             force_dark: false,
@@ -147,6 +154,10 @@ impl Settings {
         self.ai_proxy = incoming.ai_proxy.trim().to_string();
         self.sleep_minutes = incoming.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.live_tabs = incoming.live_tabs.min(MAX_LIVE_TABS);
+        // Интерфейс без списка сайтов поле не шлёт — тогда не трогаем.
+        if let Some(sites) = incoming.no_sleep_sites {
+            self.no_sleep_sites = sleep::clean_sites(&sites);
+        }
         self.onboarded |= incoming.onboarded;
         self.force_dark = incoming.force_dark;
         self.check_updates = incoming.check_updates;
@@ -240,6 +251,7 @@ impl Settings {
         self.fix_search();
         self.sleep_minutes = self.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.live_tabs = self.live_tabs.min(MAX_LIVE_TABS);
+        self.no_sleep_sites = sleep::clean_sites(&self.no_sleep_sites);
         self.translate = self.translate.sanitized();
         self.fix_identity();
         if crate::ai_panel::proxy::parse(&self.ai_proxy).is_err() {
@@ -345,6 +357,55 @@ mod tests {
             (Agent::Default, Referer::Default)
         );
         assert_eq!(s.sleep_minutes, 30);
+        Ok(())
+    }
+
+    #[test]
+    fn sanitises_sleep_settings() -> serde_json::Result<()> {
+        let with = |extra: serde_json::Value| -> serde_json::Result<SettingsIn> {
+            let mut v = serde_json::json!({
+                "appearance": {}, "double_search": true, "ai_proxy": "",
+                "sleep_minutes": 5, "live_tabs": 3,
+            });
+            if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
+                v.extend(extra.clone());
+            }
+            serde_json::from_value(v)
+        };
+        let mut s = Settings::default();
+        assert!(s.no_sleep_sites.is_empty());
+        s.apply(with(serde_json::json!({
+            "live_tabs": 25, "sleep_minutes": 100_000,
+            "no_sleep_sites": [" https://www.YouTube.com/watch ", "junk", "youtube.com", "m.vk.com"],
+        }))?);
+        assert_eq!(s.live_tabs, 25);
+        assert_eq!(s.sleep_minutes, MAX_SLEEP_MINUTES);
+        assert_eq!(s.no_sleep_sites, ["youtube.com", "m.vk.com"]);
+        // Больше 30 — 30; 0 — без ограничения.
+        s.apply(with(serde_json::json!({"live_tabs": 500}))?);
+        assert_eq!(s.live_tabs, MAX_LIVE_TABS);
+        s.apply(with(serde_json::json!({"live_tabs": 0}))?);
+        assert_eq!(s.live_tabs, 0);
+        // Без поля список не трогают, пустой — очищает.
+        assert_eq!(s.no_sleep_sites, ["youtube.com", "m.vk.com"]);
+        s.apply(with(serde_json::json!({"no_sleep_sites": []}))?);
+        assert!(s.no_sleep_sites.is_empty());
+
+        // Файл: мусор в списке выброшен, лимит живых вкладок урезан, остальное цело.
+        let file = r#"{"live_tabs":99,"sleep_minutes":30,"no_sleep_sites":["WWW.GitHub.com",7,"ftp://x.org","github.com"]}"#;
+        let s = serde_json::from_str::<Settings>(file)?.sanitized();
+        assert_eq!(s.live_tabs, MAX_LIVE_TABS);
+        assert_eq!(s.sleep_minutes, 30);
+        assert_eq!(s.no_sleep_sites, ["github.com"]);
+        let s =
+            serde_json::from_str::<Settings>(r#"{"no_sleep_sites":{"a":1},"sleep_minutes":30}"#)?
+                .sanitized();
+        assert!(s.no_sleep_sites.is_empty());
+        assert_eq!(s.sleep_minutes, 30);
+        // Старый файл без списка.
+        let old = serde_json::from_str::<Settings>(r#"{"live_tabs":0}"#)?.sanitized();
+        assert!(old.no_sleep_sites.is_empty());
+        assert_eq!(old.live_tabs, 0);
         Ok(())
     }
 

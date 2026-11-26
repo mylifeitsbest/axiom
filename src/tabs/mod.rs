@@ -104,10 +104,16 @@ impl Tab {
         volume::engine_muted(self.muted, self.volume)
     }
 
-    /// Флаги самой вкладки не мешают её усыпить. Активность, звук и загрузки
-    /// проверяет `App::sleep_candidates`: им нужен webview.
-    pub fn may_sleep(&self) -> bool {
-        !self.no_sleep && !self.keep_alive && self.sleep_requested.is_none()
+    /// Вкладку не усыпляют: попросили для неё самой или её сайт в списке `sites`
+    /// (`settings.no_sleep_sites`).
+    pub fn kept_awake(&self, sites: &[String]) -> bool {
+        self.no_sleep || sleep::site_kept(sites, &self.url)
+    }
+
+    /// Флаги самой вкладки и список сайтов «не усыплять» не мешают её усыпить.
+    /// Активность, звук и загрузки проверяет `App::sleep_candidates`: им нужен webview.
+    pub fn may_sleep(&self, sites: &[String]) -> bool {
+        !self.kept_awake(sites) && !self.keep_alive && self.sleep_requested.is_none()
     }
 }
 

@@ -472,6 +472,9 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .imp-row .imp-res.bad,.onb-result.bad{color:#e5484d}
 .imp-head{display:flex;align-items:center;gap:16px;padding:14px 0}
 .imp-card #impList .srow:first-child{border-top:1px solid var(--line)}
+/* Сайты без сна: строки списка ниже обычных, под полем ввода — с чертой. */
+.ns-list .srow{min-height:46px;padding:8px 0;border-top:1px solid var(--line)}
+.ns-list .sl b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .imp-row{justify-content:flex-start;gap:12px}
 .imp-row .sl{flex:1}
 .bmark{display:grid;place-items:center;width:30px;height:30px;flex:none;border-radius:9px;background:color-mix(in oklab,var(--acc) 14%,transparent);color:var(--acc);font-weight:600;font-size:12.5px;letter-spacing:-.02em}

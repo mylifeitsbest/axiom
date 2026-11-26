@@ -1,6 +1,7 @@
 'use strict';
 // Меню вкладки по правому клику: перезагрузить, дублировать, звук и громкость,
-// «не усыплять», закрыть эту, другие или те, что справа, и вернуть закрытую.
+// «не усыплять» (вкладку или весь её сайт), закрыть эту, другие или те, что справа,
+// и вернуть закрытую.
 // Отсюда уходят только команда и номер вкладки (и громкость): что можно сделать, решает Rust.
 
 // Значок громкости: 0 % — без волн, ниже 100 % — одна волна.
@@ -19,7 +20,7 @@ function createTabMenu(ax) {
   document.getElementById('app').append(menu);
 
   const COMMANDS = {
-    reload: 'reload_tab', duplicate: 'duplicate_tab', mute: 'toggle_mute', nosleep: 'toggle_no_sleep',
+    reload: 'reload_tab', duplicate: 'duplicate_tab', mute: 'toggle_mute', nosleep: 'toggle_no_sleep', sitesleep: 'toggle_site_no_sleep',
     close: 'close_tab', others: 'close_other_tabs', right: 'close_tabs_right',
   };
   let tabId = null;
@@ -34,6 +35,9 @@ function createTabMenu(ax) {
     const tabs = ax.tabs();
     const i = tabs.findIndex((x) => x.id === t.id);
     const page = t.url !== ax.NEWTAB;
+    // Сайт вкладки в списке «не усыплять»: она не засыпает и без своего флажка,
+    // а флажок не переключить, пока сайт в списке.
+    const site = !!t.site_no_sleep;
     return [
       { a: 'reload', ic: 'reload', t: 'Перезагрузить', k: 'Ctrl+R', off: !page },
       { a: 'duplicate', ic: 'copy', t: 'Дублировать' },
@@ -41,7 +45,8 @@ function createTabMenu(ax) {
       // Значение ползунка в ключ не входит: меню не перестраивается, пока его тянут.
       // У служебных вкладок (новая, настройки) страницы нет — и громкости тоже.
       ...(ax.volume?.() === false ? [] : [{ vol: true, off: isInternal(t) }]),
-      { a: 'nosleep', ic: 'cup', t: 'Не усыплять', check: !!t.no_sleep, off: !page },
+      { a: 'nosleep', ic: 'cup', t: 'Не усыплять', check: !!t.no_sleep || site, off: !page || site },
+      { a: 'sitesleep', ic: 'globe', t: site ? 'Снова усыплять на этом сайте' : 'Не усыплять на этом сайте', off: !/^https?:/i.test(t.url) },
       null,
       { a: 'close', ic: 'x', t: 'Закрыть', k: 'Ctrl+W' },
       { a: 'others', t: 'Закрыть другие вкладки', off: tabs.length < 2 },

@@ -39,6 +39,27 @@ function refererOk(v) {
   try { const u = new URL(v.includes('://') ? v : `https://${v}`); return /^https?:$/.test(u.protocol) && !!u.hostname; } catch { return false; }
 }
 
+// ---------- сайты, которые не усыпляем (как в src/tabs/sleep.rs) ----------
+const MAX_SLEEP_SITES = 200;
+// Сайт для списка «не усыплять» (как sleep::site в Rust): https://www.YouTube.com/watch → youtube.com.
+// Без схемы — тоже адрес, «*.» в начале — то же, что без него; одно слово (кроме localhost) — не сайт.
+function sleepSite(v) {
+  let s = String(v || '').trim().toLowerCase();
+  if (!s || s.length > 2048 || /\s/.test(s)) return null;
+  s = s.replace(/^(\*\.)+/, '').replace(/^\.+/, '');
+  let u;
+  try { u = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(s) ? s : `https://${s}`); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol) || !u.hostname) return null;
+  let h = u.hostname;
+  if (h.startsWith('[') || /^\d+(\.\d+){3}$/.test(h)) return h;
+  h = h.replace(/\.$/, '');
+  const label = /^[a-z0-9_-]{1,63}$/;
+  if (h.length > 253 || !(h.includes('.') || h === 'localhost') || !h.split('.').every((l) => label.test(l))) return null;
+  // www.com — сайт, а не «все сайты в .com».
+  return h.startsWith('www.') && h.slice(4).includes('.') ? h.slice(4) : h;
+}
+const sleepSites = (b) => (Array.isArray(b?.no_sleep_sites) ? b.no_sleep_sites : []);
+
 // Свой адрес: http(s), с %s, и запрос не может поменять сайт (как valid_template в Rust).
 function searchTemplateOk(t) {
   t = String(t || '').trim();
@@ -142,6 +163,10 @@ function createPanels(ax) {
     `<button class="chip" role="radio" data-engine="${e.id}">${icon('check')}<span>${e.name}</span></button>`).join('')}</span>`;
   const pickChips = (list, attr, label) => `<span class="chips" role="radiogroup" aria-label="${label}">${list.map((e) =>
     `<button class="chip" role="radio" ${attr}="${e.id}">${icon('check')}<span>${e.name}</span></button>`).join('')}</span>`;
+  // «Фоновых вкладок в памяти»: 1–30, последний шаг ползунка — без ограничения (в настройках 0).
+  const LIVE_MAX = 30;
+  const liveToRange = (n) => (+n > 0 ? Math.min(+n, LIVE_MAX) : LIVE_MAX + 1);
+  const rangeToLive = (v) => (v > LIVE_MAX ? 0 : v);
   // Что показывает пузырёк над ползунком.
   const BUBBLE = {
     hue: (v) => `${v}°`,
@@ -151,7 +176,7 @@ function createPanels(ax) {
     gap: (v) => `${v} px`,
     speed: (v) => (v ? `×${v}` : 'выкл'),
     aiWidth: (v) => `${v} px`,
-    live_tabs: (v) => (v ? `${v} ${plural(v, 'вкладка', 'вкладки', 'вкладок')}` : 'без лимита'),
+    live_tabs: (v) => (v > LIVE_MAX ? 'без ограничения' : `${v} ${plural(v, 'вкладка', 'вкладки', 'вкладок')}`),
     sleep_minutes: (v) => (v ? `${v} мин` : 'никогда'),
   };
   // «Свой адрес» нажат, но годного шаблона ещё нет: поле открыто, система прежняя.
@@ -228,10 +253,15 @@ function createPanels(ax) {
       translate: ax.translate.sectionHtml(),
       memory: `
         <div class="card">
-          ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', range('min="0" max="10" step="1" data-bkey="live_tabs"'), 'data-kw="живые вкладки лимит"')}
+          ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', range(`min="1" max="${LIVE_MAX + 1}" step="1" data-bkey="live_tabs"`), 'data-kw="живые вкладки лимит без ограничения сколько"')}
           ${row('Усыплять вкладки', '<span id="sleepOut"></span>', range('min="0" max="120" step="5" data-bkey="sleep_minutes"'), 'data-kw="сон спящие таймер минуты"')}
         </div>
-        <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Не засыпают вкладки, где играет звук или остался недописанный текст, и те, что вы отметили кружкой в адресной строке. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
+        <h4>Сайты без сна</h4><div class="card">
+          ${row('Не усыплять на сайтах', 'Их вкладки не засыпают, как отмеченные кружкой. youtube.com — это и www.youtube.com, и m.youtube.com', '', 'data-kw="не усыплять никогда всегда сайты домены список исключения сон"')}
+          <div class="srow" data-kw="не усыплять сайт добавить домен"><span class="inline"><input type="text" id="nsIn" placeholder="youtube.com" spellcheck="false" maxlength="2048"><button class="btn primary" data-act="ns-add">Добавить</button></span></div>
+          <div class="ns-list" id="nsList"></div>
+        </div>
+        <div class="note">${icon('moon')}<span>Спящая вкладка полностью выгружается из памяти — остаются адрес, заголовок и место прокрутки. Не засыпают вкладки, где играет звук или остался недописанный текст, те, что вы отметили кружкой в адресной строке, и вкладки сайтов из списка выше. Фоновые вкладки сразу переходят в экономный режим.</span></div>`,
       data: `
         <div class="card imp-card">
           <div class="imp-head"><div class="hero-ic">${icon('download')}</div>
@@ -391,7 +421,11 @@ function createPanels(ax) {
       else if (el.type === 'checkbox') el.checked = !!v;
       else if (document.activeElement !== el) el.value = v ?? '';
     });
-    $$('[data-bkey]', box).forEach((el) => { const v = B[el.dataset.bkey]; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; });
+    $$('[data-bkey]', box).forEach((el) => {
+      const v = B[el.dataset.bkey];
+      if (el.type === 'checkbox') el.checked = !!v;
+      else el.value = el.dataset.bkey === 'live_tabs' ? liveToRange(v) : v;
+    });
     $$('input[type=range]', box).forEach(syncRange);
     $$('[data-out]', box).forEach((el) => {
       const k = el.dataset.out;
@@ -406,7 +440,12 @@ function createPanels(ax) {
     const so = $('#sleepOut', box);
     if (so) { const m = +B.sleep_minutes; so.textContent = m ? `Через ${m} мин без активности` : 'Никогда'; }
     const lo = $('#liveOut', box);
-    if (lo) { const n = +B.live_tabs; lo.textContent = n ? `Не больше ${n}, лишние засыпают сразу` : 'Без ограничения'; }
+    if (lo) {
+      const n = +B.live_tabs;
+      lo.textContent = n ? `Не больше ${n}, лишние засыпают сразу`
+        : +B.sleep_minutes ? 'Без ограничения: вкладки засыпают только по таймеру' : 'Без ограничения';
+    }
+    syncSleepSites(box);
     syncSearch(box);
     syncIdentity(box);
   }
@@ -420,6 +459,45 @@ function createPanels(ax) {
     wrap.style.setProperty('--p', p);
     const fmt = BUBBLE[r.dataset.key || r.dataset.bkey];
     wrap.querySelector('.bub').textContent = fmt ? fmt(+r.value) : r.value;
+  }
+
+  // Сайты без сна: свежие сверху, у каждого крестик «снова усыплять».
+  let nsKey = '';
+  function syncSleepSites(box) {
+    const el = $('#nsList', box);
+    if (!el) return;
+    const list = sleepSites(ax.B);
+    const key = JSON.stringify(list);
+    if (key === nsKey) return;
+    nsKey = key;
+    el.innerHTML = list.length
+      ? list.slice().reverse().map((s) => row(esc(s), '', `<button class="ib sm" data-ns-rm="${esc(s)}" title="Снова усыплять на этом сайте">${icon('x')}</button>`)).join('')
+      : row('Пока ни одного сайта', 'Или правой кнопкой по вкладке — «Не усыплять на этом сайте»', '');
+  }
+  function addSleepSite() {
+    const input = $('#nsIn');
+    const v = input.value.trim();
+    const site = sleepSite(v);
+    input.classList.toggle('bad', !site);
+    if (!site) { ax.toast(v ? 'Не похоже на адрес сайта' : 'Впишите сайт, например youtube.com'); input.focus(); return; }
+    const list = sleepSites(ax.B);
+    const has = list.find((s) => site === s || site.endsWith(`.${s}`));
+    if (has) {
+      input.value = '';
+      ax.toast(has === site ? `${site} уже в списке` : `${site} и так не засыпает: в списке есть ${has}`);
+      return;
+    }
+    if (list.length >= MAX_SLEEP_SITES) { ax.toast(`Не больше ${MAX_SLEEP_SITES} сайтов: уберите лишние`); return; }
+    ax.B.no_sleep_sites = [...list, site];
+    input.value = '';
+    ax.saveSettings(true);
+    ax.refresh();
+    ax.toast(`Вкладки ${site} не будут засыпать`);
+  }
+  function removeSleepSite(site) {
+    ax.B.no_sleep_sites = sleepSites(ax.B).filter((s) => s !== site);
+    ax.saveSettings(true);
+    ax.refresh();
   }
 
   // Выбранная поисковая система: пилюли, поле своего адреса и подписи с её именем.
@@ -568,10 +646,11 @@ function createPanels(ax) {
   function onInput(e) {
     const el = e.target;
     if (el.id === 'setFind') { filter(el.value); return; }
-    if (['seCustomIn', 'uaCustomIn', 'refCustomIn'].includes(el.id)) { el.classList.remove('bad'); return; }
+    if (['seCustomIn', 'uaCustomIn', 'refCustomIn', 'nsIn'].includes(el.id)) { el.classList.remove('bad'); return; }
     if (el.dataset.key) ax.setA(el.dataset.key, readVal(el));
     else if (el.dataset.bkey) {
-      ax.B[el.dataset.bkey] = readVal(el);
+      const v = readVal(el);
+      ax.B[el.dataset.bkey] = el.dataset.bkey === 'live_tabs' ? rangeToLive(v) : v;
       ax.saveSettings();
       ax.refresh();
       if (el.dataset.bkey === 'force_dark' || el.dataset.bkey === 'gpu') ax.toast('Перезапустите Axiom, чтобы применить');
@@ -600,11 +679,13 @@ function createPanels(ax) {
     if (b.dataset.engine) { pickEngine(b.dataset.engine); return; }
     if (b.dataset.ua) { pickAgent(b.dataset.ua); return; }
     if (b.dataset.ref) { pickReferer(b.dataset.ref); return; }
+    if (b.dataset.nsRm) { removeSleepSite(b.dataset.nsRm); return; }
     switch (b.dataset.act) {
       case 'close': close(); break;
       case 'search-custom': applyCustomSearch(); break;
       case 'ua-custom': applyCustomAgent(); break;
       case 'ref-custom': applyCustomReferer(); break;
+      case 'ns-add': addSleepSite(); break;
       case 'proxy': applyProxy(b.closest('.card, .step') || sheet); break;
       case 'copy': ax.copyText(JSON.stringify(ax.A, null, 2)); ax.toast('Тема скопирована'); break;
       case 'import-toggle': { const box = $('.import-box', sheet); box.hidden = !box.hidden; break; }
@@ -722,6 +803,7 @@ function createPanels(ax) {
       if (e.target.id === 'bugText' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendBug();
       if (e.target.id === 'uaCustomIn' && e.key === 'Enter') applyCustomAgent();
       if (e.target.id === 'refCustomIn' && e.key === 'Enter') applyCustomReferer();
+      if (e.target.id === 'nsIn' && e.key === 'Enter') addSleepSite();
     });
     // Пузырёк над ползунком держится, пока бегунок тянут, даже если мышь ушла с ползунка.
     sheet.addEventListener('pointerdown', (e) => {

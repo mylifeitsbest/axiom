@@ -39,7 +39,7 @@ jobs:
       - run: cargo test --locked
       - name: Расширение WebKitGTK — правила локальной сети
         run: |
-          cc -DAXIOM_WEBEXT_TEST -Wall -Werror=implicit-function-declaration src/tabs/webext.c \
+          cc -DAXIOM_WEBEXT_TEST -Wall -Wno-unused-function -Werror=implicit-function-declaration src/tabs/webext.c \
             -o "$RUNNER_TEMP/webext-test" $(pkg-config --cflags --libs webkit2gtk-web-extension-4.1)
           "$RUNNER_TEMP/webext-test"
 

@@ -6,9 +6,9 @@
 //! системный `curl` (есть в Windows 10 и 11 и почти в любом Linux): своего
 //! HTTP-клиента в браузере нет, а тащить TLS ради пары запросов тяжело.
 //!
-//! Windows: новый exe скачивается рядом с текущим, сверяется с SHA256SUMS.txt
-//! релиза и встаёт на его место. Работающий exe можно переименовать, но нельзя
-//! удалить, поэтому старый файл уезжает в `axiom.exe.old`, а новый процесс
+//! Windows: новый exe скачивается рядом с текущим, сверяется с суммой из
+//! подписанного `SHA256SUMS.signed` релиза (см. `sign`) и встаёт на его место.
+//! Работающий exe можно переименовать, но нельзя удалить, поэтому старый файл уезжает в `axiom.exe.old`, а новый процесс
 //! (`--updated`) ждёт, пока старый закроется. `axiom.exe.old` остаётся, пока
 //! новая версия не проработает 10 минут: если она не запускается, достаточно
 //! закрыть Axiom, удалить `axiom.exe` и переименовать `axiom.exe.old` в `axiom.exe`.
@@ -38,13 +38,13 @@ use tao::event_loop::EventLoopProxy;
 use crate::events::UserEvent;
 
 mod notes;
+#[cfg(windows)]
+mod sign;
 pub use notes::{Range as NotesRange, Section as NotesSection, Which as NotesWhich};
 
 const REPO: &str = "https://github.com/mylifeitsbest/axiom";
 #[cfg_attr(not(windows), allow(dead_code))]
 const ASSET: &str = "Axiom-windows-x64.exe";
-#[cfg_attr(not(windows), allow(dead_code))]
-const SUMS: &str = "SHA256SUMS.txt";
 /// Аргумент запуска новой версии сразу после обновления.
 pub const UPDATED_FLAG: &str = "--updated";
 /// Как часто проверять, пока Axiom открыт.
@@ -268,7 +268,7 @@ pub enum UpdateEvent {
 #[derive(Debug)]
 pub struct Downloaded {
     part: PathBuf,
-    /// SHA256 из `SHA256SUMS.txt`: перед запуском сверяем ещё раз.
+    /// SHA256 из подписанных сумм: перед запуском сверяем ещё раз.
     #[cfg_attr(not(windows), allow(dead_code))]
     sha256: String,
 }
@@ -646,16 +646,19 @@ fn download(version: Version, events: &EventLoopProxy<UserEvent>) -> Result<Down
     let part = dir.join(format!("axiom-{version}.download"));
     let base = format!("{}/releases/download/{}", base_url(), version.tag());
 
-    let sums = curl()
+    // Суммы — только подписанные: сумма без подписи из того же релиза ничего
+    // не доказывает, её подменит тот же, кто подменил exe.
+    let signed = curl()
         .args(["--fail", "--location", "--max-time", "60"])
-        .arg(format!("{base}/{SUMS}"))
+        .arg(format!("{base}/{}", sign::FILE))
         .output()
         .context("не удалось запустить curl")?;
-    if !sums.status.success() {
-        return Err(curl_error(&sums).context("контрольные суммы"));
+    if !signed.status.success() {
+        return Err(curl_error(&signed).context("подпись обновления"));
     }
-    let expected = checksum_for(&String::from_utf8_lossy(&sums.stdout), ASSET)
-        .ok_or_else(|| anyhow!("в {SUMS} нет строки для {ASSET}"))?;
+    let sums = sign::sums(&signed.stdout, version)?;
+    let expected = checksum_for(&sums, ASSET)
+        .ok_or_else(|| anyhow!("в {} нет строки для {ASSET}", sign::FILE))?;
 
     // Сразу видно, можно ли писать в папку (например, Axiom лежит в Program Files).
     fs::File::create(&part).with_context(|| {
@@ -723,7 +726,7 @@ fn verify(path: &Path, expected: &str) -> Result<()> {
     check(&mut file, expected)
 }
 
-/// Сумма файла совпадает с `SHA256SUMS.txt`, и это программа Windows.
+/// Сумма файла совпадает с подписанной, и это программа Windows.
 #[cfg(windows)]
 fn check(file: &mut std::fs::File, expected: &str) -> Result<()> {
     use sha2::{Digest, Sha256};

@@ -198,12 +198,16 @@ jobs:
           pattern: beta-*
           merge-multiple: true
       - name: Публикация
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           cd dist
           sha256sum Axiom-windows-x64.exe axiom-linux-x86_64.tar.gz axiom-browser-bin-x86_64.pkg.tar.zst > SHA256SUMS.txt
           printf '%s\n%s\n' "$VERSION" "$SHA" > VERSION
           cat SHA256SUMS.txt VERSION
           cd ..
+          # SHA256SUMS.signed: без верной подписи Axiom на Windows обновление не поставит.
+          sh packaging/sign-sums.sh "$VERSION" dist
           # Что нового с последнего выпуска: бета-тестерам видно, что проверять.
           LAST=$(git tag --list 'v*' --sort=-v:refname --merged "$SHA" | head -n1)
           {
@@ -239,13 +243,13 @@ jobs:
           # Тег beta — на этот коммит (архивы исходников на странице совпадут со сборкой).
           git tag -f beta "$SHA"
           git push -f origin refs/tags/beta
-          # Сначала файлы, потом суммы, последним VERSION: кто прочитал новый номер,
-          # найдёт и новые файлы. Копия, читавшая VERSION раньше, получит несовпадение
-          # суммы и просто проверит позже.
+          # Сначала файлы, потом суммы с подписью, последним VERSION: кто прочитал новый
+          # номер, найдёт и новые файлы. Копия, читавшая VERSION раньше, получит другую
+          # версию в подписи или несовпадение суммы и просто проверит позже.
           gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber \
             dist/Axiom-windows-x64.exe dist/axiom-linux-x86_64.tar.gz dist/axiom-browser-bin-x86_64.pkg.tar.zst \
             dist/NOTES.txt
-          gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber dist/SHA256SUMS.txt
+          gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber dist/SHA256SUMS.txt dist/SHA256SUMS.signed
           gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber dist/VERSION
           gh release edit beta --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
             --title "Бета-версия $VERSION" --notes-file notes.md

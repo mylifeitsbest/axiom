@@ -22,6 +22,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      # install.ps1 сверяет подпись так же, как Axiom: тестовый файл из src/update/testdata.
+      - run: powershell -NoProfile -File packaging/test-install.ps1
 
   linux:
     runs-on: ubuntu-22.04
@@ -63,3 +65,7 @@ jobs:
           shellcheck -S warning install.sh
           if grep -nE '/(beta|dev2?)/(null|tty)' install.sh | grep -v '/dev/'; then echo "сломан путь к устройству"; exit 1; fi
           for d in $(grep -oE '/dev/[a-z]+' install.sh | sort -u); do test -e "$d" || { echo "нет $d"; exit 1; }; done
+      - name: Подпись обновлений (packaging/sign-sums.sh) на одноразовом ключе
+        run: |
+          shellcheck -S warning packaging/sign-sums.sh packaging/test-sign.sh
+          bash packaging/test-sign.sh

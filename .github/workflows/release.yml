@@ -159,6 +159,11 @@ jobs:
           merge-multiple: true
       - name: Контрольные суммы
         run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      # SHA256SUMS.signed: без верной подписи Axiom на Windows обновление не поставит.
+      - name: Подпись сумм
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: sh packaging/sign-sums.sh "${TAG#v}" dist && cat dist/SHA256SUMS.signed
       - name: Публикация
         run: |
           # Описание — что нового в версии: раздел из CHANGELOG.md

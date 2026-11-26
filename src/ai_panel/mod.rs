@@ -151,6 +151,7 @@ impl AiPanel {
                 );
                 downloads::install(&webview, None, events.clone());
                 crate::reports::watch(&webview, crate::reports::Source::Ai);
+                crate::tabs::error_page::install(&webview);
                 self.webview = Some(webview);
                 self.query = query.map(String::from);
             }

@@ -1,6 +1,6 @@
 pkgbase = axiom-browser-bin
 	pkgdesc = Lightweight Rust browser with DuckDuckGo and a Google AI Mode side panel (prebuilt binary)
-	pkgver = 0.5.5
+	pkgver = 0.6.0
 	pkgrel = 1
 	url = https://github.com/mylifeitsbest/axiom
 	arch = x86_64
@@ -19,11 +19,11 @@ pkgbase = axiom-browser-bin
 	depends = curl
 	depends = gst-plugins-good
 	depends = gst-libav
-	provides = axiom-browser=0.5.5
+	provides = axiom-browser=0.6.0
 	conflicts = axiom-browser
 	options = !strip
 	options = !debug
-	source = axiom-browser-bin-0.5.5.tar.gz::https://github.com/mylifeitsbest/axiom/releases/download/v0.5.5/axiom-linux-x86_64.tar.gz
-	sha256sums = 7191c960a49e5713117729196ea414bbe9cf9cff496122e90ebaccdb1e4b0633
+	source = axiom-browser-bin-0.6.0.tar.gz::https://github.com/mylifeitsbest/axiom/releases/download/v0.6.0/axiom-linux-x86_64.tar.gz
+	sha256sums = d36483689446053adacfd2ff2f1a5498f20d6922caccbe36501d8f2ee0c06551
 
 pkgname = axiom-browser-bin

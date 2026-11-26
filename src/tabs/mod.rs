@@ -4,6 +4,8 @@ pub mod external;
 pub mod fullscreen;
 pub mod identity;
 pub mod links;
+pub mod media;
+pub mod mini;
 pub mod omnibox;
 pub mod popups;
 pub mod script;

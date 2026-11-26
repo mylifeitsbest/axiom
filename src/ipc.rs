@@ -64,6 +64,32 @@ impl Rect {
     }
 }
 
+/// Чёлка островка в окне (логические px): середина, верх острова с видео и его ширина,
+/// верх самой чёлки (у карточки в боковой панели — не край окна).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct IslandDock {
+    pub cx: f64,
+    pub top: f64,
+    pub width: f64,
+    #[serde(default)]
+    pub notch_top: f64,
+}
+
+impl IslandDock {
+    fn validate(&self) -> Result<(), IpcError> {
+        let ok = [self.cx, self.top, self.width, self.notch_top]
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=100_000.0).contains(v))
+            && (120.0..=2000.0).contains(&self.width)
+            && self.notch_top <= self.top;
+        if ok {
+            Ok(())
+        } else {
+            Err(IpcError::Invalid("dock"))
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowAction {
@@ -225,6 +251,17 @@ pub enum UiCmd {
     ToggleMute {
         id: u64,
     },
+    /// Островок: спросить, что играет во вкладке, и (если есть) нажать кнопку.
+    Media {
+        id: u64,
+        #[serde(default)]
+        action: Option<crate::tabs::media::Action>,
+    },
+    /// Где чёлка островка: под ней встаёт остров с видео. Без `dock` — чёлки нет.
+    IslandDock {
+        #[serde(default)]
+        dock: Option<IslandDock>,
+    },
     /// Ползунок в меню вкладки и колесо над значком динамика: громкость 0–100.
     SetVolume {
         id: u64,
@@ -327,6 +364,7 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
                 ai.validate()?;
             }
         }
+        UiCmd::IslandDock { dock: Some(dock) } => dock.validate()?,
         UiCmd::Navigate { input } => short(input, MAX_INPUT, "input")?,
         UiCmd::NewTab { input: Some(input) } => short(input, MAX_INPUT, "input")?,
         UiCmd::Ai { query: Some(q), .. } => short(q, MAX_INPUT, "query")?,
@@ -510,6 +548,18 @@ pub enum ToUi<'a> {
         received: u64,
         total: Option<u64>,
     },
+    /// Что играет во вкладке (для островка); `None` — страница не ответила.
+    Media {
+        id: u64,
+        info: Option<crate::tabs::media::Info>,
+    },
+    /// Видео вкладки показано из чёлки (`on`) или уже убрано; `height` — высота острова
+    /// с видео (логические px), под неё интерфейс освобождает место.
+    Peek {
+        id: u64,
+        on: bool,
+        height: f64,
+    },
     Update(crate::update::View),
     Translate(crate::translate::View<'a>),
     /// Снимок страницы под окном (или «убрать снимок»).
@@ -627,6 +677,54 @@ mod tests {
             Ok(UiCmd::ToggleNoSleep { id: 7 })
         ));
         assert!(parse(r#"{"cmd":"toggle_no_sleep"}"#).is_err());
+    }
+
+    #[test]
+    fn parses_media() {
+        use crate::tabs::media::Action;
+        assert!(matches!(
+            parse(r#"{"cmd":"media","id":3}"#),
+            Ok(UiCmd::Media {
+                id: 3,
+                action: None
+            })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"media","id":3,"action":"next"}"#),
+            Ok(UiCmd::Media {
+                action: Some(Action::Next),
+                ..
+            })
+        ));
+        // Только известные кнопки.
+        assert!(parse(r#"{"cmd":"media","id":3,"action":"eval"}"#).is_err());
+        assert!(parse(r#"{"cmd":"media"}"#).is_err());
+    }
+
+    #[test]
+    fn parses_island_dock() {
+        assert!(matches!(
+            parse(r#"{"cmd":"island_dock","dock":{"cx":960,"top":30,"width":400}}"#),
+            Ok(UiCmd::IslandDock { dock: Some(_) })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"island_dock"}"#),
+            Ok(UiCmd::IslandDock { dock: None })
+        ));
+        // Ширина видео в разумных пределах, координаты — числа.
+        assert!(parse(r#"{"cmd":"island_dock","dock":{"cx":960,"top":30,"width":5}}"#).is_err());
+        assert!(parse(r#"{"cmd":"island_dock","dock":{"cx":-5,"top":30,"width":400}}"#).is_err());
+        // Карточка в боковой панели: верх чёлки не у края окна, но не ниже острова.
+        assert!(matches!(
+            parse(
+                r#"{"cmd":"island_dock","dock":{"cx":120,"top":120,"width":228,"notch_top":86}}"#
+            ),
+            Ok(UiCmd::IslandDock { dock: Some(_) })
+        ));
+        assert!(
+            parse(r#"{"cmd":"island_dock","dock":{"cx":120,"top":80,"width":228,"notch_top":86}}"#)
+                .is_err()
+        );
     }
 
     #[test]

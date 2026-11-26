@@ -159,6 +159,8 @@ pub fn build_tab(
         // Громкость вкладки — во всех фреймах: звук часто играет во встроенном плеере.
         // (WebView2 и так ставит скрипты во фреймы.) На Linux скрипт пустой, см. `PAGE_SCRIPT`.
         .with_initialization_script_for_main_only(super::volume::PAGE_SCRIPT, false)
+        // Что играет и кнопки для островка — только главный фрейм (см. `media`).
+        .with_initialization_script_for_main_only(super::media::PAGE_SCRIPT, true)
         .with_navigation_handler(move |url| {
             // `data:` — только набранный человеком; не страница вовсе — ссылка
             // на приложение (`mailto:`, `tg:`…): решает external.

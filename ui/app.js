@@ -45,7 +45,7 @@
   const DEFAULTS = {
     preset: 'graphite', mode: 'dark', hue: 265, tint: 0.012, oled: false, accent: '#8b9cff',
     layout: 'one', radius: 10, gap: 6, font: 'system', customFont: '', fontSize: 12.5, speed: 1,
-    showNav: true, showAiBtn: true, fullUrl: false, customCss: '', aiWidth: 400,
+    showNav: true, showAiBtn: true, fullUrl: false, customCss: '', aiWidth: 400, island: true, islandVideo: true, islandPip: true, islandCollapsed: false, islandSide: 'panel',
   };
   const FAV_COLORS = ['#7F77DD', '#1D9E75', '#D85A30', '#378ADD', '#D4537E', '#BA7517', '#639922', '#534AB7'];
 
@@ -95,6 +95,10 @@
 
   // ---------- загрузки (ui/downloads.js) ----------
   const dl = createDownloads({ esc, send, ms, speed, setOverlay });
+
+  // ---------- островок (ui/island.js) ----------
+  // favHtml объявлена ниже (function), к первому вызову она уже есть.
+  const isl = createIsland({ esc, send, ms, setOverlay, favHtml: (u) => favHtml(u), tabs: () => S.tabs, active: () => S.active, layout: () => A.layout, collapse: (on) => setA('islandCollapsed', !!on) });
 
   // ---------- обновления (ui/update.js) ----------
   const upd = createUpdate({ esc, send, ms, speed, setOverlay, copyText: (t) => copyText(t), toast: (t) => toast(t), onChange: () => panels.sync() });
@@ -294,6 +298,7 @@
     applyUserCss(A.customCss);
     renderDs();
     place();
+    isl.configure({ enabled: A.island !== false, video: A.islandVideo !== false, pip: A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide });
     dl.reposition();
     upd.reposition();
     renderOmni();
@@ -407,7 +412,9 @@
       const key = parseUrl(t.url)?.origin || t.url;
       const slot = el.querySelector('.favslot');
       if (slot.dataset.key !== key) { slot.dataset.key = key; slot.innerHTML = favHtml(t.url); }
-      const want = prev ? prev.nextElementSibling : list.firstElementChild;
+      let want = prev ? prev.nextElementSibling : list.firstElementChild;
+      // Промежуток под островок (ui/island.js) — не вкладка, его место считает островок.
+      if (want?.classList.contains('isl-gap')) want = want.nextElementSibling;
       if (el !== want) list.insertBefore(el, want);
       prev = el;
     }
@@ -535,6 +542,7 @@
         el.classList.remove('drag');
         const order = $$('.tab:not(.out)', $('#tablist')).map((x) => +x.dataset.id);
         send({ cmd: 'move_tab', id, to: order.indexOf(id) });
+        isl.sync();
       } else if (onClose) {
         send({ cmd: 'close_tab', id });
       } else if (onSound) {
@@ -653,6 +661,7 @@
   inp.addEventListener('focus', () => {
     omni.classList.add('focus');
     hideMsg();
+    isl.onOmniFocus();
     if (mode === 'url') inp.value = shownUrl();
     requestAnimationFrame(() => { if (document.activeElement === inp) inp.select(); });
   });
@@ -1055,6 +1064,7 @@
     renderSettings();
     snap.sync();
     tm.sync();
+    isl.sync();
   }
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
   let firstSettings = true;
@@ -1104,8 +1114,10 @@
     system(m) { SYS = { ...SYS, ...(m.status || {}) }; panels.onSystem(); newtab.onSystem(); },
     imported(m) { panels.onImported(m); newtab.onImported(m); },
     installed(m) { panels.onInstalled(m); },
-    downloads(m) { dl.onList(m); },
-    download_progress(m) { dl.onProgress(m); },
+    downloads(m) { dl.onList(m); isl.onDownloads(m); },
+    download_progress(m) { dl.onProgress(m); isl.onProgress(m); },
+    media(m) { isl.onMedia(m); },
+    peek(m) { isl.onPeek(m); },
     update(m) { upd.onState(m); },
     translate(m) { tr.onState(m); },
     snapshot(m) { snap.onMessage(m); },

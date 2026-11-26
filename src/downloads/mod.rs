@@ -3,6 +3,10 @@
 //! Файлы сохраняются в системную папку «Загрузки». WebView2 и WebKitGTK
 //! присылают события загрузки в колбэках, те превращаются в [`DownloadEvent`]
 //! и попадают в главный цикл. Список последних загрузок хранится в профиле.
+//!
+//! Путь движку не доверяем: файл ложится только в «Загрузки» (см. [`place`]),
+//! а файл опасного типа на Linux до решения человека лежит под временным
+//! именем `….unconfirmed`, которое не запустить двойным щелчком.
 
 #[cfg(target_os = "linux")]
 mod webkit;
@@ -68,13 +72,14 @@ pub enum DownloadEvent {
     /// или пользователь уже решил сохранить.
     #[cfg_attr(not(windows), allow(dead_code))]
     Decision { id: DownloadId, waiting: bool },
-    /// Скачан файл с безобидным расширением, а внутри программа (см. [`looks_like_program`]):
-    /// он уже на диске и ждёт решения, оставить его или удалить.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    /// Файл уже на диске и ждёт решения, оставить его или удалить: на Windows —
+    /// безобидное расширение, а внутри программа (`program`, см. [`looks_like_program`]),
+    /// на Linux — файл опасного типа под временным именем (см. [`place`]).
     Disguised {
         id: DownloadId,
         path: PathBuf,
         received: u64,
+        program: bool,
     },
     Finished {
         id: DownloadId,
@@ -126,14 +131,21 @@ pub struct Download {
     /// Ждёт решения: сохранить файл опасного типа или удалить.
     #[serde(skip)]
     pub ask: bool,
-    /// Программа под видом обычного файла: уже скачана, ждёт решения.
+    /// Файл уже скачан и ждёт решения: программа под видом обычного файла
+    /// или файл опасного типа под временным именем.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub disguised: bool,
+    /// Ждёт решения именно программа под видом обычного файла.
+    #[serde(skip)]
+    pub program: bool,
 }
 
 impl Download {
+    /// Имя, под которым файл останется: без временного `.unconfirmed`.
     pub fn name(&self) -> String {
-        self.path
+        confirmed(&self.path)
+            .as_deref()
+            .unwrap_or(&self.path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "файл".into())
@@ -153,10 +165,18 @@ impl Downloads {
         items.truncate(MAX_ITEMS);
         for item in &mut items {
             item.id = next_id();
-            // Программу под видом обычного файла не удалили до выхода: файл скачан целиком.
+            // Решения о файле не дождались до выхода. Программа под видом обычного
+            // файла скачана целиком и остаётся, а файл опасного типа никто не
+            // разрешил — его временную копию убираем.
             if item.status == Status::Active && item.disguised {
-                item.status = Status::Done;
                 item.disguised = false;
+                if confirmed(&item.path).is_some() {
+                    let _ = std::fs::remove_file(&item.path);
+                    item.status = Status::Cancelled;
+                    item.error = "Удалено: сохранить не разрешили".into();
+                } else {
+                    item.status = Status::Done;
+                }
             }
             // Браузер закрыли посреди загрузки: WebView2 её уже не продолжит.
             if item.status == Status::Active {
@@ -212,6 +232,7 @@ impl Downloads {
                         tab,
                         ask: false,
                         disguised: false,
+                        program: false,
                     },
                 );
                 self.trim();
@@ -236,7 +257,12 @@ impl Downloads {
                 // О том, что нужно решение, стоит сказать; о самом решении — нет.
                 if waiting { Some(&*item) } else { None }
             }
-            DownloadEvent::Disguised { id, path, received } => {
+            DownloadEvent::Disguised {
+                id,
+                path,
+                received,
+                program,
+            } => {
                 let item = self.active_mut(id)?;
                 if !path.as_os_str().is_empty() {
                     item.path = path;
@@ -247,6 +273,7 @@ impl Downloads {
                 }
                 item.ask = true;
                 item.disguised = true;
+                item.program = program;
                 self.dirty = true;
                 self.get(id)
             }
@@ -265,6 +292,7 @@ impl Downloads {
                 }
                 item.ask = false;
                 item.disguised = false;
+                item.program = false;
                 match outcome {
                     Outcome::Done => {
                         item.status = Status::Done;
@@ -290,16 +318,29 @@ impl Downloads {
         }
     }
 
-    /// «Сохранить всё равно» или «Удалить» для программы под видом обычного файла.
-    /// Файл уже скачан, поэтому решаем сами, без WebView2. `None` — эта загрузка
-    /// такого решения не ждёт.
+    /// «Сохранить всё равно» или «Удалить» для уже скачанного файла, который ждёт
+    /// решения (см. [`DownloadEvent::Disguised`]). Решаем сами, без движка.
+    /// Файл под временным именем при «Сохранить» получает своё. `None` — эта
+    /// загрузка такого решения не ждёт.
     pub fn answer_disguised(&self, id: DownloadId, keep: bool) -> Option<DownloadEvent> {
         let item = self
             .items
             .iter()
             .find(|d| d.id == id && d.status == Status::Active && d.disguised)?;
+        let mut path = None;
         let outcome = if keep {
-            Outcome::Done
+            match confirmed(&item.path) {
+                None => Outcome::Done,
+                Some(target) => {
+                    let target = unique_path(&target);
+                    if std::fs::rename(&item.path, &target).is_ok() {
+                        path = Some(target);
+                        Outcome::Done
+                    } else {
+                        Outcome::Failed("Не удалось сохранить файл".into())
+                    }
+                }
+            }
         } else if std::fs::remove_file(&item.path).is_ok() || !item.path.exists() {
             Outcome::Discarded
         } else {
@@ -308,7 +349,7 @@ impl Downloads {
         Some(DownloadEvent::Finished {
             id,
             outcome,
-            path: None,
+            path,
             received: None,
         })
     }
@@ -343,11 +384,12 @@ impl Downloads {
             .any(|d| d.status == Status::Active && d.tab == Some(tab))
     }
 
-    /// Идёт загрузка, у которой неизвестна вкладка (панель ИИ, Linux).
+    /// Идёт загрузка, у которой неизвестна вкладка (панель ИИ, Linux). Файл,
+    /// который уже скачан и ждёт решения, не в счёт.
     pub fn busy_untracked(&self) -> bool {
         self.items
             .iter()
-            .any(|d| d.status == Status::Active && d.tab.is_none())
+            .any(|d| d.status == Status::Active && !d.disguised && d.tab.is_none())
     }
 
     fn trim(&mut self) {
@@ -454,8 +496,121 @@ fn program_in<R: Read + Seek>(mut file: R) -> bool {
         && &sig == PE_SIGNATURE
 }
 
+/// Временное окончание файла опасного типа, пока человек не разрешил его
+/// сохранить: под ним файл не откроется и не запустится двойным щелчком.
+const UNCONFIRMED: &str = "unconfirmed";
+
+/// Опасные на Linux типы файлов: ярлыки запуска `.desktop` (в них любая команда),
+/// скрипты оболочек, программы и установщики, образы дисков (их подключают
+/// двойным щелчком) и программы Windows — их запускает Wine или переносят на Windows.
+#[cfg_attr(windows, allow(dead_code))]
+const LINUX_RISKY: &str = "\
+    appimage bash bat cmd com csh deb desktop dmg exe fish flatpak flatpakref flatpakrepo \
+    img iso jar ksh lnk msi msix pif ps1 reg rpm run scr sh snap vbs vhd vhdx zsh";
+
+/// Длиннее имя файла (в байтах) не делаем: в ext4 и большинстве систем предел — 255.
+#[cfg_attr(windows, allow(dead_code))]
+const MAX_NAME: usize = 200;
+
+/// Расширение файла есть в списке `types` (через пробел, без точек).
+pub fn has_type(path: &Path, types: &str) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    types
+        .split_ascii_whitespace()
+        .any(|t| t.eq_ignore_ascii_case(ext))
+}
+
+/// Куда положить файл, для которого движок предложил путь `suggested` (Linux).
+///
+/// WebKitGTK сообщает только имя, а wry, если в системе не настроена папка
+/// «Загрузки» (`user-dirs.dirs`), клал файл в текущую папку процесса — домашнюю
+/// или папку проекта, откуда запустили браузер. Поэтому место выбираем сами:
+/// всегда в `dir`, от предложенного пути — только имя, без управляющих символов
+/// и точки в начале (если «Загрузки» — домашняя папка, `.profile` не ляжет рядом
+/// с настройками), занятое имя — с номером. Файл опасного типа до решения
+/// человека лежит как `имя.unconfirmed` (см. [`confirmed`]).
+#[cfg_attr(windows, allow(dead_code))]
+pub fn place(dir: &Path, suggested: &Path) -> PathBuf {
+    let name = clean_name(suggested);
+    let held = has_type(Path::new(&name), LINUX_RISKY);
+    let named = Path::new(&name);
+    let stem = named
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = named
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let taken = |path: &Path| std::fs::symlink_metadata(path).is_ok();
+    let free = (0..10_000)
+        .map(|n| match n {
+            0 => dir.join(&name),
+            n => dir.join(format!("{stem} ({n}){ext}")),
+        })
+        .find(|path| !taken(path) && !(held && taken(&unconfirmed(path))))
+        .unwrap_or_else(|| dir.join(&name));
+    if held { unconfirmed(&free) } else { free }
+}
+
+/// Имя файла из предложенного пути: без папок, управляющих символов, точек
+/// и пробелов по краям; длинное — укорочено с сохранением расширения.
+#[cfg_attr(windows, allow(dead_code))]
+fn clean_name(suggested: &Path) -> String {
+    let raw = suggested
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let name: String = raw
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let name = name
+        .trim()
+        .trim_start_matches(['.', ' '])
+        .trim_end_matches(['.', ' ']);
+    if name.is_empty() {
+        return "download".into();
+    }
+    if name.len() <= MAX_NAME {
+        return name.into();
+    }
+    let ext = Path::new(name)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .filter(|e| e.len() <= 16)
+        .unwrap_or_default();
+    let mut end = MAX_NAME - ext.len();
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{ext}", &name[..end])
+}
+
+/// `файл.desktop` → `файл.desktop.unconfirmed`.
+#[cfg_attr(windows, allow(dead_code))]
+fn unconfirmed(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".");
+    name.push(UNCONFIRMED);
+    PathBuf::from(name)
+}
+
+/// Файл под временным именем (см. [`place`]) → имя, которое он получит, когда
+/// человек разрешит его сохранить. `None` — у файла уже своё имя.
+pub fn confirmed(path: &Path) -> Option<PathBuf> {
+    path.extension()
+        .is_some_and(|ext| ext == UNCONFIRMED)
+        .then(|| path.with_extension(""))
+}
+
 /// `файл.zip` → `файл (1).zip`, если такой файл уже есть.
-#[cfg_attr(not(windows), allow(dead_code))]
 pub fn unique_path(path: &Path) -> PathBuf {
     if !path.exists() {
         return path.to_path_buf();
@@ -792,6 +947,7 @@ mod tests {
                 id,
                 path: file,
                 received: 2,
+                program: true,
             });
             assert!(asked.is_some_and(|d| d.ask && d.disguised && d.total == Some(2)));
         }
@@ -814,6 +970,83 @@ mod tests {
         );
         assert!(!file_left, "файл не удалён");
         assert!(!store.is_busy(5));
+    }
+
+    #[test]
+    fn places_files_in_downloads_only() {
+        let dir = std::env::temp_dir().join(format!("axiom-dl-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        // Путь движка — только подсказка имени: папки и точки в начале отбрасываются.
+        assert_eq!(place(&dir, Path::new("report.pdf")), dir.join("report.pdf"));
+        assert_eq!(
+            place(&dir, Path::new("/tmp/elsewhere/report.pdf")),
+            dir.join("report.pdf")
+        );
+        assert_eq!(
+            place(&dir, Path::new("../../.profile")),
+            dir.join("profile")
+        );
+        assert_eq!(place(&dir, Path::new("...")), dir.join("download"));
+        assert_eq!(place(&dir, Path::new("")), dir.join("download"));
+        assert_eq!(place(&dir, Path::new("a\u{1}b.txt")), dir.join("a_b.txt"));
+        let long = place(&dir, Path::new(&format!("{}.pdf", "я".repeat(300))));
+        let name = long.file_name().map(|n| n.len()).unwrap_or(0);
+        assert!(name <= MAX_NAME && long.extension().is_some_and(|e| e == "pdf"));
+        // Опасный тип — под временным именем, которое ничего не запускает.
+        let held = place(&dir, Path::new("pwn.desktop"));
+        assert_eq!(held, dir.join("pwn.desktop.unconfirmed"));
+        assert_eq!(confirmed(&held), Some(dir.join("pwn.desktop")));
+        assert_eq!(confirmed(&dir.join("report.pdf")), None);
+        assert!(place(&dir, Path::new("SETUP.SH")).ends_with("SETUP.SH.unconfirmed"));
+        // Занятое имя (и занятое временное) — с номером.
+        let _ = std::fs::write(&held, b"x");
+        assert_eq!(
+            place(&dir, Path::new("pwn.desktop")),
+            dir.join("pwn (1).desktop.unconfirmed")
+        );
+        let _ = std::fs::write(dir.join("report.pdf"), b"x");
+        assert_eq!(
+            place(&dir, Path::new("report.pdf")),
+            dir.join("report (1).pdf")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn held_file_gets_its_name_when_kept() {
+        let dir = std::env::temp_dir().join(format!("axiom-dl-held-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let mut store = Downloads::default();
+        let kept = started(&mut store, None);
+        let dropped = started(&mut store, None);
+        let mut files = Vec::new();
+        for (id, name) in [(kept, "a.sh"), (dropped, "b.desktop")] {
+            let file = place(&dir, Path::new(name));
+            let _ = std::fs::write(&file, b"#!/bin/sh");
+            let asked = store.apply(DownloadEvent::Disguised {
+                id,
+                path: file.clone(),
+                received: 9,
+                program: false,
+            });
+            assert!(asked.is_some_and(|d| d.ask && d.disguised && !d.program && d.name() == name));
+            files.push(file);
+        }
+        // Файл уже скачан: панель ИИ из-за него не держим.
+        assert!(!store.busy_untracked());
+        let keep = store.answer_disguised(kept, true);
+        let kept_item = keep.and_then(|e| store.apply(e).cloned());
+        let drop = store.answer_disguised(dropped, false);
+        let dropped_item = drop.and_then(|e| store.apply(e).cloned());
+        let left: Vec<bool> = files.iter().map(|f| f.exists()).collect();
+        let named = dir.join("a.sh").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(kept_item.is_some_and(|d| d.status == Status::Done && d.path == dir.join("a.sh")));
+        assert!(dropped_item.is_some_and(|d| d.status == Status::Cancelled));
+        assert_eq!(left, [false, false]);
+        assert!(named, "сохранённый файл не получил своё имя");
     }
 
     #[test]

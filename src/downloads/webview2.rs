@@ -39,7 +39,7 @@ use webview2_com::{
 use windows_core::{BOOL, HSTRING, Interface, PWSTR};
 use wry::{WebView, WebViewExtWindows};
 
-use super::{DownloadEvent, DownloadId, Outcome, next_id, unique_path};
+use super::{DownloadEvent, DownloadId, Outcome, has_type, next_id, unique_path};
 use crate::{events::UserEvent, tabs::TabId};
 
 /// Как часто отправлять прогресс в интерфейс.
@@ -235,6 +235,11 @@ unsafe fn on_starting(
         let mut raw = PWSTR::null();
         args.ResultFilePath(&mut raw)?;
         let mut path = PathBuf::from(take_pwstr(raw));
+        // Путь предлагает движок: файл кладём только в «Загрузки», от пути — имя.
+        if let Some(inside) = into_downloads(&path) {
+            path = inside;
+            args.SetResultFilePath(&HSTRING::from(path.as_os_str()))?;
+        }
         let resumed = TRACKED.with(|t| {
             t.borrow()
                 .iter()
@@ -314,7 +319,12 @@ unsafe fn on_starting(
                 && !is_risky(&path)
                 && super::program_inside(&path)
             {
-                DownloadEvent::Disguised { id, path, received }
+                DownloadEvent::Disguised {
+                    id,
+                    path,
+                    received,
+                    program: true,
+                }
             } else {
                 DownloadEvent::Finished {
                     id,
@@ -404,6 +414,19 @@ unsafe fn on_check(
     Ok(())
 }
 
+/// Путь в «Загрузках» вместо предложенного `path`, если тот лежит не прямо в них.
+/// WebView2 и сам чистит имя от `..` и разделителей, но проверять — нам.
+fn into_downloads(path: &Path) -> Option<PathBuf> {
+    let dir = super::folder()?;
+    let name = path.file_name().filter(|n| !n.is_empty());
+    match (name, path.parent()) {
+        (Some(_), Some(parent)) if same_file(parent, &dir) => None,
+        (name, _) => Some(unique_path(
+            &dir.join(name.unwrap_or_else(|| std::ffi::OsStr::new("download"))),
+        )),
+    }
+}
+
 /// Один и тот же путь для Windows: `/` вместо `\`, префикс `\\?\` (`\\?\UNC\`)
 /// и регистр латинских букв не важны. Остальной регистр не сравниваем: лучше
 /// не узнать загрузку (тогда решает Edge), чем спросить о чужой.
@@ -425,16 +448,6 @@ fn is_risky(path: &Path) -> bool {
 
 fn is_quiet(path: &Path) -> bool {
     has_type(path, QUIET)
-}
-
-/// Расширение файла есть в списке `types`.
-fn has_type(path: &Path, types: &str) -> bool {
-    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-        return false;
-    };
-    types
-        .split_ascii_whitespace()
-        .any(|t| t.eq_ignore_ascii_case(ext))
 }
 
 /// Получено байт и сколько всего (если сервер прислал размер).

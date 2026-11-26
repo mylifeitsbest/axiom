@@ -21,6 +21,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -55,6 +56,9 @@ MAX_ROWS_PER_SLOT = 50
 # Сколько держать десятиминутные ячейки: на них «сейчас», часы и лента.
 RECENT_KEEP = timedelta(hours=48)
 SLOT_MIN = 10
+# Одновременных соединений не больше: каждое — свой поток, и медленные клиенты
+# (прислали Content-Length и молчат до таймаута) иначе съели бы память сервера.
+MAX_CONNECTIONS = 64
 
 
 def db():
@@ -833,6 +837,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def handle(self):
+        # Клиент закрыл соединение, не дождавшись ответа (браузер закрыли посреди
+        # отправки), — это не ошибка сервера, и трассировка в журнале не нужна.
+        try:
+            super().handle()
+        except (ConnectionError, TimeoutError):
+            self.close_connection = True
+
     def drain(self, length, cap=1 << 20):
         left = min(length, cap)
         while left > 0:
@@ -888,9 +900,42 @@ class Handler(BaseHTTPRequestHandler):
     do_HEAD = do_GET
 
 
+class Server(ThreadingHTTPServer):
+    """Поток на соединение, но не больше MAX_CONNECTIONS сразу: лишние
+    соединения закрываются без ответа, а не копят потоки."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, limit=MAX_CONNECTIONS, **kwargs):
+        self.slots = threading.BoundedSemaphore(limit)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+    def handle_error(self, request, client_address):
+        # Обрыв соединения клиентом — обычное дело, остальное — в журнал.
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
     init()
-    srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    srv = Server((HOST, PORT), Handler)
     print(f"axiom-stats на http://{HOST}:{PORT} (база {DB})", flush=True)
     srv.serve_forever()
 

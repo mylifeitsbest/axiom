@@ -1,0 +1,34 @@
+# Проверка зависимостей: `cargo deny check advisories bans sources`.
+# Её же запускает CI (.github/workflows/ci.yml): известная уязвимость в любом
+# крейте из Cargo.lock, заброшенный или отозванный крейт, крейт не из crates.io
+# остановят сборку, пока их не разберут здесь.
+
+[graph]
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+
+[advisories]
+# Уязвимости и unsound-код ищем во всех крейтах. Заброшенность — только у прямых
+# зависимостей: их выбираем мы, а пометки «unmaintained» у чужих транзитивных
+# крейтов выходят часто и иначе останавливали бы каждую бету. Известная сейчас —
+# proc-macro-error (RUSTSEC-2024-0370): работает только при сборке, приходит
+# с макросами gtk-rs 0.18 и уйдёт вместе с ними.
+unmaintained = "workspace"
+unsound = "all"
+yanked = "deny"
+ignore = [
+    # glib 0.18: unsound итератор VariantStrIter. Приходит с gtk 0.18, на котором
+    # стоят tao и wry, и уйдёт с их переходом на gtk-rs 0.20+. Сам Axiom
+    # VariantStrIter не вызывает. Только Linux.
+    { id = "RUSTSEC-2024-0429", reason = "glib 0.18 держат tao/wry; VariantStrIter не используется" },
+]
+
+[bans]
+# Разные версии одного крейта — обычное дело для tao/wry/windows; это не запрет.
+multiple-versions = "allow"
+wildcards = "deny"
+# Локальный пакет без версии (path) — только сам axiom.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

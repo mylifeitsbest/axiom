@@ -162,13 +162,9 @@ pub const SCRIPT: &str = r#"(() => {
   Object.defineProperty(W, '__axiomMedia', { value: (a, ...args) => quiet(() => (a ? act(String(a), args) : info())) ?? null });
 })();"#;
 
-/// Скрипт для вкладок этой платформы: на Linux островок вкладки не трогает
-/// (громкость там тоже выключена, а WebKitGTK вживую не проверен).
-pub const PAGE_SCRIPT: &str = if cfg!(target_os = "linux") {
-    ""
-} else {
-    SCRIPT
-};
+/// Скрипт для вкладок: на всех платформах. На Linux по нему островок узнаёт, что играет
+/// видео, и жмёт кнопки страницы; видео внутри островка там нет (см. `tabs::mini`).
+pub const PAGE_SCRIPT: &str = SCRIPT;
 
 /// Спросить страницу, что играет (ответ — [`Info::parse`]).
 pub const QUERY: &str =

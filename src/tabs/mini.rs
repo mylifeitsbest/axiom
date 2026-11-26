@@ -195,7 +195,7 @@ pub fn watch(shared: Handle, done: impl FnOnce() + Send + 'static) {
     });
 }
 
-/// Linux: островок видео не показывает (см. `tabs::media::PAGE_SCRIPT`).
+/// Linux: видео в островке нет — ни обрезки webview по форме, ни курсора на Wayland.
 #[cfg(not(windows))]
 pub fn watch(_shared: Handle, done: impl FnOnce() + Send + 'static) {
     done();

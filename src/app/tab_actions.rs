@@ -267,9 +267,13 @@ impl App {
             return;
         }
         let webview = self.tabs.get(id).and_then(|t| t.webview.as_ref());
-        let (Some(webview), Some(_), false) =
-            (webview, self.island_dock, self.tabs.active == Some(id))
-        else {
+        // Видео в островке — только Windows (см. `tabs::mini`).
+        let (Some(webview), Some(_), false, true) = (
+            webview,
+            self.island_dock,
+            self.tabs.active == Some(id),
+            cfg!(windows),
+        ) else {
             self.send(&ToUi::Peek {
                 id,
                 on: false,

@@ -206,8 +206,8 @@ function createPanels(ax) {
           ${row('Кнопки навигации', 'Назад, вперёд, обновить', toggle('data-key', 'showNav'))}
           ${row('Кнопка ИИ', 'Панель открывается и по Ctrl+K', toggle('data-key', 'showAiBtn'))}
           ${row('Островок', 'Чёлка сверху: видео на других вкладках и загрузки', toggle('data-key', 'island'))}
-          ${row('Видео в островке', 'Навели мышь на чёлку — из неё вылетает видео той вкладки', toggle('data-key', 'islandVideo'))}
-          ${row('Кнопка «Видео в окне»', 'В островке: видео в отдельное окошко, его можно таскать и закрыть', toggle('data-key', 'islandPip'))}
+          ${row('Видео в островке', 'Навели мышь на чёлку — из неё вылетает видео той вкладки', toggle('data-key', 'islandVideo'), 'id="islVideoRow"')}
+          ${row('Кнопка «Видео в окне»', 'В островке: видео в отдельное окошко, его можно таскать и закрыть', toggle('data-key', 'islandPip'), 'id="islPipRow"')}
           ${row('Островок при вкладках сбоку', 'Сверху — над страницей, в панели — над вкладками', '<span class="seg" data-key="islandSide"><button data-v="top">Сверху</button><button data-v="panel">В панели</button></span>', 'data-show="layout=side"')}
           ${row('Полный адрес', 'Иначе — только домен', toggle('data-key', 'fullUrl'))}
         </div>
@@ -354,6 +354,8 @@ function createPanels(ax) {
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
       $('#forceDarkRow').hidden = sys.platform !== 'windows';
       $('#gpuRow').hidden = sys.platform !== 'linux';
+      $('#islVideoRow').hidden = !win;
+      $('#islPipRow').hidden = !win;
       ax.translate.syncSheet();
     }
   }

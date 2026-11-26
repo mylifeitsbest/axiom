@@ -276,6 +276,11 @@
     style.textContent = cssCut ? '' : css;
   }
 
+  // Видео из чёлки и «Видео в окне» — только Windows: на Linux чёлка с кнопками и загрузками.
+  function configureIsland() {
+    const win = SYS.platform === 'windows';
+    isl.configure({ enabled: A.island !== false, video: win && A.islandVideo !== false, pip: win && A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide });
+  }
   function applyAppearance() {
     const mode =A.mode === 'system' ? (darkScheme.matches ? 'dark' : 'light') : (A.mode === 'light' ? 'light' : 'dark');
     root.dataset.mode = mode;
@@ -298,7 +303,7 @@
     applyUserCss(A.customCss);
     renderDs();
     place();
-    isl.configure({ enabled: A.island !== false, video: A.islandVideo !== false, pip: A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide });
+    configureIsland();
     dl.reposition();
     upd.reposition();
     renderOmni();
@@ -1111,7 +1116,7 @@
       $('[data-win=maximize]').title = S.maximized ? 'Восстановить' : 'Развернуть';
       renderCaps();
     },
-    system(m) { SYS = { ...SYS, ...(m.status || {}) }; panels.onSystem(); newtab.onSystem(); },
+    system(m) { SYS = { ...SYS, ...(m.status || {}) }; panels.onSystem(); newtab.onSystem(); configureIsland(); },
     imported(m) { panels.onImported(m); newtab.onImported(m); },
     installed(m) { panels.onInstalled(m); },
     downloads(m) { dl.onList(m); isl.onDownloads(m); },

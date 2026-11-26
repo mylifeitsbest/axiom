@@ -63,7 +63,7 @@ TOKEN_RE = re.compile(r"[0-9a-f]{32}")
 ANSWERS = {"fixed": "исправлено", "reply": "ответ"}
 MAX_ANSWER_TEXT = 2000
 MAX_ANSWER_BODY = 32 * 1024
-MAX_ASK_BODY = 2048
+MAX_ASK_BODY = 4096
 # Сколько ключей браузер спрашивает за раз (своих сообщений у него не больше).
 MAX_ASK = 16
 
@@ -82,6 +82,20 @@ TEXT_PREVIEW = 64 * 1024
 FILE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif",
               "video/mp4", "video/webm", "video/x-matroska", "text/plain; charset=utf-8"}
 HEIC_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1"}
+
+# Сообщения из Axiom, который ещё не давал ключа ответа (до 0.6.1-beta.151). Отправителя
+# узнаёт его же браузер — по тому, что есть только у него: последние строки запуска
+# из журнала («=== Axiom 0.6.1-beta.148 · windows · 2026-11-26 18:39:13 UTC ===»),
+# а без журнала — строка о системе и час отправки. Сервер раздаёт лишь хэши с солью
+# (`old`), браузер сверяет их со своим журналом и забирает ответ (`c`): сообщение
+# получает ключ и дальше живёт как новое.
+HEADER_RE = re.compile(r"=== Axiom \S+ · \S+ · \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC ===")
+OLD_HEADERS = 3
+MAX_CLAIMS = 2
+MAX_CLAIM_TEXT = 600
+MAX_OLD = 50
+# Текст сообщения, который браузер получит вместе с ответом («Вы писали…»).
+KEEP_TEXT = 600
 
 # Ограничение частоты по IP: (запросов, за секунд). Браузер пингует раз в час,
 # а отчёты шлёт редко — больше бывает только у накрутки. Об ответах спрашивает
@@ -454,15 +468,101 @@ def room_for(length):
 
 
 def check_ask(payload):
-    """Вопрос браузера «есть ли ответы»: {"t": [ключи]}. Вернуть ключи или None."""
+    """Вопрос браузера: {"t": [ключи], "old": true, "c": [{"id": n, "p": "…"}]}.
+    Вернуть (ключи, нужны ли старые, заявки на старые) или None."""
     if not isinstance(payload, dict):
         return None
-    tokens = payload.get("t")
+    tokens = payload.get("t", [])
     if not isinstance(tokens, list) or len(tokens) > MAX_ASK:
         return None
     if not all(isinstance(t, str) and TOKEN_RE.fullmatch(t) for t in tokens):
         return None
-    return list(dict.fromkeys(tokens))
+    old = payload.get("old", False)
+    claims = payload.get("c", [])
+    if not isinstance(old, bool) or not isinstance(claims, list) or len(claims) > MAX_CLAIMS:
+        return None
+    for c in claims:
+        if not (isinstance(c, dict) and isinstance(c.get("id"), int) and not isinstance(c.get("id"), bool)
+                and isinstance(c.get("p"), str) and len(c["p"]) <= MAX_CLAIM_TEXT):
+            return None
+    return list(dict.fromkeys(tokens)), old, [(c["id"], c["p"]) for c in claims]
+
+
+def old_salt(id_):
+    """Соль хэшей старого сообщения: своя у каждого и не угадывается без ключа панели."""
+    return hmac.new(KEY.encode(), f"old:{int(id_)}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def fp_hash(salt, preimage):
+    return hashlib.sha256((salt + preimage).encode("utf-8")).hexdigest()
+
+
+def old_fingerprints(text, log, at):
+    """По чему браузер узнает своё старое сообщение: (k, [прообразы]). k > 0 — последние
+    k строк запуска из журнала одной строкой; k = 0 — строка о системе и час отправки."""
+    heads = [line.strip() for line in log.splitlines() if HEADER_RE.fullmatch(line.strip())]
+    if heads:
+        last = heads[-OLD_HEADERS:]
+        return len(last), ["h|" + "\n".join(last)]
+    first = text.lstrip().split("\n", 1)[0].strip()
+    if first.startswith("Axiom ") and " · " in first and len(at) >= 13:
+        return 0, [f"a|{first}|{at[:13]}"]
+    return 0, []
+
+
+def message_text(text):
+    """Что написал человек — без служебной строки «Axiom … · система · движок»."""
+    text = text.strip()
+    first, _, rest = text.partition("\n")
+    if first.startswith("Axiom ") and " · " in first:
+        text = rest
+    return text.strip()[:KEEP_TEXT]
+
+
+def old_answers():
+    """Ответы на старые сообщения, которые ещё никто не забрал: только хэши, без текста."""
+    since = (utcnow() - REPORTS_KEEP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    con = db()
+    rows = con.execute(
+        """SELECT id, at, text, log FROM reports WHERE kind='user' AND token IS NULL
+           AND ans IS NOT NULL AND at>=? ORDER BY id DESC LIMIT ?""", (since, MAX_OLD)).fetchall()
+    con.close()
+    out = []
+    for id_, at, text, log in rows:
+        k, pre = old_fingerprints(text, log, at)
+        if pre:
+            salt = old_salt(id_)
+            out.append({"id": id_, "s": salt, "k": k, "h": [fp_hash(salt, p) for p in pre]})
+    return out
+
+
+def claim(claims):
+    """Браузер узнал своё старое сообщение: выдать ему ключ, ответ и текст сообщения.
+    Забрать можно один раз — потом сообщение спрашивают по ключу, как новое."""
+    out = {}
+    now = utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    con = db()
+    with con:
+        for id_, p in claims:
+            row = con.execute(
+                """SELECT at, kind, text, log, token, ans, ans_text, ans_v, ans_at
+                   FROM reports WHERE id=?""", (id_,)).fetchone()
+            if not row:
+                continue
+            at, kind, text, log, token, ans, ans_text, ans_v, ans_at = row
+            if kind != "user" or token or not ans:
+                continue
+            _, pre = old_fingerprints(text, log, at)
+            if not any(hmac.compare_digest(p.encode(), x.encode()) for x in pre):
+                continue
+            token = secrets.token_hex(16)
+            cur = con.execute("UPDATE reports SET token=?, ans_got=? WHERE id=? AND token IS NULL",
+                              (token, now, id_))
+            if cur.rowcount == 1:
+                out[str(id_)] = {"token": token, "sent": at, "msg": message_text(text),
+                                 "s": ans, "text": ans_text or "", "v": ans_v or "", "at": ans_at or ""}
+    con.close()
+    return out
 
 
 def answers(tokens):
@@ -504,9 +604,9 @@ def set_answer(id_, form):
     if not row:
         con.close()
         return "Нет такого отчёта"
-    if row[0] != "user" or not row[1]:
+    if row[0] != "user":
         con.close()
-        return "На этот отчёт ответить нельзя"
+        return "Ответить можно только на сообщение человека"
     with con:
         if s == "clear":
             con.execute(
@@ -658,7 +758,7 @@ def dashboard(nonce=""):
            HAVING a>0 ORDER BY a DESC""", (t,)).fetchall()
     # Отчёты об ошибках: свежие сверху и сколько каких пришло за сутки.
     s["reports"] = con.execute(
-        """SELECT r.id, r.at, r.kind, r.v, r.os, substr(r.text, 1, 2000), r.token IS NOT NULL,
+        """SELECT r.id, r.at, r.kind, r.v, r.os, substr(r.text, 1, 2000), 1,
                   r.ans, r.ans_got,
                   (SELECT COUNT(*) FROM report_files f WHERE f.report = r.id)
            FROM reports r ORDER BY r.id DESC LIMIT 30""").fetchall()
@@ -908,20 +1008,30 @@ REPORT_CSS = """
 """
 
 
-def answer_html(id_, kind, token, ans, ans_text, ans_v, ans_at, ans_got, error=None, form=None):
+def answer_html(id_, kind, token, ans, ans_text, ans_v, ans_at, ans_got, error=None, form=None,
+                old=(0, [])):
     """Раздел «Ответ человеку» на странице отчёта: что уже ответили и форма."""
     err = f'<p class="err">{escape(error)}</p>' if error else ""
     if kind != "user":
         return err
-    if not token:
+    k, pre = old
+    note = ""
+    if not token and not pre:
         return (f'<h2>Ответ человеку</h2>{err}<p class="muted">Ответить нельзя: сообщение пришло '
-                'из Axiom, который ещё не умел получать ответы.</p>')
+                'из старого Axiom без журнала и без строки о системе — не по чему узнать отправителя.</p>')
+    if not token:
+        how = ("по строкам запуска из журнала" if k else
+               "по версии, системе и часу отправки (журнал не приложен — узнается менее надёжно)")
+        note = ('<p class="muted">Сообщение из Axiom, который ещё не давал ключа ответа. Ответ дойдёт, '
+                'когда человек обновится до 0.6.1-beta.152 или новее: его браузер узнает своё сообщение '
+                f'{how}, пока они есть в журнале.</p>')
     now = ""
     if ans:
         when = f'<time data-utc="{escape(ans_at or "")}">{escape((ans_at or "").replace("T", " "))}</time>'
         got = (f'Браузер забрал ответ <time data-utc="{escape(ans_got)}">{escape(ans_got.replace("T", " "))}</time> — '
                'человек его видит.' if ans_got else
-               'Браузер ещё не забрал ответ: он спрашивает раз в 20 минут, пока Axiom открыт.')
+               'Браузер ещё не забрал ответ: он спрашивает раз в 20 минут, пока Axiom открыт.' if token else
+               'Браузер ещё не узнал своё сообщение.')
         ver = f" · версия {escape(ans_v)}" if ans_v else ""
         body = f'<pre class="text">{escape(ans_text)}</pre>' if ans_text else ""
         now = (f'<div class="ans-now"><b>Ответ: {escape(ANSWERS.get(ans, ans))}</b>{ver} · {when}<br>'
@@ -934,7 +1044,7 @@ def answer_html(id_, kind, token, ans, ans_text, ans_v, ans_at, ans_got, error=N
         for k, label in (("fixed", "Исправлено"), ("reply", "Ответ")))
     clear = '<button class="ghost" name="do" value="clear">Убрать ответ</button>' if ans else ""
     return f"""<h2>Ответ человеку</h2>
-  <div class="box">{err}{now}
+  <div class="box">{err}{note}{now}
   <form method="post" action="{report_href(id_)}" accept-charset="utf-8">
     <div class="opts">{opts}</div>
     <input type="text" name="v" value="{escape(f.get("v", ""))}" maxlength="40"
@@ -1006,7 +1116,8 @@ def report_page(id_, nonce="", error=None, form=None):
         return None
     _, at, kind, v, os_, text, log, *answer = row
     what = REPORT_KINDS.get(kind, kind)
-    answer = answer_html(id_, kind, *answer, error=error, form=form)
+    answer = answer_html(id_, kind, *answer, error=error, form=form,
+                         old=old_fingerprints(text, log, at))
     log_html = (f'<pre class="log">{escape(log)}</pre>' if log.strip()
                 else '<p class="muted">Журнал не приложен.</p>')
     nav = (f'<a href="{report_href(newer)}">← новее</a>' if newer else "<span></span>") + \
@@ -1326,10 +1437,16 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             return self._send(400, b"bad")
         if path == "/a":
-            tokens = check_ask(payload)
-            if tokens is None:
+            ask = check_ask(payload)
+            if ask is None:
                 return self._send(400, b"bad")
-            out = json.dumps({"answers": answers(tokens)}, ensure_ascii=False).encode("utf-8")
+            tokens, old, claims = ask
+            reply = {"answers": answers(tokens)}
+            if old:
+                reply["old"] = old_answers()
+            if claims:
+                reply["claimed"] = claim(claims)
+            out = json.dumps(reply, ensure_ascii=False).encode("utf-8")
             return self._send(200, out, "application/json; charset=utf-8")
         if path == "/p":
             ok = isinstance(payload, dict) and record(payload)

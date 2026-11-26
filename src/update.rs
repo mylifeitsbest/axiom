@@ -94,8 +94,7 @@ impl Version {
         Self(major, minor, patch, beta)
     }
 
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn new(major: u32, minor: u32, patch: u32, beta: Option<u32>) -> Self {
+    pub const fn new(major: u32, minor: u32, patch: u32, beta: Option<u32>) -> Self {
         Self(major, minor, patch, beta)
     }
 

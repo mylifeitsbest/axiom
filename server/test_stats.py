@@ -257,23 +257,93 @@ class Server(unittest.TestCase):
         self.assertEqual(self.request("POST", "/r", report(kind="crash", token=self.TOKEN))[0], 204)
         crash = self.last_id()
         self.assertEqual(self.answer(rid, key="wrong", s="fixed")[0], 404)
+        # На старое сообщение (без ключа) ответить можно: его браузер узнает его по журналу.
+        self.assertEqual(self.answer(no_token, s="fixed")[0], 303)
+        self.assertEqual(self.answer(no_token, s="fixed", do="clear")[0], 303)
         self.assertEqual(self.answer(999999, s="fixed")[0], 404)
         for fields in ({"s": "hack"}, {"s": "reply"}, {"s": "fixed", "v": "0.6"},
                        {"s": "fixed", "text": "x" * (stats.MAX_ANSWER_TEXT + 1)}):
             status, page, _ = self.answer(rid, **fields)
             self.assertEqual(status, 400, fields)
             self.assertIn('class="err"', page)
-        self.assertIn("ответить нельзя", self.answer(no_token, s="fixed")[1])
-        self.assertIn("ответить нельзя", self.answer(crash, s="fixed")[1])
-        self.assertIn("ещё не умел", self.request("GET", f"/d/{KEY}/r/{no_token}")[1])
+        self.assertIn("только на сообщение человека", self.answer(crash, s="fixed")[1])
+        self.assertIn("ещё не давал ключа", self.request("GET", f"/d/{KEY}/r/{no_token}")[1])
         self.assertEqual(self.ask(self.TOKEN), {})
 
     def test_bad_answer_questions_are_refused(self):
         bad = [{"t": "x"}, {"t": ["XYZ"]}, {"t": [5]}, {"t": ["a" * 32] * (stats.MAX_ASK + 1)},
-               [self.TOKEN], {}]
+               [self.TOKEN], {"old": 1}, {"c": [{"id": "1", "p": "x"}]}, {"c": [{"id": True, "p": "x"}]},
+               {"c": [{"id": 1, "p": "x" * (stats.MAX_CLAIM_TEXT + 1)}]},
+               {"c": [{"id": 1, "p": "x"}] * (stats.MAX_CLAIMS + 1)}]
         for body in bad:
             self.assertEqual(self.request("POST", "/a", body)[0], 400, repr(body)[:60])
         self.assertEqual(self.request("GET", "/a")[0], 404)
+
+    # ---------- старые сообщения: без ключа, узнаются по журналу ----------
+
+    HEADS = [f"=== Axiom 0.6.1-beta.14{i} · windows · 2026-11-26 1{i}:00:0{i} UTC ===" for i in range(4)]
+
+    def ask_full(self, **body):
+        status, text, _ = self.request("POST", "/a", body)
+        self.assertEqual(status, 200, text)
+        return json.loads(text)
+
+    def test_old_message_is_claimed_by_its_journal(self):
+        log = "\n".join(f"\n{h}\nсистема: Windows 11" for h in self.HEADS) + "\nещё строка\n"
+        text = "Axiom 0.6.1-beta.143 · Windows 11 · WebView2 158\n\nДобавьте «Что нового»"
+        self.assertEqual(self.request("POST", "/r", report(kind="user", text=text, log=log))[0], 204)
+        rid = self.last_id()
+        # Без ответа старых сообщений в списке нет; с ответом — только хэши, без текста.
+        self.assertEqual(self.ask_full(old=True)["old"], [])
+        self.assertIn("ждёт ответа", self.request("GET", f"/d/{KEY}")[1])
+        self.assertEqual(self.answer(rid, s="fixed", v="0.6.1-beta.152", text="Сделали")[0], 303)
+        self.assertIn("Браузер ещё не узнал", self.request("GET", f"/d/{KEY}/r/{rid}")[1])
+        reply = self.ask_full(old=True)
+        self.assertNotIn("Что нового", json.dumps(reply, ensure_ascii=False))
+        self.assertNotIn("old", self.ask_full())
+        [entry] = reply["old"]
+        self.assertEqual((entry["id"], entry["k"]), (rid, 3))
+        right = "h|" + "\n".join(self.HEADS[-3:])
+        self.assertEqual(entry["h"], [stats.fp_hash(entry["s"], right)])
+
+        # Чужой журнал не подходит; свой — выдаёт ключ, ответ и текст сообщения, один раз.
+        wrong = "h|" + "\n".join(self.HEADS[:3])
+        self.assertEqual(self.ask_full(c=[{"id": rid, "p": wrong}])["claimed"], {})
+        got = self.ask_full(c=[{"id": rid, "p": right}])["claimed"][str(rid)]
+        self.assertTrue(stats.TOKEN_RE.fullmatch(got["token"]))
+        self.assertEqual((got["msg"], got["s"], got["v"], got["text"]),
+                         ("Добавьте «Что нового»", "fixed", "0.6.1-beta.152", "Сделали"))
+        self.assertTrue(got["sent"].startswith("20"))
+        self.assertEqual(self.ask_full(c=[{"id": rid, "p": right}])["claimed"], {})
+        self.assertEqual(self.ask_full(old=True)["old"], [])
+        # Дальше — как новое сообщение: по ключу, с отметкой «забрал».
+        self.assertEqual(self.ask(got["token"])[got["token"]]["text"], "Сделали")
+        self.assertIn("исправлено ✓", self.request("GET", f"/d/{KEY}")[1])
+
+    def test_old_message_without_journal_is_found_by_system_and_hour(self):
+        text = "Axiom 0.6.1-beta.137 · Windows 11 (сборка 26200) · WebView2 158\n\nбез журнала"
+        self.assertEqual(self.request("POST", "/r", report(kind="user", text=text, log=""))[0], 204)
+        rid = self.last_id()
+        self.assertEqual(self.answer(rid, s="reply", text="Уточните")[0], 303)
+        [entry] = self.ask_full(old=True)["old"]
+        self.assertEqual(entry["k"], 0)
+        con = stats.db()
+        at = con.execute("SELECT at FROM reports WHERE id=?", (rid,)).fetchone()[0]
+        con.close()
+        right = f"a|{text.splitlines()[0]}|{at[:13]}"
+        self.assertEqual(entry["h"], [stats.fp_hash(entry["s"], right)])
+        self.assertIn("менее надёжно", self.request("GET", f"/d/{KEY}/r/{rid}")[1])
+        self.assertEqual(self.ask_full(c=[{"id": rid, "p": right}])["claimed"][str(rid)]["msg"], "без журнала")
+
+    def test_salt_depends_on_the_dashboard_key(self):
+        self.assertNotEqual(stats.old_salt(1), stats.old_salt(2))
+        saved = stats.KEY
+        stats.KEY = "other"
+        try:
+            other = stats.old_salt(1)
+        finally:
+            stats.KEY = saved
+        self.assertNotEqual(other, stats.old_salt(1))
 
     # ---------- ограничение частоты ----------
 

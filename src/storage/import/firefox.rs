@@ -34,6 +34,25 @@ fn has_places(dir: &Path) -> bool {
     dir.join("places.sqlite").is_file()
 }
 
+/// Папка профиля — внутри папки Firefox или домашней папки. Свой путь
+/// (`IsRelative=0`) Firefox разрешает, но подправленный profiles.ini не должен
+/// уводить импорт в любое место диска: по адресу из него Axiom копирует
+/// и открывает базу SQLite. Ссылки раскрываются до сравнения.
+fn allowed(dir: &Path, root: &Path) -> bool {
+    let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
+    within(dir, [Some(root), home.as_deref()].into_iter().flatten())
+}
+
+/// `dir` (после раскрытия ссылок) лежит в одной из папок `bases`.
+fn within<'a>(dir: &Path, bases: impl IntoIterator<Item = &'a Path>) -> bool {
+    let Ok(dir) = fs::canonicalize(dir) else {
+        return false;
+    };
+    bases
+        .into_iter()
+        .any(|base| fs::canonicalize(base).is_ok_and(|base| dir.starts_with(base)))
+}
+
 /// Профиль, который открывает установленный Firefox (`[Install…]`), иначе
 /// отмеченный `Default=1`, иначе любой с данными.
 pub(super) fn profile(root: &Path) -> Option<Profile> {
@@ -76,7 +95,7 @@ pub(super) fn profile(root: &Path) -> Option<Profile> {
         .into_iter()
         .chain(profiles.iter().filter(|p| p.2).map(|p| p.0.clone()))
         .chain(profiles.iter().map(|p| p.0.clone()))
-        .find(|dir| has_places(dir))?;
+        .find(|dir| has_places(dir) && allowed(dir, root))?;
     let with_data = profiles.iter().filter(|p| has_places(&p.0)).count();
     let name = profiles
         .iter()
@@ -232,6 +251,31 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn profile_stays_inside_known_folders() {
+        let base = temp("ff-within");
+        let root = base.join("firefox");
+        let inside = root.join("Profiles").join("a.default");
+        let outside = base.join("outside");
+        fs::create_dir_all(&inside).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        assert!(within(&inside, [root.as_path()]));
+        assert!(!within(&outside, [root.as_path()]));
+        // `..` в пути не выводит наружу: сравниваются раскрытые пути.
+        assert!(!within(
+            &root.join("Profiles").join("..").join("..").join("outside"),
+            [root.as_path()]
+        ));
+        assert!(!within(&root.join("missing"), [root.as_path()]));
+        #[cfg(unix)]
+        {
+            let link = root.join("Profiles").join("link");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert!(!within(&link, [root.as_path()]));
+        }
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

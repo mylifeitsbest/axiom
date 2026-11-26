@@ -1225,7 +1225,7 @@ impl App {
                 at: d.at,
                 exists: d.status != Status::Done || d.path.exists(),
                 ask: d.ask,
-                disguised: d.disguised,
+                disguised: d.disguised && d.program,
             })
             .collect();
         self.send(&ToUi::Downloads {

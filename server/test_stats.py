@@ -5,15 +5,19 @@
 Запуск из корня репозитория: python -m unittest discover -s server -v
 """
 
+import contextlib
 import http.client
+import io
 import json
 import os
+import socket
 import sqlite3
+import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
-from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stats  # noqa: E402
@@ -35,7 +39,7 @@ class Server(unittest.TestCase):
         stats.DB = os.path.join(cls.tmp.name, "test.db")
         stats.KEY = KEY
         stats.init()
-        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), stats.Handler)
+        cls.srv = stats.Server(("127.0.0.1", 0), stats.Handler)
         cls.port = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
 
@@ -421,6 +425,69 @@ class Online(unittest.TestCase):
         online = con.execute("SELECT online FROM recent").fetchone()[0]
         con.close()
         self.assertEqual(online, 4)
+
+
+
+class Connections(unittest.TestCase):
+    """Предел одновременных соединений и тихий обрыв клиентом."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        stats.DB = os.path.join(self.tmp.name, "test.db")
+        stats.init()
+        stats.LIMITERS = {p: stats.Limiter(*lim) for p, lim in stats.LIMITS.items()}
+        self.srv = stats.Server(("127.0.0.1", 0), stats.Handler, limit=2)
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.tmp.cleanup()
+
+    def health(self):
+        con = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            con.request("GET", "/health")
+            return con.getresponse().status
+        except (ConnectionError, http.client.HTTPException, OSError):
+            return None
+        finally:
+            con.close()
+
+    def slow(self):
+        """Клиент прислал заголовки с Content-Length и молчит."""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        s.sendall(b"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n")
+        return s
+
+    def test_slow_clients_do_not_pile_up_threads(self):
+        held = [self.slow(), self.slow()]
+        time.sleep(0.3)
+        # Оба места заняты: третье соединение закрывают, сервер не плодит потоки.
+        self.assertIsNone(self.health())
+        for s in held:
+            s.close()
+        # Места освободились — сервер отвечает как прежде.
+        for _ in range(50):
+            if self.health() == 200:
+                break
+            time.sleep(0.05)
+        self.assertEqual(self.health(), 200)
+
+    def test_client_that_hangs_up_leaves_no_traceback(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for _ in range(5):
+                # Тело не дослано, соединение оборвано (SO_LINGER с нулём шлёт RST):
+                # ответ сервера упирается в закрытый сокет.
+                s = self.slow()
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                             struct.pack("HH" if os.name == "nt" else "ii", 1, 0))
+                s.close()
+            time.sleep(0.5)
+            self.assertEqual(self.health(), 200)
+        self.assertNotIn("Traceback", err.getvalue())
 
 
 if __name__ == "__main__":

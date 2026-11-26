@@ -10,7 +10,7 @@ pub mod zoom;
 
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -57,19 +57,36 @@ impl Paths {
     }
 }
 
+/// Больше этого JSON из профиля не читаем. Настоящие файлы — килобайты,
+/// история на 5000 адресов — около мегабайта; подложенный файл в гигабайт
+/// (или ссылка на `/dev/zero`) забрал бы всю память ещё до запуска окна.
+const MAX_JSON: u64 = 32 << 20;
+
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
-    let bytes = fs::read(path).ok()?;
-    // Блокнот сохраняет UTF-8 с BOM — serde_json такое не принимает.
-    let json = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
-    match serde_json::from_slice(json) {
-        Ok(value) => Some(value),
-        Err(_) => {
-            // Битый файл (сбой питания, опечатка при ручной правке) иначе молча
-            // заменился бы пустым при следующем сохранении. Откладываем его в сторону.
-            let _ = fs::rename(path, path.with_extension("json.bad"));
-            None
-        }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(MAX_JSON + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let parsed = if bytes.len() as u64 > MAX_JSON {
+        eprintln!(
+            "{}: больше {} МБ, не читаем",
+            path.display(),
+            MAX_JSON >> 20
+        );
+        None
+    } else {
+        // Блокнот сохраняет UTF-8 с BOM — serde_json такое не принимает.
+        let json = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+        serde_json::from_slice(json).ok()
+    };
+    if parsed.is_none() {
+        // Битый или огромный файл (сбой питания, опечатка при ручной правке) иначе
+        // молча заменился бы пустым при следующем сохранении. Откладываем его в сторону.
+        let _ = fs::rename(path, path.with_extension("json.bad"));
     }
+    parsed
 }
 
 /// Атомарная запись: сначала во временный файл, затем переименование.
@@ -84,6 +101,10 @@ pub fn write_json_compact<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 
 fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
+    // Оставшийся от сбоя `.json.tmp` (или подложенную на его месте ссылку на чужой
+    // файл) убираем: удаляется сама ссылка, а не то, на что она ведёт. Новую,
+    // если её успеют подложить снова, [`create_private`] не откроет.
+    let _ = fs::remove_file(&tmp);
     let mut file = create_private(&tmp).with_context(|| format!("запись {}", tmp.display()))?;
     file.write_all(bytes)
         .with_context(|| format!("запись {}", tmp.display()))?;
@@ -116,7 +137,8 @@ pub fn private_dir(path: &Path) -> io::Result<()> {
 }
 
 /// Файл в профиле, который читает только владелец: на Unix `0600`.
-/// Существующий файл обрезается, как у [`fs::File::create`].
+/// Существующий файл обрезается, как у [`fs::File::create`]. Символьную ссылку
+/// на Linux не открываем (`O_NOFOLLOW`): запись не уйдёт в чужой файл.
 pub fn create_private(path: &Path) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -157,6 +179,8 @@ mod owner {
 
     pub fn file_mode(options: &mut fs::OpenOptions) {
         options.mode(FILE);
+        #[cfg(target_os = "linux")]
+        options.custom_flags(libc::O_NOFOLLOW);
     }
 
     pub fn fix_file(file: &fs::File) {
@@ -204,8 +228,56 @@ pub fn now_secs() -> u64 {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn huge_file_is_set_aside() {
+        let root = std::env::temp_dir().join(format!("axiom-json-huge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("history.json");
+        let mut big = vec![b' '; (MAX_JSON + 1) as usize];
+        big[0] = b'[';
+        big[MAX_JSON as usize] = b']';
+        fs::write(&file, &big).unwrap();
+        drop(big);
+        let read: Option<Vec<u8>> = read_json(&file);
+        let aside = root.join("history.json.bad").exists();
+        let _ = fs::remove_dir_all(&root);
+        assert!(read.is_none());
+        assert!(
+            aside,
+            "огромный файл должен уйти в .json.bad, а не пропасть"
+        );
+    }
+
+    #[test]
+    fn stale_tmp_is_replaced() {
+        let root = std::env::temp_dir().join(format!("axiom-json-tmp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("settings.json");
+        fs::write(root.join("settings.json.tmp"), b"old").unwrap();
+        #[cfg(unix)]
+        let victim = {
+            // Ссылка на месте временного файла: запись не должна уйти в чужой файл.
+            let victim = root.join("victim");
+            fs::write(&victim, b"keep").unwrap();
+            let _ = fs::remove_file(root.join("settings.json.tmp"));
+            std::os::unix::fs::symlink(&victim, root.join("settings.json.tmp")).unwrap();
+            victim
+        };
+        write_json(&file, &vec![1, 2, 3]).unwrap();
+        let back: Option<Vec<u8>> = read_json(&file);
+        #[cfg(unix)]
+        let untouched = fs::read(&victim).unwrap();
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(back, Some(vec![1, 2, 3]));
+        #[cfg(unix)]
+        assert_eq!(untouched, b"keep");
+    }
 
     #[test]
     fn broken_file_is_set_aside() {

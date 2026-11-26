@@ -264,14 +264,15 @@ pub fn build_child(builder: WebViewBuilder<'_>, window: &Window) -> wry::Result<
 }
 
 #[cfg(target_os = "linux")]
+thread_local! {
+    static FIXED: std::cell::RefCell<Option<gtk::Fixed>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(target_os = "linux")]
 fn gtk_container(window: &Window) -> gtk::Fixed {
     use gtk::prelude::*;
-    use std::cell::RefCell;
     use tao::platform::unix::WindowExtUnix;
 
-    thread_local! {
-        static FIXED: RefCell<Option<gtk::Fixed>> = const { RefCell::new(None) };
-    }
     FIXED.with(|cell| {
         cell.borrow_mut()
             .get_or_insert_with(|| {
@@ -305,6 +306,63 @@ pub fn set_bounds(webview: &WebView, rect: Rect) {
     {
         let _ = webview.set_bounds(rect);
     }
+}
+
+/// Как [`set_bounds`], но webview может свисать за правый и нижний край окна (там его
+/// просто не видно): островок с видео ставит вкладку её же размера левым верхним углом
+/// под чёлку, и сайт не перестраивает страницу. На Linux размер всё равно не больше окна.
+pub fn set_bounds_hanging(webview: &WebView, rect: Rect) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        use wry::WebViewExtUnix;
+        let widget = webview.webview().upcast::<gtk::Widget>();
+        let scale = f64::from(widget.scale_factor());
+        let (x, y) = rect.position.to_logical::<i32>(scale).into();
+        let (w, h) = rect.size.to_logical::<i32>(scale).into();
+        gtk_place::remember(&widget, gtk_place::Place::Hang(x, y, w, h));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = webview.set_bounds(rect);
+    }
+}
+
+/// Поднимает webview над остальными (остров с видео — над страницей и интерфейсом).
+pub fn raise(webview: &WebView) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        use wry::WebViewExtUnix;
+        // У webview WebKitGTK своё окно GDK: его место в стопке — порядок рисования и
+        // того, кто ловит мышь.
+        let widget = webview.webview().upcast::<gtk::Widget>();
+        if widget.has_window()
+            && let Some(window) = widget.window()
+        {
+            window.raise();
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    set_behind(webview, false);
+}
+
+/// Где курсор: логические px от угла окна, как у интерфейса; `None` — курсор не над
+/// окном браузера. На Wayland координат экрана нет, но где курсор над своим окном, GDK
+/// знает всегда.
+#[cfg(target_os = "linux")]
+pub fn pointer() -> Option<(f64, f64)> {
+    use gtk::prelude::*;
+    let fixed = FIXED.with(|c| c.borrow().clone())?;
+    let window = fixed.window()?;
+    let pointer = window.display().default_seat()?.pointer()?;
+    // Курсор ушёл с окна: на Wayland у указателя больше нет нашего окна, на X11 под
+    // курсором чужое.
+    pointer.window_at_position().0?;
+    let (_, x, y, _) = window.device_position_double(&pointer);
+    // У GtkFixed нет своего окна: его угол — в окне родителя.
+    let a = fixed.allocation();
+    Some((x - f64::from(a.x()), y - f64::from(a.y())))
 }
 
 /// Интерфейс на всё окно. На Linux он просто растягивается вместе с контейнером:
@@ -361,6 +419,17 @@ fn fit(rect: (i32, i32, i32, i32), size: (i32, i32)) -> (i32, i32, i32, i32) {
     (x, y, w.clamp(1, cw - x), h.clamp(1, ch - y))
 }
 
+/// Как [`fit`], но размер ограничен только размером контейнера: webview может свисать за
+/// его правый и нижний край (остров с видео, см. [`set_bounds_hanging`]). Буфер кадра
+/// WebKitGTK от этого не больше окна.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn hang(rect: (i32, i32, i32, i32), size: (i32, i32)) -> (i32, i32, i32, i32) {
+    let (x, y, w, h) = rect;
+    let (cw, ch) = (size.0.max(1), size.1.max(1));
+    let (x, y) = (x.clamp(0, cw - 1), y.clamp(0, ch - 1));
+    (x, y, w.clamp(1, cw), h.clamp(1, ch))
+}
+
 /// Linux: места webview в общем `gtk::Fixed`.
 ///
 /// `set_bounds` у wry для webview в GtkFixed только разово вызывает `size_allocate`,
@@ -383,6 +452,9 @@ mod gtk_place {
         Fill,
         /// x, y, ширина, высота в логических пикселях от угла контейнера.
         At(i32, i32, i32, i32),
+        /// То же, но может свисать за правый и нижний край (остров с видео); за окном
+        /// не тянется — его место пришлёт заново `redock_mini`.
+        Hang(i32, i32, i32, i32),
     }
 
     /// Место webview и размер контейнера, для которого оно посчитано.
@@ -434,11 +506,12 @@ mod gtk_place {
         let now = (parent.width(), parent.height());
         let (x, y, w, h) = match place {
             Place::Fill => (0, 0, now.0, now.1),
-            Place::At(x, y, w, h) => {
-                base.map_or((x, y, w, h), |base| super::follow((x, y, w, h), base, now))
-            }
+            Place::At(x, y, w, h) => super::fit(
+                base.map_or((x, y, w, h), |base| super::follow((x, y, w, h), base, now)),
+                now,
+            ),
+            Place::Hang(x, y, w, h) => super::hang((x, y, w, h), now),
         };
-        let (x, y, w, h) = super::fit((x, y, w, h), now);
         // У GtkFixed нет своего окна: координаты детей — от угла родительского окна.
         let rect = gtk::Allocation::new(parent.x() + x, parent.y() + y, w, h);
         widget.size_allocate(&rect);
@@ -517,7 +590,19 @@ pub fn is_playing_audio(_webview: &WebView) -> bool {
 
 #[cfg(test)]
 mod follow_tests {
-    use super::{fit, follow};
+    use super::{fit, follow, hang};
+
+    #[test]
+    fn island_tab_hangs_past_the_edge_but_not_bigger_than_the_window() {
+        // Вкладка своего размера, угол под чёлкой — свисает за правый край как есть.
+        assert_eq!(
+            hang((600, 30, 1000, 680), (1000, 720)),
+            (600, 30, 1000, 680)
+        );
+        // Больше окна не бывает (буфер кадра), угол — в окне.
+        assert_eq!(hang((-20, -5, 9000, 90000), (1000, 720)), (0, 0, 1000, 720));
+        assert_eq!(hang((10, 10, 0, -1), (0, 0)), (0, 0, 1, 1));
+    }
 
     #[test]
     fn place_stays_inside_the_container() {

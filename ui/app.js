@@ -44,7 +44,7 @@
   };
   const DEFAULTS = {
     preset: 'graphite', mode: 'dark', hue: 265, tint: 0.012, oled: false, accent: '#8b9cff',
-    layout: 'one', radius: 10, gap: 6, font: 'system', customFont: '', fontSize: 12.5, speed: 1,
+    layout: 'one', barPos: 'top', radius: 10, gap: 6, font: 'system', customFont: '', fontSize: 12.5, speed: 1,
     showNav: true, showAiBtn: true, fullUrl: false, customCss: '', aiWidth: 400, island: true, islandVideo: true, islandPip: true, islandCollapsed: false, islandSide: 'panel',
   };
   const FAV_COLORS = ['#7F77DD', '#1D9E75', '#D85A30', '#378ADD', '#D4537E', '#BA7517', '#639922', '#534AB7'];
@@ -108,7 +108,15 @@
   const tr = createTranslate({ esc, send, speed, setOverlay, toast: (t) => toast(t) });
 
   // ---------- меню вкладки (ui/tabmenu.js) ----------
-  const tm = createTabMenu({ send, ms, setOverlay, NEWTAB, tabs: () => S.tabs, canRestore: () => S.canRestore, volume: () => SYS.platform !== 'linux' });
+  const tm = createTabMenu({
+    send, ms, setOverlay, NEWTAB, tabs: () => S.tabs, canRestore: () => S.canRestore, volume: () => SYS.platform !== 'linux',
+    // Меню панели: перенести её к другому краю окна или открыть раскладку.
+    barDown: () => barDown(),
+    bar(what) {
+      if (what === 'move') setA('barPos', barDown() ? 'top' : 'bottom');
+      else if (what === 'layout') openSettings('layout');
+    },
+  });
   // ---------- ссылки на приложения (ui/applink.js) ----------
   const xap = createAppLink({ esc, send, setOverlay });
 
@@ -130,10 +138,13 @@
   document.addEventListener('error', (e) => { if (e.target.matches?.('img.fi')) e.target.remove(); }, true);
 
   // ---------- раскладка ----------
+  // Панель (вкладки и адресная строка) у нижнего края окна — для одной и двух строк.
+  function barDown() { return A.layout !== 'side' && A.barPos === 'bottom'; }
   let placed = '';
   function place() {
     const l = A.layout;
     app.dataset.layout = l;
+    app.dataset.bar = A.barPos === 'bottom' ? 'bottom' : 'top';
     if (l === placed) { queueLayout(); return; }
     placed = l;
     const [nav, tabs, omni, acts, wc, grow] = ['#nav', '#tabs', '#omni', '#acts', '#wc', '#growA'].map((s) => $(s));
@@ -282,7 +293,7 @@
   // не заходит на страницу (`overPage`), иначе она спряталась бы до серого фона.
   function configureIsland() {
     const win = SYS.platform === 'windows';
-    isl.configure({ enabled: A.island !== false, video: win && A.islandVideo !== false, pip: win && A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide, overPage: SYS.platform !== 'linux' });
+    isl.configure({ enabled: A.island !== false, video: win && A.islandVideo !== false, pip: win && A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide, down: barDown(), overPage: SYS.platform !== 'linux' });
   }
   function applyAppearance() {
     const mode =A.mode === 'system' ? (darkScheme.matches ? 'dark' : 'light') : (A.mode === 'light' ? 'light' : 'dark');
@@ -567,11 +578,19 @@
     el.addEventListener('pointercancel', up);
   });
   $('#tablist').addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
-  // Правый клик по вкладке — её меню (ui/tabmenu.js).
+  // Правый клик по вкладке — её меню (ui/tabmenu.js), по пустому месту панели — меню панели.
   $('#tablist').addEventListener('contextmenu', (e) => {
     const el = e.target.closest('.tab');
+    // Пустое место ряда вкладок — меню панели (ниже); в боковой панели меню нет.
+    if (!el && A.layout !== 'side') return;
     e.preventDefault();
     if (el && !el.classList.contains('out')) tm.open(+el.dataset.id, e.clientX, e.clientY);
+  });
+  document.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented || A.layout === 'side') return;
+    if (!e.target.closest('#row1, #row2') || e.target.closest('button,input,textarea,select,.tab,.omni,.wc,[data-nodrag]')) return;
+    e.preventDefault();
+    tm.open(null, e.clientX, e.clientY);
   });
   $('#newTabBtn').addEventListener('click', () => send({ cmd: 'new_tab' }));
 
@@ -737,7 +756,13 @@
     const r = (own ? omni : newtab.anchor()).getBoundingClientRect();
     const w = Math.min(Math.max(r.width, own ? 460 : 0), innerWidth - 16);
     const left = Math.min(Math.max(8, r.left), innerWidth - 8 - w);
-    Object.assign($('#sug').style, { left: Math.round(left) + 'px', top: Math.round(r.bottom + 6) + 'px', width: Math.round(w) + 'px' });
+    const el = $('#sug');
+    // Панель снизу — список над адресной строкой.
+    const up = own && barDown();
+    el.classList.toggle('up', up);
+    el.style.width = Math.round(w) + 'px';
+    const top = up ? r.top - 6 - el.offsetHeight : r.bottom + 6;
+    Object.assign(el.style, { left: Math.round(left) + 'px', top: Math.round(top) + 'px' });
   }
   function showSug() {
     const el = $('#sug');

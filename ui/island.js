@@ -47,6 +47,7 @@ function createIsland(ax) {
   let showPip = true; // кнопка «видео в окне»
   let collapsed = false; // свёрнут в полоску
   let sidePlace = 'panel'; // вкладки сбоку: 'panel' — в боковой панели, 'top' — над страницей
+  let barDown = false; // панель у нижнего края окна: чёлка над страницей
   // Раскрытый островок может зайти на страницу: под ним снимок страницы (Windows).
   // На Linux снимков нет — см. `inline`.
   let overPage = true;
@@ -353,9 +354,9 @@ function createIsland(ax) {
   }
 
   // ---------- где островок ----------
-  // 'bar' — чёлка в ряду вкладок (одна и две строки), 'top' — чёлка над страницей,
-  // 'panel' — карточка в боковой панели (вкладки сбоку).
-  const mode = () => (ax.layout() !== 'side' ? 'bar' : sidePlace === 'top' ? 'top' : 'panel');
+  // 'bar' — чёлка в ряду вкладок (одна и две строки), 'top' — чёлка над страницей
+  // (и когда панель у нижнего края окна), 'panel' — карточка в боковой панели (вкладки сбоку).
+  const mode = () => (ax.layout() !== 'side' ? (barDown ? 'top' : 'bar') : sidePlace === 'top' ? 'top' : 'panel');
   // Раскрытый вниз список зашёл бы на страницу, а снимка под ним нет (Linux): чёлка в
   // ряду вкладок и над страницей раскрывается вширь (`setWide`), карточка в боковой
   // панели — вниз, как обычно (страницу она не задевает).
@@ -754,14 +755,15 @@ function createIsland(ax) {
     // Настройки: островок, видео из чёлки, кнопка «видео в окне», свёрнут ли он; может ли
     // раскрытый островок зайти на страницу (есть ли под ним снимок — нет на Linux).
     configure(o) {
-      const was = [enabled, showVideo, showPip, collapsed, sidePlace, overPage].join();
+      const was = [enabled, showVideo, showPip, collapsed, sidePlace, barDown, overPage].join();
       enabled = o.enabled !== false;
       showVideo = o.video !== false;
       showPip = o.pip !== false;
       collapsed = !!o.collapsed;
       sidePlace = o.side === 'top' ? 'top' : 'panel';
+      barDown = !!o.down;
       overPage = o.overPage !== false;
-      if ([enabled, showVideo, showPip, collapsed, sidePlace, overPage].join() !== was) {
+      if ([enabled, showVideo, showPip, collapsed, sidePlace, barDown, overPage].join() !== was) {
         el.querySelector('.isl-r').dataset.k = '';
         sync();
       }

@@ -28,7 +28,11 @@ function createAppLink(ax) {
     panel.style.width = w + 'px';
     const visible = r && r.width > 0 && r.bottom > 0;
     const left = visible ? Math.min(Math.max(8, r.left), innerWidth - 8 - w) : (innerWidth - w) / 2;
-    Object.assign(panel.style, { left: left + 'px', top: (visible ? r.bottom + 8 : 56) + 'px' });
+    // Панель у нижнего края окна — окошко над адресной строкой.
+    const up = visible && r.top > innerHeight / 2;
+    panel.classList.toggle('up', up);
+    const top = !visible ? 56 : up ? r.top - 8 - panel.offsetHeight : r.bottom + 8;
+    Object.assign(panel.style, { left: left + 'px', top: Math.round(top) + 'px' });
   }
 
   function open(m) {

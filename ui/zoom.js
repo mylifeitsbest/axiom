@@ -72,7 +72,8 @@ function createZoom(ax) {
     const h = panel.offsetHeight;
     const right = Math.min(innerWidth, page.right) - 8;
     const left = Math.round(Math.max(8, Math.min(r.right + 6 - w, right - w)));
-    const top = Math.round(Math.max(r.bottom + 8, page.top + 6));
+    // Панель у нижнего края окна (лупа ниже страницы) — окошко над лупой.
+    const top = Math.round(r.top >= page.bottom - 1 ? Math.min(r.top - 8 - h, page.bottom - 6 - h) : Math.max(r.bottom + 8, page.top + 6));
     Object.assign(panel.style, { left: left + 'px', top: top + 'px' });
     return { x: left, y: top, w, h };
   }

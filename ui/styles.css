@@ -55,6 +55,10 @@ input,textarea,select{font:inherit;color:inherit}
 [data-layout=side] .side{display:flex}
 .side-top{display:flex;align-items:center;gap:2px;height:32px;flex:none}
 .content{position:relative;flex:1;min-width:0;background:var(--pg);border-radius:var(--r);overflow:hidden;transition:background-color var(--d3),border-radius var(--d2),margin-top var(--d3) var(--e)}
+/* Панель снизу (одна и две строки): тот же каркас, перевёрнутый — страница сверху,
+   под ней адресная строка, у нижнего края окна — вкладки. */
+.app[data-bar=bottom]:not([data-layout=side]){flex-direction:column-reverse}
+.app[data-bar=bottom]:not([data-layout=side]) .main{padding:var(--gap) var(--gap) 0}
 
 /* ---------- кнопки ---------- */
 .nav{display:flex;gap:1px}
@@ -149,6 +153,7 @@ input,textarea,select{font:inherit;color:inherit}
 
 /* ---------- подсказки ---------- */
 .sug{position:fixed;z-index:20;display:flex;flex-direction:column;padding:5px;background:var(--s1);border-radius:calc(var(--r) + 2px);box-shadow:var(--shadow);opacity:0;transform:translateY(-4px) scale(.985);transform-origin:top center;pointer-events:none;transition:opacity var(--d2) var(--e),transform var(--d2) var(--e)}
+.sug.up{transform:translateY(4px) scale(.985);transform-origin:bottom center}
 .sug.on{opacity:1;transform:none;pointer-events:auto}
 .si{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:calc(var(--r)*.75);color:var(--t2);min-width:0}
 .si .i{color:var(--t3)}
@@ -387,6 +392,12 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .lmini[data-l=side] .t{display:none}
 .lmini[data-l=side] .s{display:block;left:6px;top:6px;bottom:6px;width:26%;background:var(--s3)}
 .lmini[data-l=side] .p{left:calc(26% + 12px);top:6px}
+/* Панель снизу — и на карточках одной и двух строк. */
+[data-bar=bottom] .lmini[data-l=one] .t{top:calc(100% - 15px)}
+[data-bar=bottom] .lmini[data-l=one] .p{top:6px;bottom:21px}
+[data-bar=bottom] .lmini[data-l=two] .t{top:calc(100% - 12px)}
+[data-bar=bottom] .lmini[data-l=two] .p{top:6px;bottom:26px}
+[data-bar=bottom] .lmini[data-l=two]::after{top:calc(100% - 22px)}
 .lcards.compact .ln small{display:none}
 .lcards.compact .lmini{height:56px}
 
@@ -417,6 +428,35 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .pvw[data-l=two] .pvw-bar{height:40px;flex-wrap:wrap;align-content:space-between}
 .pvw[data-l=two] .pvw-tabs{flex:1 0 70%}
 .pvw[data-l=two] .pvw-omni{flex:1 0 60%;order:3}
+.pvw[data-bar=bottom]:not([data-l=side]){flex-direction:column-reverse}
+.pvw[data-bar=bottom][data-l=two] .pvw-bar{flex-wrap:wrap-reverse}
+
+/* Где панель: макет окна, панель на нём можно перетащить вверх или вниз (ui/settings.js). */
+.bpos-row .sl{flex:1}
+.bpos-row .seg{align-self:flex-start;margin-top:10px}
+.bpos{position:relative;width:216px;height:128px;flex:none;border-radius:calc(var(--r) + 2px);background:var(--bg);box-shadow:inset 0 0 0 1px var(--line);overflow:hidden;touch-action:none;user-select:none}
+.bpos i,.bpos b{display:block}
+.bpos-page{position:absolute;left:8px;right:8px;top:32px;bottom:8px;display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:calc(var(--r)*.7);background:var(--pg);transition:top var(--d3) var(--e),bottom var(--d3) var(--e)}
+.bpos-page b{height:6px;border-radius:3px;background:var(--s2)}
+.bpos-page b:first-child{width:42%;height:8px;background:var(--acc);opacity:.85}
+.bpos-page b:last-child{width:62%}
+[data-bar=bottom] .bpos-page{top:8px;bottom:32px}
+/* Пока панель тянут, страница расступается: видны оба места, куда её можно поставить. */
+.bpos.drag .bpos-page{top:32px;bottom:32px}
+.bpos-zone{position:absolute;left:4px;right:4px;height:28px;border-radius:calc(var(--r)*.7);box-shadow:inset 0 0 0 1.5px transparent;transition:box-shadow var(--d2),background-color var(--d2)}
+.bpos-zone.t{top:2px}
+.bpos-zone.b{bottom:2px}
+.bpos.drag .bpos-zone{box-shadow:inset 0 0 0 1.5px var(--line)}
+.bpos.drag .bpos-zone.hot{box-shadow:inset 0 0 0 1.5px var(--acc);background:color-mix(in oklab,var(--acc) 12%,transparent)}
+.bpos-bar{position:absolute;left:6px;right:6px;top:6px;height:22px;z-index:1;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:calc(var(--r)*.6);cursor:grab;transition:top var(--d3) var(--e),background-color var(--d2),box-shadow var(--d2)}
+[data-bar=bottom] .bpos-bar{top:calc(100% - 28px)}
+.bpos-bar:hover,.bpos-bar:focus-visible{background:var(--s1)}
+.bpos.drag .bpos-bar{cursor:grabbing;background:var(--s1);box-shadow:var(--shadow);transition:none}
+.bpos-bar .n{width:16px;height:6px;border-radius:3px;background:var(--s3)}
+.bpos-bar .tb{width:22px;height:14px;border-radius:calc(var(--r)*.45);background:var(--s2)}
+.bpos-bar .tb.on{width:38px;background:var(--s3)}
+.bpos-bar .o{flex:1;height:14px;margin-left:6px;border-radius:calc(var(--r)*.5);background:var(--s2)}
+.bpos-bar .d{width:7px;height:7px;border-radius:50%;background:var(--acc)}
 
 /* ---------- лист настроек ---------- */
 .main{position:relative}
@@ -424,6 +464,7 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
    вкладке спрятана), а полоса вкладок остаётся на виду и в боковой раскладке. */
 .sheet{position:absolute;top:0;left:var(--gap);right:var(--gap);bottom:var(--gap);z-index:15;display:none}
 [data-layout=side] .sheet{top:var(--gap);left:calc(var(--gap)*2 + var(--side-w))}
+.app[data-bar=bottom]:not([data-layout=side]) .sheet{top:var(--gap);bottom:0}
 .sheet.on{display:block;animation:sheetIn var(--d3) var(--e) both}
 @keyframes sheetIn{from{opacity:0;transform:translateY(10px) scale(.985)}}
 .sheet-card{display:grid;grid-template-columns:232px minmax(0,1fr);height:100%;background:var(--s1);border-radius:calc(var(--r) + 4px);overflow:hidden;box-shadow:var(--shadow)}
@@ -615,6 +656,7 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .tr.in{animation:pop var(--d3) var(--sp) both}
 .omni.focus .tr,.omni.find .tr{display:none}
 .trp{padding:12px 6px 8px;transform-origin:top center}
+.dlp.trp.up{transform-origin:bottom center}
 .trp-head{display:flex;align-items:center;gap:10px;padding:0 8px}
 .trp-ic{width:32px;height:32px;display:grid;place-items:center;flex:none;border-radius:calc(var(--r)*.75);background:color-mix(in oklab,var(--acc) 16%,transparent);color:var(--acc)}
 .trp-ic .i{width:18px;height:18px}
@@ -651,6 +693,7 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 
 /* ---------- ссылки на приложения (ui/applink.js) ---------- */
 .xap{padding:12px 6px 10px;transform-origin:top left}
+.dlp.xap.up{transform-origin:bottom left}
 .xap .trp-head{align-items:flex-start}
 .xap .trp-t{flex:1}
 .xap .trp-t b{line-height:1.35;overflow-wrap:anywhere}

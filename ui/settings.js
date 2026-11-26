@@ -193,6 +193,11 @@ function createPanels(ax) {
   const preview = () => `<div class="pvw" id="pvw"><div class="pvw-bar"><i class="pvw-nav"></i><span class="pvw-tabs"><i class="on"></i><i></i><i></i></span><i class="pvw-omni"></i><i class="pvw-dot"></i></div>
     <div class="pvw-main"><i class="pvw-side"><b></b><b></b><b></b></i><i class="pvw-page"><b></b><b></b><b></b><b></b></i><i class="pvw-ai"><b></b><b></b></i></div></div>`;
 
+  // Макет окна для «Где панель»: панель хватают и тянут к верхнему или нижнему краю.
+  const barPreview = () => `<span class="bpos" id="bpos" data-bar="top"><i class="bpos-zone t"></i><i class="bpos-zone b"></i>
+    <i class="bpos-page"><b></b><b></b><b></b></i>
+    <span class="bpos-bar" role="button" tabindex="0" aria-label="Панель. Потяните вверх или вниз, стрелки и Enter тоже переносят"><i class="n"></i><i class="tb on"></i><i class="tb"></i><i class="o"></i><i class="d"></i></span></span>`;
+
   // ---------- лист настроек ----------
   function build() {
     const S = {
@@ -223,6 +228,13 @@ function createPanels(ax) {
         </div>`,
       layout: `
         <div class="lcards">${layoutCards()}</div>
+        <div data-show="layout!=side"><h4>Панель</h4><div class="card">
+          <div class="srow bpos-row" data-kw="панель снизу внизу сверху вверху перенести переместить перетащить">
+            <span class="sl"><b>Где панель</b><small>Вкладки и адресная строка — у верхнего или нижнего края окна. Потяните панель на макете или выберите здесь.</small>
+              <span class="seg" data-key="barPos"><button data-v="top">Сверху</button><button data-v="bottom">Снизу</button></span></span>
+            ${barPreview()}
+          </div>
+        </div></div>
         <h4>Форма</h4><div class="card">
           ${row('Скругления', '', `${range('min="0" max="18" step="1" data-key="radius"')}<output data-out="radius"></output>`)}
           ${row('Отступы', '0 — страница во всё окно', `${range('min="0" max="14" step="1" data-key="gap"')}<output data-out="gap"></output>`)}
@@ -381,7 +393,7 @@ function createPanels(ax) {
       $('#verNote').textContent = `Версия ${sys.version || ''} · Rust + ${win ? 'WebView2' : sys.platform === 'linux' ? 'WebKitGTK' : 'WebKit'}`;
       syncImportList(sys.browsers || []);
       const pv = $('#pvw');
-      if (pv) pv.dataset.l = ax.A.layout;
+      if (pv) { pv.dataset.l = ax.A.layout; pv.dataset.bar = ax.A.barPos === 'bottom' ? 'bottom' : 'top'; }
       $('#cssCut').hidden = !ax.cssCut();
       $('#siteScheme').textContent = ax.A.mode === 'system' ? 'Как в системе' : document.documentElement.dataset.mode === 'light' ? 'Светлая' : 'Тёмная';
       $('#forceDarkRow').hidden = sys.platform !== 'windows';
@@ -442,7 +454,14 @@ function createPanels(ax) {
     $$('[data-preset]', box).forEach((b) => b.classList.toggle('on', b.dataset.preset === A.preset));
     $$('[data-accent]', box).forEach((b) => b.classList.toggle('on', b.dataset.accent.toLowerCase() === String(A.accent).toLowerCase()));
     $$('[data-layout-pick]', box).forEach((b) => b.classList.toggle('on', b.dataset.layoutPick === A.layout));
-    $$('[data-show]', box).forEach((el) => { const [k, v] = el.dataset.show.split('='); el.hidden = String(A[k]) !== v; });
+    // data-show="ключ=значение" — строка видна при этом значении, «ключ!=значение» — при любом другом.
+    $$('[data-show]', box).forEach((el) => {
+      const [k, v] = el.dataset.show.split('=');
+      const not = k.endsWith('!');
+      el.hidden = (String(A[not ? k.slice(0, -1) : k]) === v) === not;
+    });
+    const bp = $('#bpos', box);
+    if (bp && !bp.classList.contains('drag')) bp.dataset.bar = A.barPos === 'bottom' ? 'bottom' : 'top';
     const so = $('#sleepOut', box);
     if (so) { const m = +B.sleep_minutes; so.textContent = m ? `Через ${m} мин без активности` : 'Никогда'; }
     const lo = $('#liveOut', box);
@@ -812,6 +831,16 @@ function createPanels(ax) {
       if (e.target.id === 'refCustomIn' && e.key === 'Enter') applyCustomReferer();
       if (e.target.id === 'nsIn' && e.key === 'Enter') addSleepSite();
     });
+    sheet.addEventListener('pointerdown', dragBar);
+    sheet.addEventListener('keydown', (e) => {
+      if (!e.target.matches?.('.bpos-bar')) return;
+      const now = ax.A.barPos === 'bottom' ? 'bottom' : 'top';
+      const to = e.key === 'ArrowDown' ? 'bottom' : e.key === 'ArrowUp' ? 'top'
+        : e.key === 'Enter' || e.key === ' ' ? (now === 'bottom' ? 'top' : 'bottom') : null;
+      if (!to) return;
+      e.preventDefault();
+      setBar(to, e.target);
+    });
     // Пузырёк над ползунком держится, пока бегунок тянут, даже если мышь ушла с ползунка.
     sheet.addEventListener('pointerdown', (e) => {
       const wrap = e.target.closest?.('.rng');
@@ -825,6 +854,61 @@ function createPanels(ax) {
       addEventListener('pointerup', up, true);
       addEventListener('pointercancel', up, true);
     });
+  }
+
+  // ---------- где панель: перетаскивание на макете ----------
+  // Панель на макете едет за мышью; отпустили ближе к нижнему краю — панель окна
+  // переезжает вниз (и наоборот). Щелчок без перетаскивания тоже переносит её.
+  function setBar(to, at) {
+    if (to === (ax.A.barPos === 'bottom' ? 'bottom' : 'top')) { sync(); return; }
+    const r = at.getBoundingClientRect();
+    ax.swap(() => { ax.A.barPos = to; ax.applyAppearance(); }, { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+    ax.saveSettings();
+  }
+  function dragBar(e) {
+    const bar = e.target.closest?.('.bpos-bar');
+    if (!bar || e.button !== 0) return;
+    e.preventDefault();
+    bar.focus({ preventScroll: true });
+    const box = bar.parentElement;
+    const zones = { top: $('.bpos-zone.t', box), bottom: $('.bpos-zone.b', box) };
+    const b = box.getBoundingClientRect();
+    const start = bar.getBoundingClientRect().top - b.top;
+    const min = 6;
+    const max = b.height - bar.offsetHeight - 6;
+    const y0 = e.clientY;
+    let moved = false;
+    let to = box.dataset.bar;
+    bar.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const dy = ev.clientY - y0;
+      if (!moved && Math.abs(dy) < 4) return;
+      moved = true;
+      box.classList.add('drag');
+      const y = Math.min(max, Math.max(min, start + dy));
+      bar.style.top = `${y}px`;
+      to = y + bar.offsetHeight / 2 > b.height / 2 ? 'bottom' : 'top';
+      zones.top.classList.toggle('hot', to === 'top');
+      zones.bottom.classList.toggle('hot', to === 'bottom');
+    };
+    const up = (ev) => {
+      bar.removeEventListener('pointermove', move);
+      bar.removeEventListener('pointerup', up);
+      bar.removeEventListener('pointercancel', up);
+      zones.top.classList.remove('hot');
+      zones.bottom.classList.remove('hot');
+      if (ev.type === 'pointercancel') to = box.dataset.bar;
+      else if (!moved) to = box.dataset.bar === 'bottom' ? 'top' : 'bottom';
+      // Панель доезжает до своего края плавно: перетаскивание снято, а она пока там,
+      // где её отпустили; в следующем кадре место ей даёт класс — и она едет.
+      box.classList.remove('drag');
+      box.dataset.bar = to;
+      requestAnimationFrame(() => { bar.style.top = ''; });
+      setBar(to, bar);
+    };
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', up);
+    bar.addEventListener('pointercancel', up);
   }
 
   // Настройки — отдельная вкладка без своего webview (им нужен IPC, а у вкладок его нет).

@@ -2,6 +2,8 @@
 // Меню вкладки по правому клику: перезагрузить, дублировать, звук и громкость,
 // «не усыплять» (вкладку или весь её сайт), закрыть эту, другие или те, что справа,
 // и вернуть закрытую.
+// Правый клик по пустому месту панели — меню самой панели: перенести её к другому
+// краю окна, открыть раскладку, вернуть закрытую вкладку.
 // Отсюда уходят только команда и номер вкладки (и громкость): что можно сделать, решает Rust.
 
 // Значок громкости: 0 % — без волн, ниже 100 % — одна волна.
@@ -24,6 +26,8 @@ function createTabMenu(ax) {
     close: 'close_tab', others: 'close_other_tabs', right: 'close_tabs_right',
   };
   let tabId = null;
+  // Меню панели, а не вкладки.
+  let onBar = false;
   let at = { x: 0, y: 0 };
   let sel = -1;
   let shown = '';
@@ -31,7 +35,18 @@ function createTabMenu(ax) {
   const isOpen = () => menu.classList.contains('on');
   const tab = () => ax.tabs().find((t) => t.id === tabId);
 
+  function barItems() {
+    const down = ax.barDown();
+    return [
+      { a: 'bar-move', ic: down ? 'up' : 'down', t: down ? 'Перенести панель наверх' : 'Перенести панель вниз' },
+      { a: 'bar-layout', ic: 'layout', t: 'Раскладка…' },
+      null,
+      { a: 'restore', ic: 'undo', t: 'Открыть закрытую вкладку', k: 'Ctrl+Shift+T', off: !ax.canRestore() },
+    ];
+  }
+
   function items(t) {
+    if (onBar) return barItems();
     const tabs = ax.tabs();
     const i = tabs.findIndex((x) => x.id === t.id);
     const page = t.url !== ax.NEWTAB;
@@ -139,8 +154,10 @@ function createTabMenu(ax) {
 
   function open(id, x, y) {
     openedAt = performance.now();
-    tabId = id;
-    const t = tab();
+    onBar = id == null;
+    tabId = onBar ? null : id;
+    menu.setAttribute('aria-label', onBar ? 'Панель' : 'Вкладка');
+    const t = onBar ? {} : tab();
     if (!t) { close(); return; }
     at = { x, y };
     sel = -1;
@@ -162,6 +179,7 @@ function createTabMenu(ax) {
     if (menu.contains(document.activeElement)) document.activeElement.blur();
     menu.classList.remove('on');
     tabId = null;
+    onBar = false;
     mark();
     ax.setOverlay('tabm', false);
   }
@@ -169,9 +187,9 @@ function createTabMenu(ax) {
   function run(a) {
     const id = tabId;
     close();
-    if (id == null) return;
-    if (a === 'restore') ax.send({ cmd: 'restore_tab' });
-    else if (COMMANDS[a]) ax.send({ cmd: COMMANDS[a], id });
+    if (a === 'restore') { ax.send({ cmd: 'restore_tab' }); return; }
+    if (a.startsWith('bar-')) { ax.bar(a.slice(4)); return; }
+    if (id != null && COMMANDS[a]) ax.send({ cmd: COMMANDS[a], id });
   }
 
   const enabled = () => Array.from(menu.querySelectorAll('.tm-i:not([disabled])'));
@@ -182,6 +200,7 @@ function createTabMenu(ax) {
   // Вкладку закрыли или она поменялась (звук, «не усыплять») — меню вслед за ней.
   function sync() {
     if (!isOpen()) return;
+    if (onBar) { render({}); place(); return; }
     const t = tab();
     if (!t) { close(); return; }
     render(t);

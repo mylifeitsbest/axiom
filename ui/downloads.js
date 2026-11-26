@@ -218,6 +218,12 @@ function createDownloads(ax) {
       // Вершина дуги ровно на высоте top, чтобы значок не ушёл за край окна.
       const top = Math.min(end[1], Math.max(14, end[1] - 24));
       ctrl = [start[0] + (end[0] - start[0]) * 0.4, top - Math.sqrt((start[1] - top) * (end[1] - top))];
+    } else if (end[1] > c.bottom) {
+      // Панель снизу: то же зеркально — значок опускается из-за нижнего края страницы
+      // и снизу входит в кнопку; низ дуги не уходит за край окна.
+      start = [clamp(end[0] - 150 - 20 * i, c.left + 30, c.right - 30), c.bottom - 18];
+      const low = Math.max(end[1], Math.min(innerHeight - 14, end[1] + 24));
+      ctrl = [start[0] + (end[0] - start[0]) * 0.4, low + Math.sqrt((low - start[1]) * (low - end[1]))];
     } else {
       // Боковая раскладка: вылетает из-за бокового края и сверху падает в кнопку.
       start = [end[0] < c.left ? c.left + 18 : c.right - 18, clamp(end[1] - 150 - 20 * i, c.top + 30, c.bottom - 30)];

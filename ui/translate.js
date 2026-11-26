@@ -87,7 +87,11 @@ function createTranslate(ax) {
     const w = Math.min(300, innerWidth - 16);
     panel.style.width = w + 'px';
     const left = Math.min(Math.max(8, r.left + r.width / 2 - w + 30), innerWidth - 8 - w);
-    Object.assign(panel.style, { left: Math.round(left) + 'px', top: Math.round(r.bottom + 8) + 'px' });
+    // Панель у нижнего края окна — окошко над кнопкой.
+    const up = r.top > innerHeight / 2;
+    panel.classList.toggle('up', up);
+    const top = up ? r.top - 8 - panel.offsetHeight : r.bottom + 8;
+    Object.assign(panel.style, { left: Math.round(left) + 'px', top: Math.round(top) + 'px' });
   }
   function open() {
     if (isOpen() || btn.hidden) return;

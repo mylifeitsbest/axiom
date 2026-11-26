@@ -1,4 +1,4 @@
-//! Тихий счётчик: раз в час Axiom шлёт на наш сервер всего несколько байт —
+//! Тихий счётчик: раз в час (на смене часа по UTC) Axiom шлёт на наш сервер всего несколько байт —
 //! версию, систему и флаги «первый запуск за день/неделю/месяц», «новая
 //! установка», «только что обновился» и «перенёс данные из другого браузера»
 //! (один раз на профиль, без названия браузера и без того, что перенесено).
@@ -23,9 +23,7 @@ use serde::{Deserialize, Serialize};
 /// чтобы проверить всё на локальном сервере. В release менять нельзя.
 const STATS_URL: &str = "https://179-254-172-240.sslip.io";
 
-/// Как часто отмечаться, пока браузер открыт.
-const EVERY: Duration = Duration::from_secs(60 * 60);
-/// Как часто проверять, не пора ли. Один долгий `sleep` не годится: на Windows
+/// Как часто проверять, не сменился ли час (отмечаемся раз в час по UTC). Один долгий `sleep` не годится: на Windows
 /// время в спящем режиме в таймаут не входит, и после пробуждения ноутбука
 /// первая отметка за день откладывалась бы почти на час.
 const POLL: Duration = Duration::from_secs(60);
@@ -41,6 +39,11 @@ struct State {
     day: String,
     week: String,
     month: String,
+    /// Час последней отметки ('2026-11-24T13', UTC). По флагу «первая отметка
+    /// в этом часу» сервер считает людей в браузере сейчас: без него он видел
+    /// только число пингов, и перезапуски раздували «сейчас» в разы.
+    #[serde(default)]
+    hour: String,
     /// Новая установка, о которой сервер ещё не узнал.
     #[serde(default)]
     new: bool,
@@ -99,6 +102,8 @@ struct Flags {
     d: bool,
     w: bool,
     m: bool,
+    /// Первая отметка в этом часу.
+    h: bool,
     /// Первая отметка на этой версии — значит, только что обновились.
     up: bool,
     /// Первая отметка за день на этой версии: по ней сервер считает, сколько
@@ -110,19 +115,20 @@ struct Flags {
     imo: bool,
 }
 
-fn flags(prev: &State, day: &str, week: &str, month: &str) -> Flags {
+fn flags(prev: &State, b: &Buckets) -> Flags {
     let up = match prev.ver.as_str() {
         // Старый формат файла: если в нём уже есть отметка — его писала
         // предыдущая версия, то есть сейчас первая отметка после обновления.
         "" => !prev.day.is_empty(),
         v => v != VERSION,
     };
-    let d = prev.day != day;
+    let d = prev.day != b.day;
     Flags {
         new: prev.new,
         d,
-        w: prev.week != week,
-        m: prev.month != month,
+        w: prev.week != b.week,
+        m: prev.month != b.month,
+        h: prev.hour != b.hour,
         up,
         vd: d || up,
         im: prev.import == Import::Pending,
@@ -219,16 +225,14 @@ pub fn start(profile_root: &Path) {
     thread::spawn(move || {
         thread::sleep(WARMUP);
         scan(&file);
-        let mut last: Option<(u64, String)> = None;
+        // Отмечаемся при запуске и на каждой смене часа. Раньше — через 60 минут
+        // от прошлой отметки, и открытый браузер мог «перепрыгнуть» целый час.
+        let mut last: Option<String> = None;
         loop {
-            let now = now_secs();
-            let day = buckets(now).0;
-            let due = last.as_ref().is_none_or(|(at, last_day)| {
-                *last_day != day || now < *at || now - at >= EVERY.as_secs()
-            });
-            if due {
+            let hour = buckets(now_secs()).hour;
+            if last.as_ref() != Some(&hour) {
                 tick(&file);
-                last = Some((now, day));
+                last = Some(hour);
             }
             thread::sleep(POLL);
         }
@@ -238,22 +242,23 @@ pub fn start(profile_root: &Path) {
 /// Один цикл: вычислить флаги, отправить, обновить файл состояния.
 fn tick(file: &Path) {
     let now = now_secs();
-    let (day, week, month) = buckets(now);
+    let b = buckets(now);
 
     let prev = {
         let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::storage::read_json::<State>(file).unwrap_or_default()
     };
-    let f = flags(&prev, &day, &week, &month);
+    let f = flags(&prev, &b);
 
     let body = format!(
-        "{{\"v\":\"{}\",\"os\":\"{}\",\"new\":{},\"d\":{},\"w\":{},\"m\":{},\"up\":{},\"vd\":{},\"im\":{},\"imo\":{}}}",
+        "{{\"v\":\"{}\",\"os\":\"{}\",\"new\":{},\"d\":{},\"w\":{},\"m\":{},\"h\":{},\"up\":{},\"vd\":{},\"im\":{},\"imo\":{}}}",
         VERSION,
         os_name(),
         f.new,
         f.d,
         f.w,
         f.m,
+        f.h,
         f.up,
         f.vd,
         f.im,
@@ -266,10 +271,17 @@ fn tick(file: &Path) {
         let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Импорт мог случиться, пока шла отправка: берём свежее значение.
         let cur = crate::storage::read_json::<State>(file).unwrap_or(prev);
+        let Buckets {
+            day,
+            week,
+            month,
+            hour,
+        } = b;
         let state = State {
             day,
             week,
             month,
+            hour,
             new: false,
             ver: VERSION.into(),
             import: if f.im || f.imo {
@@ -283,16 +295,27 @@ fn tick(file: &Path) {
     }
 }
 
-/// Ключи «день / неделя / месяц» по времени UTC. Недели считаем с понедельника
-/// (1970-01-01 — четверг, отсюда сдвиг +3). Сравниваются только между собой,
-/// на сервер уходят лишь булевы флаги.
-fn buckets(now: u64) -> (String, String, String) {
+/// Ключи «день / неделя / месяц / час» по времени UTC.
+#[derive(Debug, Clone, PartialEq)]
+struct Buckets {
+    day: String,
+    week: String,
+    month: String,
+    hour: String,
+}
+
+/// Недели считаем с понедельника (1970-01-01 — четверг, отсюда сдвиг +3).
+/// Ключи сравниваются только между собой, на сервер уходят лишь булевы флаги.
+fn buckets(now: u64) -> Buckets {
     let days = (now / SECS_PER_DAY) as i64;
     let (y, mo, d) = civil(days);
     let day = format!("{y:04}-{mo:02}-{d:02}");
-    let week = format!("w{}", (days + 3).div_euclid(7));
-    let month = format!("{y:04}-{mo:02}");
-    (day, week, month)
+    Buckets {
+        week: format!("w{}", (days + 3).div_euclid(7)),
+        month: format!("{y:04}-{mo:02}"),
+        hour: format!("{day}T{:02}", now % SECS_PER_DAY / 3600),
+        day,
+    }
 }
 
 /// Григорианская дата из числа дней с 1970-01-01 (алгоритм Хиннанта).
@@ -405,10 +428,21 @@ mod tests {
             day: day.into(),
             week: "w1".into(),
             month: "2026-11".into(),
+            hour: format!("{day}T10"),
             new: false,
             ver: ver.into(),
             import: Import::No,
             scanned: true,
+        }
+    }
+
+    /// Тот же час, что в `state()`.
+    fn at(day: &str) -> Buckets {
+        Buckets {
+            day: day.into(),
+            week: "w1".into(),
+            month: "2026-11".into(),
+            hour: format!("{day}T10"),
         }
     }
 
@@ -468,7 +502,7 @@ mod tests {
         let s: State = crate::storage::read_json(&file).unwrap();
         assert_eq!(s.import, Import::Earlier);
         assert!(s.scanned);
-        let f = flags(&s, "2026-11-25", "w1", "2026-11");
+        let f = flags(&s, &at("2026-11-25"));
         assert!(f.imo && !f.im);
 
         // Уже посчитанный профиль второй раз не всплывает.
@@ -488,14 +522,14 @@ mod tests {
             new: true,
             ..State::default()
         };
-        let f = flags(&prev, "2026-11-24", "w1", "2026-11");
-        assert!(f.new && f.d && f.w && f.m && f.vd);
+        let f = flags(&prev, &at("2026-11-24"));
+        assert!(f.new && f.d && f.w && f.m && f.h && f.vd);
         assert!(!f.up);
     }
 
     #[test]
     fn same_version_later_today_sends_nothing_new() {
-        let f = flags(&state("2026-11-24", VERSION), "2026-11-24", "w1", "2026-11");
+        let f = flags(&state("2026-11-24", VERSION), &at("2026-11-24"));
         assert_eq!(
             f,
             Flags {
@@ -503,6 +537,7 @@ mod tests {
                 d: false,
                 w: false,
                 m: false,
+                h: false,
                 up: false,
                 vd: false,
                 im: false,
@@ -512,12 +547,43 @@ mod tests {
     }
 
     #[test]
+    fn next_hour_is_flagged_once() {
+        let prev = state("2026-11-24", VERSION);
+        let mut b = at("2026-11-24");
+        assert!(
+            !flags(&prev, &b).h,
+            "перезапуск в том же часу — не новый человек"
+        );
+        b.hour = "2026-11-24T11".into();
+        let f = flags(&prev, &b);
+        assert!(f.h && !f.d);
+    }
+
+    #[test]
+    fn hour_key_is_utc_hour() {
+        // 2026-11-24 00:00 UTC + 13:59:59.
+        let b = buckets(1_795_478_400 + 13 * 3600 + 3599);
+        assert_eq!(b.day, "2026-11-24");
+        assert_eq!(b.hour, "2026-11-24T13");
+        assert_eq!(buckets(1_795_478_400).hour, "2026-11-24T00");
+    }
+
+    #[test]
+    fn file_without_hour_field_flags_the_hour() {
+        let s: State = serde_json::from_str(
+            r#"{"day":"2026-11-24","week":"w1","month":"2026-11","new":false,"ver":"0.5.4"}"#,
+        )
+        .unwrap();
+        assert!(flags(&s, &at("2026-11-24")).h);
+    }
+
+    #[test]
     fn import_is_sent_once() {
         let mut prev = state("2026-11-24", VERSION);
         prev.import = Import::Pending;
-        assert!(flags(&prev, "2026-11-24", "w1", "2026-11").im);
+        assert!(flags(&prev, &at("2026-11-24")).im);
         prev.import = Import::Sent;
-        assert!(!flags(&prev, "2026-11-24", "w1", "2026-11").im);
+        assert!(!flags(&prev, &at("2026-11-24")).im);
     }
 
     #[test]
@@ -534,14 +600,14 @@ mod tests {
 
     #[test]
     fn update_on_the_same_day_counts_for_the_new_version() {
-        let f = flags(&state("2026-11-24", "0.0.1"), "2026-11-24", "w1", "2026-11");
+        let f = flags(&state("2026-11-24", "0.0.1"), &at("2026-11-24"));
         assert!(f.up && f.vd);
         assert!(!f.d, "человек уже отметился сегодня на старой версии");
     }
 
     #[test]
     fn file_from_before_the_ver_field_means_update() {
-        let f = flags(&state("2026-11-23", ""), "2026-11-24", "w1", "2026-11");
+        let f = flags(&state("2026-11-23", ""), &at("2026-11-24"));
         assert!(f.up && f.d && f.vd);
     }
 
@@ -551,7 +617,7 @@ mod tests {
             ver: VER_BEFORE_STATS.into(),
             ..State::default()
         };
-        let f = flags(&prev, "2026-11-24", "w1", "2026-11");
+        let f = flags(&prev, &at("2026-11-24"));
         assert!(f.up && !f.new);
     }
 }

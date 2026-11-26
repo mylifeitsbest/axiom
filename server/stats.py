@@ -81,6 +81,12 @@ def init():
                 PRIMARY KEY(slot, v))"""
         )
         rcols = {r[1] for r in con.execute("PRAGMA table_info(recent)")}
+        # people — первые отметки профиля в этом часу (флаг h): по ним «сейчас»
+        # и график по часам считают людей, а не пинги. Старые браузеры флага не
+        # шлют, их пинги идут как есть.
+        if "people" not in rcols:
+            con.execute("ALTER TABLE recent ADD COLUMN people INTEGER DEFAULT 0")
+            con.execute("UPDATE recent SET people = pings")
         for col in ("imports", "imports_old"):
             if col not in rcols:
                 con.execute(f"ALTER TABLE recent ADD COLUMN {col} INTEGER DEFAULT 0")
@@ -118,6 +124,8 @@ def record(payload):
     d, new, up, im, imo = flag("d"), flag("new"), flag("up"), flag("im"), flag("imo")
     # До 0.4.0 браузер не слал vd; тогда «первый раз сегодня на этой версии» = d.
     vd = flag("vd") if "vd" in payload else d
+    # До 0.5.6 браузер не слал h: такой пинг не отличить от повторного, считаем как есть.
+    h = flag("h") if "h" in payload else 1
 
     now = utcnow()
     day, slot = day_key(now), slot_key(now)
@@ -145,13 +153,15 @@ def record(payload):
         )
         if not slot_full:
             con.execute(
-                """INSERT INTO recent(slot, v, pings, installs, updates, imports, imports_old)
-                   VALUES(?,?,1,?,?,?,?)
+                """INSERT INTO recent(slot, v, pings, people, installs, updates, imports,
+                                     imports_old)
+                   VALUES(?,?,1,?,?,?,?,?)
                    ON CONFLICT(slot, v) DO UPDATE SET
-                     pings=pings+1, installs=installs+excluded.installs,
+                     pings=pings+1, people=people+excluded.people,
+                     installs=installs+excluded.installs,
                      updates=updates+excluded.updates, imports=imports+excluded.imports,
                      imports_old=imports_old+excluded.imports_old""",
-                (slot, v, new, up, im, imo),
+                (slot, v, h, new, up, im, imo),
             )
         con.execute("DELETE FROM recent WHERE slot<?", (slot_key(now - RECENT_KEEP),))
     con.close()
@@ -164,6 +174,28 @@ def ver_key(v):
     return tuple(int(x) for x in v.split("."))
 
 
+def online(con, now, dau):
+    """Сколько людей в браузере сейчас.
+
+    Открытый браузер отмечается в начале каждого часа по UTC, и первая отметка
+    профиля в часу идёт с флагом h. Значит, за прошлый час видно всех, кто был
+    в браузере, а за текущий — всех, кто ещё открыт (они отметились в первые
+    минуты) и кто открыл его позже. Берём большее из двух: в начале часа
+    текущий ещё не набрался, к концу прошлый уже устарел.
+
+    Сверху ограничиваем числом людей за те сутки: пинги старых версий (без h)
+    дублируются при перезапусках, а людей в часу не больше, чем за весь день.
+    """
+    top = now.replace(minute=0, second=0, microsecond=0)
+    prev = top - timedelta(hours=1)
+    cur_n = q1(con, "SELECT SUM(people) FROM recent WHERE slot>=?", (slot_key(top),))
+    prev_n = q1(con, "SELECT SUM(people) FROM recent WHERE slot>=? AND slot<?",
+                (slot_key(prev), slot_key(top)))
+    prev_dau = dau if day_key(prev) == day_key(now) else q1(
+        con, "SELECT SUM(dau) FROM hits WHERE day=?", (day_key(prev),))
+    return max(min(cur_n, dau), min(prev_n, prev_dau))
+
+
 def dashboard():
     con = db()
     now = utcnow()
@@ -174,14 +206,12 @@ def dashboard():
     # человек, заходивший в обе недели (оба месяца), попадал бы дважды.
     week_start = day_key(now - timedelta(days=now.weekday()))
     month_start = now.strftime("%Y-%m-01")
-    # Открытый браузер отмечается раз в 60–61 минуту. Окно — от начала
-    # десятиминутки час назад, то есть 60–70 минут: каждый открытый попадёт.
-    hour_ago = slot_key(now - timedelta(hours=1))
+    dau = q1(con, "SELECT SUM(dau) FROM hits WHERE day=?", (t,))
 
     s = {
         "now": now,
-        "online": q1(con, "SELECT SUM(pings) FROM recent WHERE slot>=?", (hour_ago,)),
-        "dau": q1(con, "SELECT SUM(dau) FROM hits WHERE day=?", (t,)),
+        "online": online(con, now, dau),
+        "dau": dau,
         "wau": q1(con, "SELECT SUM(wau) FROM hits WHERE day>=?", (week_start,)),
         "mau": q1(con, "SELECT SUM(mau) FROM hits WHERE day>=?", (month_start,)),
         "pings_today": q1(con, "SELECT SUM(pings) FROM hits WHERE day=?", (t,)),
@@ -201,10 +231,10 @@ def dashboard():
     s["days"] = [(d, *rows.get(d, (0, 0))) for d in
                  (day_key(now - timedelta(days=i)) for i in range(29, -1, -1))]
 
-    # По часам за сутки: сколько отметок пришло в каждый час ≈ сколько
-    # браузеров было открыто.
+    # По часам за сутки: сколько людей было в браузере в каждый час. Каждый
+    # открытый браузер (0.5.6+) отмечается раз в час по UTC с флагом h.
     hours = {r[0]: r[1] for r in con.execute(
-        "SELECT substr(slot, 1, 13), SUM(pings) FROM recent GROUP BY 1")}
+        "SELECT substr(slot, 1, 13), SUM(people) FROM recent GROUP BY 1")}
     top = now.replace(minute=0, second=0, microsecond=0)
     s["hours"] = [(h, hours.get(h.strftime("%Y-%m-%dT%H"), 0)) for h in
                   (top - timedelta(hours=i) for i in range(23, -1, -1))]
@@ -371,7 +401,7 @@ def render(s):
     midnight = utc_iso(now.replace(hour=0, minute=0, second=0, microsecond=0))
 
     tiles = "".join([
-        tile(f'≈{s["online"]}', "Сейчас", "открывали браузер за последний час", True),
+        tile(s["online"], "Сейчас", "разных людей в браузере за последний час", True),
         tile(s["dau"], "Сегодня",
              f'разных людей с <time data-utc="{midnight}" data-fmt="hm">00:00 UTC</time>'),
         tile(s["wau"], "За неделю", week_sub),
@@ -469,8 +499,8 @@ def render(s):
   <div class="panel">{feed_html(s["feed"])}</div>
 
   <h2>По часам, последние сутки</h2>
-  <p class="hint">Сколько браузеров было открыто в каждый час. Открытый браузер отмечается раз в час,
-    поэтому столбик ≈ число людей. Последний столбик — текущий час, он ещё растёт.</p>
+  <p class="hint">Сколько разных людей было в браузере в каждый час. Перезапуски не считаются.
+    Последний столбик — текущий час, он ещё растёт.</p>
   <div class="panel">{chart_hours(s["hours"])}</div>
 
   <h2>По дням, 30 дней</h2>
@@ -491,8 +521,9 @@ def render(s):
   <details><summary>Как это считается</summary><ul>
     <li>Пока браузер открыт, он раз в час шлёт короткую отметку: версию, систему и пару флажков
       («первый раз сегодня», «новая установка», «только что обновился»). Ни имён, ни адресов, ни IP.</li>
-    <li>«Сейчас» — сколько отметок пришло за последний час. Каждый открытый браузер даёт одну,
-      перезапуск может дать лишнюю, поэтому ≈.</li>
+    <li>«Сейчас» — сколько разных людей было в браузере в этом или прошлом часу (по UTC), смотря где
+      больше. Открытый браузер отмечается в начале каждого часа, перезапуск в том же часу не считается.
+      Версии до 0.5.6 так не умеют: их отметки считаются как есть, но не больше, чем людей за день.</li>
     <li>Сутки, недели и месяцы считаются по UTC: сутки начинаются в
       <time data-utc="{midnight}" data-fmt="hm">00:00 UTC</time> по твоему времени.</li>
     <li>Отметок сегодня: {pt}. Это не люди: один человек, который просидел в браузере 5 часов, даёт 5 отметок.</li>

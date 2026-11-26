@@ -148,6 +148,8 @@ pub fn build_tab(
         Some(ua) => builder.with_user_agent(ua),
         None => builder,
     };
+    // Linux: Referer меняет расширение веб-процесса — процесс вкладки грузит его сразу.
+    let builder = super::identity::with_extension(builder);
     let builder = builder
         .with_bounds(spec.bounds)
         .with_visible(spec.visible)

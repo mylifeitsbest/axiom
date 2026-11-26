@@ -149,6 +149,7 @@ impl App {
         // Интерфейс ещё без подмены: его User-Agent — строка движка.
         crate::tabs::identity::remember_engine(&ui);
         crate::tabs::identity::install_ui(&ui);
+        crate::tabs::identity::prepare(&paths.root);
         let ai = AiPanel::new(&settings.ai_proxy);
 
         let mut app = Self {

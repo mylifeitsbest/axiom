@@ -560,13 +560,13 @@ function createPanels(ax) {
     const code = $('#uaStr', box);
     code.textContent = str;
     code.hidden = !str || (ua.custom && ua.id !== 'custom');
-    // WebKitGTK не даёт менять заголовки запросов: на Linux — только User-Agent.
-    const win = sys.platform === 'windows';
-    $('#refRow', box).hidden = !win;
-    $('#refCustomRow', box).hidden = !win || !ref.custom;
-    $('#idNote', box).textContent = win
+    // Referer меняют перехват запросов WebView2 и расширение веб-процесса WebKitGTK.
+    const spoof = sys.platform === 'windows' || sys.platform === 'linux';
+    $('#refRow', box).hidden = !spoof;
+    $('#refCustomRow', box).hidden = !spoof || !ref.custom;
+    $('#idNote', box).textContent = spoof
       ? 'Только для вкладок: панель ИИ и сам Axiom не меняются. Новые запросы идут с подменой сразу, открытые страницы получат новый User-Agent после обновления. Если сайт перестал пускать или показывать картинки — верните «Как есть».'
-      : 'Только для вкладок: панель ИИ и сам Axiom не меняются. Открытые страницы получат новый User-Agent после обновления. Referer на Linux не подменить: WebKitGTK не даёт менять заголовки запросов.';
+      : 'Только для вкладок: панель ИИ и сам Axiom не меняются. Открытые страницы получат новый User-Agent после обновления.';
     for (const [id, v] of [['uaCustomIn', B.user_agent_custom], ['refCustomIn', B.referer_custom]]) {
       const input = $(`#${id}`, box);
       if (document.activeElement !== input && !input.classList.contains('bad')) input.value = v || '';

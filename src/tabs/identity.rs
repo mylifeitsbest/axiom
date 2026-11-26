@@ -5,12 +5,18 @@
 //! `navigator.userAgent`. Пресеты собираются от настоящей версии движка
 //! (а где её нет — от сегодняшней даты), так что «Chrome» не стареет вместе с Axiom.
 //!
-//! Только WebView2: Referer переписываем в `WebResourceRequested` у всех запросов
+//! WebView2: Referer переписываем в `WebResourceRequested` у всех запросов
 //! вкладки, там же убираем подсказки `Sec-CH-UA*` — иначе они выдали бы WebView2
-//! при любом подменённом User-Agent. `document.referrer` и `navigator.userAgentData`
-//! приводит в лад скрипт, который выполняется до скриптов страницы. Перехват всех
-//! запросов не бесплатен, поэтому фильтр стоит, только пока подмена включена.
-//! WebKitGTK заголовки запросов наружу не отдаёт — там меняется только User-Agent.
+//! при любом подменённом User-Agent. Перехват всех запросов не бесплатен, поэтому
+//! фильтр стоит, только пока подмена включена.
+//!
+//! WebKitGTK заголовки запросов отдаёт только внутри веб-процесса, поэтому Referer
+//! там меняет наше расширение веб-процесса (src/tabs/webext.c, собирает build.rs).
+//! Оно встроено в axiom и перед первой вкладкой ложится в профиль. Выбор и id
+//! страниц вкладок оно получает от нас сообщениями.
+//!
+//! `document.referrer`, `navigator.platform` и `navigator.userAgentData` на обоих
+//! движках приводит в лад скрипт, который выполняется до скриптов страницы.
 //!
 //! Интерфейс и панель ИИ подмена не трогает: только вкладки.
 
@@ -82,9 +88,10 @@ pub struct Prefs {
 }
 
 impl Prefs {
-    /// Нужен ли перехват запросов и скрипт на странице (только WebView2).
+    /// Нужны ли перехват запросов и скрипт на странице.
     fn hooks(&self) -> bool {
-        cfg!(windows) && (self.agent != Agent::Default || self.referer != Referer::Default)
+        cfg!(any(windows, target_os = "linux"))
+            && (self.agent != Agent::Default || self.referer != Referer::Default)
     }
 }
 
@@ -111,12 +118,25 @@ fn prefs_agent() -> Agent {
 
 /// Новый выбор. `true` — он изменился и живые вкладки надо обновить ([`apply`]).
 pub fn set(next: Prefs) -> bool {
-    let mut prefs = PREFS.write().unwrap_or_else(PoisonError::into_inner);
-    if *prefs == next {
-        return false;
+    {
+        let mut prefs = PREFS.write().unwrap_or_else(PoisonError::into_inner);
+        if *prefs == next {
+            return false;
+        }
+        prefs.clone_from(&next);
     }
-    *prefs = next;
+    platform::changed(&next);
     true
+}
+
+/// Linux: кладёт расширение веб-процесса в профиль. Звать до первой вкладки.
+pub fn prepare(profile: &std::path::Path) {
+    platform::prepare(profile);
+}
+
+/// Linux: веб-процесс вкладки — с нашим расширением (см. [`prepare`]).
+pub fn with_extension(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+    platform::with_extension(builder)
 }
 
 /// Запоминает User-Agent движка. Звать с webview без подмены (интерфейс).
@@ -295,21 +315,36 @@ fn referer_for(prefs: &Prefs, request: &str) -> Rewrite {
     }
 }
 
+/// Режим для расширения веб-процесса на Linux (src/tabs/webext.c) и свой адрес:
+/// 0 — как есть, 1 — не отправлять, 2 — с того же сайта, 3 — свой адрес.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn referer_mode(prefs: &Prefs) -> (u32, String) {
+    match prefs.referer {
+        Referer::Default => (0, String::new()),
+        Referer::Custom if prefs.referer_custom.is_empty() => (0, String::new()),
+        Referer::Off => (1, String::new()),
+        Referer::Site => (2, String::new()),
+        Referer::Custom => (3, prefs.referer_custom.clone()),
+    }
+}
+
 /// `navigator.platform` и `navigator.vendor`, как у браузера из пресета.
-#[cfg_attr(not(windows), allow(dead_code))]
+/// Chrome — для WebKitGTK: WebView2 и так Chrome на Windows.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn platform_of(agent: Agent) -> Option<(&'static str, &'static str)> {
     match agent {
+        Agent::Chrome => Some(("Win32", "Google Inc.")),
         Agent::Firefox => Some(("Win32", "")),
         Agent::Safari => Some(("MacIntel", "Apple Computer, Inc.")),
         Agent::Android => Some(("Linux armv81", "Google Inc.")),
         Agent::Iphone => Some(("iPhone", "Apple Computer, Inc.")),
-        Agent::Default | Agent::Chrome | Agent::Custom => None,
+        Agent::Default | Agent::Custom => None,
     }
 }
 
 /// Скрипт до скриптов страницы: `document.referrer` и `navigator` в лад
 /// с заголовками. `None` — подменять нечего.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn page_script(prefs: &Prefs) -> Option<String> {
     let referrer = match prefs.referer {
         Referer::Default => None,
@@ -337,6 +372,7 @@ fn page_script(prefs: &Prefs) -> Option<String> {
         define("Navigator", "vendor", &format!("'{vendor}'"));
     }
     // Подсказки Client Hints выдали бы WebView2: без них сайты смотрят на User-Agent.
+    // (У WebKitGTK их нет вовсе.)
     if agent {
         js.push_str("delete Navigator.prototype.userAgentData;");
     }
@@ -563,6 +599,14 @@ mod platform {
         }
     }
 
+    pub fn changed(_prefs: &Prefs) {}
+
+    pub fn prepare(_profile: &std::path::Path) {}
+
+    pub fn with_extension(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+        builder
+    }
+
     fn on_request(args: &ICoreWebView2WebResourceRequestedEventArgs) -> windows_core::Result<()> {
         let prefs = super::PREFS
             .read()
@@ -602,30 +646,191 @@ mod platform {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use webkit2gtk::{SettingsExt, WebViewExt};
-    use wry::{WebView, WebViewExtUnix};
+    use std::{
+        cell::RefCell,
+        collections::HashMap,
+        fs, io,
+        path::{Path, PathBuf},
+        sync::OnceLock,
+    };
+
+    use gtk::glib::{self, ToVariant, WeakRef, prelude::ObjectExt};
+    use webkit2gtk::{
+        SettingsExt, UserContentInjectedFrames, UserContentManagerExt, UserMessage, UserScript,
+        UserScriptInjectionTime, WebContext, WebContextExt, WebViewExt,
+    };
+    use wry::{WebView, WebViewBuilder, WebViewBuilderExtUnix, WebViewExtUnix};
 
     use super::Prefs;
+
+    /// Расширение веб-процесса (src/tabs/webext.c), собранное build.rs.
+    const EXTENSION: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/axiom-webext.so"));
+
+    /// Папка с расширением в профиле, если его удалось туда положить.
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+
+    thread_local! {
+        /// Окружения, чьим веб-процессам мы шлём выбор: общее и панели ИИ с прокси.
+        static CONTEXTS: RefCell<Vec<WeakRef<WebContext>>> = const { RefCell::new(Vec::new()) };
+        /// Живые вкладки: id страницы → наш скрипт на ней.
+        static TABS: RefCell<HashMap<u64, Option<UserScript>>> = RefCell::new(HashMap::new());
+    }
 
     pub fn user_agent(webview: &WebView) -> Option<String> {
         Some(webview.webview().settings()?.user_agent()?.to_string())
     }
 
-    pub fn install(_webview: &WebView) {}
+    pub fn prepare(profile: &Path) {
+        let dir = profile.join("webext");
+        match unpack(&dir) {
+            Ok(()) => {
+                let _ = DIR.set(dir);
+            }
+            Err(err) => eprintln!("подмена Referer недоступна: {err}"),
+        }
+    }
+
+    /// `<профиль>/webext/axiom.so`. WebKit грузит все `.so` из папки, поэтому
+    /// папка только наша. Новое — через временный файл: процессы, которые уже
+    /// держат прежний файл, его не потеряют.
+    fn unpack(dir: &Path) -> io::Result<()> {
+        crate::storage::private_dir(dir)?;
+        let path = dir.join("axiom.so");
+        if fs::read(&path).is_ok_and(|old| old == EXTENSION) {
+            return Ok(());
+        }
+        let tmp = dir.join("axiom.so.tmp");
+        fs::write(&tmp, EXTENSION)?;
+        fs::rename(&tmp, &path)
+    }
+
+    /// wry ставит папку расширений окружению ещё до создания webview: веб-процесс
+    /// вкладки запускается вместе с ней и должен уже знать, откуда грузить.
+    pub fn with_extension(builder: WebViewBuilder<'_>) -> WebViewBuilder<'_> {
+        match DIR.get() {
+            Some(dir) => builder.with_extensions_path(dir.clone()),
+            None => builder,
+        }
+    }
+
+    /// Выбор и вкладки для процесса, который запускается сейчас.
+    fn init_data() -> glib::Variant {
+        let (mode, custom) = super::referer_mode(&super::prefs());
+        let tabs: Vec<u64> = TABS.with(|t| t.borrow().keys().copied().collect());
+        (mode, custom, tabs).to_variant()
+    }
+
+    fn send(context: &WebContext, name: &str, params: &glib::Variant) {
+        context.send_message_to_all_extensions(&UserMessage::new(name, Some(params)));
+    }
+
+    fn send_referer(context: &WebContext, prefs: &Prefs) {
+        send(
+            context,
+            "axiom-referer",
+            &super::referer_mode(prefs).to_variant(),
+        );
+    }
+
+    /// Новый выбор — всем веб-процессам, где могут быть вкладки.
+    pub fn changed(prefs: &Prefs) {
+        CONTEXTS.with(|c| {
+            c.borrow_mut().retain(|weak| match weak.upgrade() {
+                Some(context) => {
+                    send_referer(&context, prefs);
+                    true
+                }
+                None => false,
+            });
+        });
+    }
+
+    /// Вкладка — в список для расширения. Её процесс уже запущен (вместе с webview),
+    /// но страница ещё не грузится: сообщения дойдут раньше первого запроса.
+    pub fn install(webview: &WebView) {
+        let view = webview.webview();
+        let id = view.page_id();
+        TABS.with(|t| t.borrow_mut().insert(id, None));
+        // Полным путём: у `WidgetExt` есть свой `settings()`, он спорил бы с webkit.
+        gtk::prelude::WidgetExt::connect_destroy(&view, move |_| {
+            TABS.with(|t| t.borrow_mut().remove(&id));
+        });
+        if DIR.get().is_none() {
+            return;
+        }
+        let Some(context) = view.context() else {
+            return;
+        };
+        let fresh = CONTEXTS.with(|c| {
+            let mut contexts = c.borrow_mut();
+            if contexts
+                .iter()
+                .any(|w| w.upgrade().as_ref() == Some(&context))
+            {
+                false
+            } else {
+                contexts.push(context.downgrade());
+                true
+            }
+        });
+        if fresh {
+            // Каждый следующий процесс получит выбор и вкладки сразу при запуске.
+            context.connect_initialize_web_extensions(|context| {
+                context.set_web_extensions_initialization_user_data(&init_data());
+            });
+            // А этот запустился раньше — ему сообщением.
+            send_referer(&context, &super::prefs());
+        }
+        send(&context, "axiom-tab", &(id,).to_variant());
+    }
 
     pub fn install_ui(_webview: &WebView) {}
 
-    pub fn apply_ui(webview: &WebView, prefs: &Prefs, ua: Option<&str>) {
-        apply(webview, prefs, Some(ua));
+    /// Интерфейс: только User-Agent.
+    pub fn apply_ui(webview: &WebView, _prefs: &Prefs, ua: Option<&str>) {
+        set_user_agent(webview, Some(ua));
     }
 
-    /// WebKitGTK: только User-Agent (`None` у настройки — строка движка).
-    pub fn apply(webview: &WebView, _prefs: &Prefs, ua: Option<Option<&str>>) {
+    /// Вкладка: User-Agent (`None` у настройки — строка движка) и скрипт на странице.
+    /// Referer меняет расширение: выбор ему уже отправил [`changed`].
+    pub fn apply(webview: &WebView, prefs: &Prefs, ua: Option<Option<&str>>) {
+        set_user_agent(webview, ua);
+        set_script(webview, super::page_script(prefs));
+    }
+
+    fn set_user_agent(webview: &WebView, ua: Option<Option<&str>>) {
         if let Some(ua) = ua
             && let Some(settings) = webview.webview().settings()
         {
             settings.set_user_agent(ua);
         }
+    }
+
+    fn set_script(webview: &WebView, js: Option<String>) {
+        let view = webview.webview();
+        let Some(manager) = view.user_content_manager() else {
+            return;
+        };
+        TABS.with(|t| {
+            let mut tabs = t.borrow_mut();
+            let Some(slot) = tabs.get_mut(&view.page_id()) else {
+                return;
+            };
+            if let Some(old) = slot.take() {
+                manager.remove_script(&old);
+            }
+            *slot = js.map(|js| {
+                let script = UserScript::new(
+                    &js,
+                    UserContentInjectedFrames::AllFrames,
+                    UserScriptInjectionTime::Start,
+                    &[],
+                    &[],
+                );
+                manager.add_script(&script);
+                script
+            });
+        });
     }
 }
 
@@ -646,6 +851,14 @@ mod platform {
     pub fn apply_ui(_webview: &WebView, _prefs: &Prefs, _ua: Option<&str>) {}
 
     pub fn apply(_webview: &WebView, _prefs: &Prefs, _ua: Option<Option<&str>>) {}
+
+    pub fn changed(_prefs: &Prefs) {}
+
+    pub fn prepare(_profile: &std::path::Path) {}
+
+    pub fn with_extension(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+        builder
+    }
 }
 
 #[cfg(test)]
@@ -794,6 +1007,24 @@ mod tests {
         assert_eq!(
             referer_for(&prefs(Referer::Custom, ""), page),
             Rewrite::Keep
+        );
+    }
+
+    #[test]
+    fn referer_mode_for_extension() {
+        assert_eq!(
+            referer_mode(&prefs(Referer::Default, "")),
+            (0, String::new())
+        );
+        assert_eq!(referer_mode(&prefs(Referer::Off, "")), (1, String::new()));
+        assert_eq!(referer_mode(&prefs(Referer::Site, "")), (2, String::new()));
+        assert_eq!(
+            referer_mode(&prefs(Referer::Custom, "https://www.google.com/")),
+            (3, "https://www.google.com/".into())
+        );
+        assert_eq!(
+            referer_mode(&prefs(Referer::Custom, "")),
+            (0, String::new())
         );
     }
 

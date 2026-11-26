@@ -8,6 +8,7 @@ pub mod links;
 pub mod media;
 pub mod mini;
 pub mod omnibox;
+pub mod permissions;
 pub mod popups;
 pub mod script;
 pub mod sleep;

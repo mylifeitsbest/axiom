@@ -516,6 +516,18 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 /* Сайты без сна: строки списка ниже обычных, под полем ввода — с чертой. */
 .ns-list .srow{min-height:46px;padding:8px 0;border-top:1px solid var(--line)}
 .ns-list .sl b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Настройки → Безопасность: сайты с решениями, под каждым — его разрешения. */
+.pm-findrow{min-height:58px}
+.pm-find{flex:1;margin:0}
+.pm-site{padding:12px 0 8px;border-top:1px solid var(--line)}
+.pm-findrow[hidden]+#pmSites>.pm-site:first-child,.pm-findrow[hidden]+#pmSites>.srow:first-child{border-top:0}
+.pm-shead{display:flex;align-items:center;gap:10px;min-height:32px}
+.pm-shead .fav{width:20px;height:20px;border-radius:6px;font-size:11px}
+.pm-shead b{font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ssec .pm-shead .btn{height:30px;padding:0 12px}
+.pm-prow{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:44px;padding-left:30px}
+.pm-prow .pm-name{color:var(--t1)}
+.pm-empty{min-height:72px}
 .imp-row{justify-content:flex-start;gap:12px}
 .imp-row .sl{flex:1}
 .bmark{display:grid;place-items:center;width:30px;height:30px;flex:none;border-radius:9px;background:color-mix(in oklab,var(--acc) 14%,transparent);color:var(--acc);font-weight:600;font-size:12.5px;letter-spacing:-.02em}
@@ -703,6 +715,39 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .xap-acts .btn{height:30px;padding:0 14px}
 .xap.on>*{animation:rise var(--d2) var(--e) both}
 .xap.on>:nth-child(n+2){animation-delay:calc(30ms*var(--k))}
+/* Разрешения сайтов: окошко «Сайт хочет…» (.pmp) и карточка сайта по клику на замок (.pmc). */
+.pmp .trp-head{align-items:center}
+.pm-x{margin-left:auto;align-self:flex-start;color:var(--t3)}
+.pm-list{display:flex;flex-direction:column;gap:3px;margin:12px 8px 0}
+.pm-row{display:flex;align-items:center;gap:10px;min-height:34px;padding:0 11px;border-radius:calc(var(--r)*.7);background:var(--s2);color:var(--t1)}
+.pm-row .i{width:16px;height:16px;color:var(--acc);flex:none}
+.pm-acts{align-items:center}
+.pm-acts .grow{align-self:auto}
+.pmp.arm .pm-acts .btn{opacity:.5}
+.pmp .pm-acts .btn{transition:opacity var(--d2),background-color var(--d1)}
+.pmc{padding:12px 6px 8px;transform-origin:top left}
+.pmc .trp-ic.warn{background:color-mix(in oklab,#e5a03a 18%,transparent);color:#e5a03a}
+.pm-h{margin:14px 8px 2px;color:var(--t3);font-size:calc(var(--fs) - 1.5px);font-weight:600}
+.pm-clist{margin-top:2px}
+.pm-name{display:flex;align-items:center;gap:9px;min-width:0}
+.pm-name .i{width:16px;height:16px;color:var(--t2);flex:none}
+.pm-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pm-none{padding:6px 8px 2px;color:var(--t3)}
+.pm-sel.allow{color:var(--acc)}
+.pm-sel.block{color:#e5484d}
+.pm-reload{display:flex;align-items:center;gap:10px;margin:10px 8px 0;padding:8px 8px 8px 11px;border-radius:calc(var(--r)*.7);background:color-mix(in oklab,var(--acc) 11%,transparent);color:var(--t1);font-size:calc(var(--fs) - 1px);line-height:1.35}
+.pm-reload .btn{height:28px;padding:0 12px;flex:none}
+.pm-foot{display:flex;justify-content:space-between;gap:6px;margin:10px 2px 0;padding:6px 0 0;border-top:1px solid var(--line)}
+.pmc.on>*{animation:rise var(--d2) var(--e) both}
+.pmc.on>:nth-child(n+2){animation-delay:calc(30ms*var(--k))}
+/* Замок слева от адреса — кнопка карточки сайта (размер поля не меняется). */
+.omni-ic.pm-click{cursor:pointer;padding:3px;margin:-3px;border-radius:calc(var(--r)*.6);transition:background-color var(--d1),color var(--d1)}
+.omni-ic.pm-click:hover{background:var(--s2);color:var(--t1)}
+/* Что сайту запрещено — перечёркнутый значок справа в строке. */
+.omni .ib.pm{position:relative;color:#e5484d}
+.omni .ib.pm:hover{color:#e5484d}
+.omni .ib.pm::after{content:"";position:absolute;left:6px;right:6px;top:50%;height:1.7px;margin-top:-.85px;border-radius:1px;background:currentColor;transform:rotate(-45deg);box-shadow:0 0 0 1.3px var(--s1)}
+.omni .ib.pm:hover::after{box-shadow:0 0 0 1.3px var(--s2)}
 
 /* ---------- загрузки ---------- */
 .dl{position:relative}

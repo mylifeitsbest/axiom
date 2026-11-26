@@ -70,6 +70,11 @@ pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
     {
         args.push_str(&format!(" --remote-debugging-port={port}"));
     }
+    // Отладка: поддельные микрофон и камера, чтобы автотест разрешений не включал настоящие.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("AXIOM_FAKE_MEDIA").is_some() {
+        args.push_str(" --use-fake-device-for-media-stream");
+    }
     if let Some(proxy) = proxy {
         let (scheme, endpoint) = match proxy {
             ProxyConfig::Http(e) => ("http", e),
@@ -199,6 +204,7 @@ pub fn build_tab(
     hotkeys::install_tab(&webview, events.clone());
     super::popups::install(&webview);
     super::external::install(&webview, id, events.clone());
+    super::permissions::install(&webview, id, events.clone());
     super::tracking::install(&webview, id, events.clone());
     super::fullscreen::install(&webview, super::fullscreen::Owner::Tab(id), events.clone());
     downloads::install(&webview, Some(id), events.clone());

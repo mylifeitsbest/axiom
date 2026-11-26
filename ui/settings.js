@@ -124,6 +124,7 @@ function createPanels(ax) {
     { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
     { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome, Edge, Firefox и других браузеров.' },
+    { id: 'security', icon: 'shield', title: 'Безопасность', desc: 'Что сайтам можно: микрофон, камера, место, уведомления и запуск приложений.' },
     { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка, обновления и браузер по умолчанию.' },
     { id: 'keys', icon: 'keyboard', title: 'Клавиши', desc: 'Привычные сочетания плюс пара своих.' },
   ];
@@ -265,6 +266,7 @@ function createPanels(ax) {
         </div>
         <div class="note">${icon('sparkles')}<span>В панели открывается только AI Mode. Ссылки из ответа, обычная выдача Google и другие сайты открываются в новой вкладке.</span></div>`,
       translate: ax.translate.sectionHtml(),
+      security: ax.perms.sectionHtml(),
       memory: `
         <div class="card">
           ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', range(`min="1" max="${LIVE_MAX + 1}" step="1" data-bkey="live_tabs"`), 'data-kw="живые вкладки лимит без ограничения сколько"')}
@@ -405,6 +407,7 @@ function createPanels(ax) {
         ? 'Чёлка сверху: что играет на других вкладках (пауза, дальше, назад) и загрузки'
         : 'Чёлка сверху: видео на других вкладках и загрузки';
       ax.translate.syncSheet();
+      ax.perms.syncSheet();
     }
   }
 

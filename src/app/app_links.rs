@@ -243,6 +243,7 @@ impl App {
             {
                 eprintln!("разрешения ссылок не сохранены: {err:#}");
             }
+            self.push_permissions();
         }
         external::launch(pending.link, self.events.clone());
     }
@@ -264,6 +265,24 @@ impl App {
                 remember: false,
             });
         }
+    }
+
+    /// «Всегда разрешать» ссылок — для Настроек → Безопасность.
+    pub(super) fn app_link_entries(&mut self) -> Vec<crate::storage::app_links::Entry> {
+        self.link_perms().entries().to_vec()
+    }
+
+    /// Убирает «Всегда разрешать»; `true` — было что убрать.
+    pub(super) fn remove_app_link(&mut self, site: &str, scheme: &str) -> bool {
+        if !self.link_perms().remove(site, scheme) {
+            return false;
+        }
+        if let Some(links) = &self.app_links.links
+            && let Err(err) = links.save(&self.paths)
+        {
+            eprintln!("разрешения ссылок не сохранены: {err:#}");
+        }
+        true
     }
 
     /// Разрешения читаются с диска при первой ссылке, а не при запуске.

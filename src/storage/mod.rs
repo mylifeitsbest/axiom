@@ -4,6 +4,7 @@ pub mod app_links;
 pub mod bookmarks;
 pub mod history;
 pub mod import;
+pub mod permissions;
 pub mod session;
 pub mod zoom;
 

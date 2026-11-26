@@ -112,6 +112,11 @@ const ASSETS: &[Asset] = &[
         bytes: include_bytes!("../../ui/applink.js"),
     },
     Asset {
+        path: "/permissions.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/permissions.js"),
+    },
+    Asset {
         path: "/island.js",
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/island.js"),

@@ -75,6 +75,10 @@
 
   <div class="dlp xap" id="xap" role="dialog" aria-label="Открыть приложение"></div>
 
+  <div class="dlp xap pmp" id="pmp" role="dialog" aria-label="Запрос разрешения"></div>
+
+  <div class="dlp trp pmc" id="pmc" role="dialog" aria-label="Сведения о сайте"></div>
+
   <div class="dlp zmp" id="zmp" role="dialog" aria-label="Масштаб страницы"></div>
 
   <div class="edge n" data-edge="n"></div><div class="edge s" data-edge="s"></div>
@@ -101,6 +105,7 @@
       <span class="omni-view" id="omniView"></span>
       <span class="omni-msg" id="omniMsg" role="status"></span>
     </span>
+    <button class="ib pm" id="permBtn" hidden></button>
     <button class="ib zm" id="zoomBtn" title="Масштаб" data-i="zoomIn" hidden></button>
     <button class="ib tr" id="trBtn" title="Перевести страницу" data-i="translate" hidden></button>
     <button class="ib awake" id="awakeBtn" title="Не усыплять вкладку" data-i="cup" aria-pressed="false" hidden></button>
@@ -139,6 +144,7 @@
 <script src="newtab.js"></script>
 <script src="tabmenu.js"></script>
 <script src="applink.js"></script>
+<script src="permissions.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

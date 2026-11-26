@@ -100,6 +100,13 @@ pub enum UserEvent {
     Waking(TabId, crate::tabs::waking::Event),
     /// Ссылка на приложение (`mailto:`, `tg:`…): запрос страницы или итог запуска.
     AppLink(crate::tabs::external::Event),
+    /// Сайт просит микрофон, камеру, место, уведомления…: решить или спросить.
+    Permission(crate::tabs::permissions::Request),
+    /// Панель ИИ ушла на другую страницу: её запросы разрешений устарели.
+    PermissionPageLeft(crate::tabs::TabId),
+    /// Решения, которые WebView2 запомнил сам (до того, как Axiom стал отвечать).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    PermissionsSaved(Vec<crate::tabs::permissions::Saved>),
     /// Переход по ссылке с метками слежки отменён: загрузить чистый адрес.
     /// Только WebView2: на Linux переходы внутри вкладки не переписываются.
     #[cfg_attr(not(windows), allow(dead_code))]

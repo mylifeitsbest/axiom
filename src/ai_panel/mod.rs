@@ -132,6 +132,17 @@ impl AiPanel {
                         let events = events.clone();
                         move |url| pages::on_navigation(&url, &events)
                     })
+                    // Ушла на другую страницу — её запросы разрешений больше не к месту.
+                    .with_on_page_load_handler({
+                        let events = events.clone();
+                        move |event, _| {
+                            if matches!(event, wry::PageLoadEvent::Started) {
+                                let _ = events.send_event(UserEvent::PermissionPageLeft(
+                                    crate::tabs::permissions::AI,
+                                ));
+                            }
+                        }
+                    })
                     .with_new_window_req_handler({
                         let events = events.clone();
                         move |url, _| {
@@ -158,6 +169,12 @@ impl AiPanel {
                     events.clone(),
                 );
                 downloads::install(&webview, None, events.clone());
+                // Голосовой ввод AI Mode просит микрофон — спрашиваем тем же окошком.
+                crate::tabs::permissions::install(
+                    &webview,
+                    crate::tabs::permissions::AI,
+                    events.clone(),
+                );
                 crate::reports::watch(&webview, crate::reports::Source::Ai);
                 crate::tabs::error_page::install(&webview);
                 self.webview = Some(webview);

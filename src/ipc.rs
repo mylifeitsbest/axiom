@@ -340,6 +340,31 @@ pub enum UiCmd {
         #[serde(default)]
         always: bool,
     },
+    /// Ответ в окошке «Сайт хочет…».
+    Permission {
+        id: u64,
+        answer: PermAnswer,
+    },
+    /// Настройки → Безопасность: решение сайта по одному разрешению; `null` — спрашивать.
+    SitePermission {
+        site: String,
+        kind: crate::storage::permissions::Perm,
+        decision: Option<crate::storage::permissions::Decision>,
+    },
+    /// «Забыть сайт»: все его разрешения снова под вопросом.
+    ForgetSite {
+        site: String,
+    },
+    /// «Не спрашивать» для всех сайтов (`block`) или снова спрашивать.
+    PermissionDefault {
+        kind: crate::storage::permissions::Perm,
+        block: bool,
+    },
+    /// Убрать «Всегда разрешать» у ссылки на приложение.
+    ForgetAppLink {
+        site: String,
+        scheme: String,
+    },
     /// Открыли «Сообщить о проблеме»: сколько журнала уйдёт вместе с отчётом.
     ReportInfo,
     /// «Отправить»: что не работает и приложить ли журнал (его читает Rust, не интерфейс).
@@ -347,6 +372,20 @@ pub enum UiCmd {
         text: String,
         log: bool,
     },
+}
+
+/// Что нажали в окошке разрешения.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermAnswer {
+    /// «Разрешить»: и запомнить.
+    Allow,
+    /// «Только сейчас»: до ухода со страницы.
+    Once,
+    /// «Запретить»: и запомнить.
+    Block,
+    /// Закрыли окошко: в этот раз нет, но спросить снова.
+    Dismiss,
 }
 
 /// Разбирает и проверяет сообщение интерфейса.
@@ -425,6 +464,28 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
             if !(0.0..=64.0).contains(radius) {
                 return Err(IpcError::Invalid("radius"));
             }
+        }
+        UiCmd::SitePermission {
+            site,
+            kind,
+            decision,
+        } => {
+            use crate::storage::permissions::{Decision, Perm, valid_site};
+            if !valid_site(site) || !kind.remembered() || *kind == Perm::Unknown {
+                return Err(IpcError::Invalid("permission"));
+            }
+            if *decision == Some(Decision::Unknown) {
+                return Err(IpcError::Invalid("decision"));
+            }
+        }
+        UiCmd::ForgetSite { site } | UiCmd::ForgetAppLink { site, .. } => {
+            short(site, 300, "site")?;
+            if let UiCmd::ForgetAppLink { scheme, .. } = cmd {
+                short(scheme, 64, "scheme")?;
+            }
+        }
+        UiCmd::PermissionDefault { kind, .. } if !kind.remembered() => {
+            return Err(IpcError::Invalid("permission"));
         }
         UiCmd::Report { text, .. } => {
             short(text, crate::reports::MAX_USER_TEXT, "report")?;
@@ -600,6 +661,27 @@ pub enum ToUi<'a> {
         link: &'a str,
         /// Показать «Всегда разрешать для этого сайта».
         remember: bool,
+    },
+    /// Сайт просит разрешения; `id = 0` — закрыть окошко.
+    PermissionAsk {
+        id: u64,
+        /// Кто просит, для показа (`meet.google.com`); пустой — страница без адреса.
+        site: &'a str,
+        /// Сайт вкладки, если просит встроенный в неё чужой фрейм.
+        page: &'a str,
+        kinds: Vec<crate::storage::permissions::Perm>,
+        /// Решение запомнится (у страницы есть свой адрес).
+        remember: bool,
+    },
+    /// Разрешения сайтов и «Всегда разрешать» ссылок — для Настроек → Безопасность
+    /// и кнопки сайта в адресной строке.
+    Permissions {
+        sites: &'a [crate::storage::permissions::Site],
+        defaults: &'a std::collections::BTreeMap<
+            crate::storage::permissions::Perm,
+            crate::storage::permissions::Decision,
+        >,
+        app_links: &'a [crate::storage::app_links::Entry],
     },
     /// Сколько байт журнала уйдёт с «Сообщить о проблеме».
     ReportInfo {
@@ -898,6 +980,59 @@ mod tests {
         assert!(parse(r#"{"cmd":"zoom_bubble","rect":null,"radius":1000}"#).is_err());
         let out = serde_json::to_string(&ToUi::Zoom { id: 3, zoom: 125 }).unwrap_or_default();
         assert_eq!(out, r#"{"type":"zoom","id":3,"zoom":125}"#);
+    }
+
+    #[test]
+    fn parses_permission_commands() {
+        use crate::storage::permissions::{Decision, Perm};
+        assert!(matches!(
+            parse(r#"{"cmd":"permission","id":7,"answer":"once"}"#),
+            Ok(UiCmd::Permission {
+                id: 7,
+                answer: PermAnswer::Once
+            })
+        ));
+        assert!(parse(r#"{"cmd":"permission","id":7,"answer":"maybe"}"#).is_err());
+        assert!(matches!(
+            parse(r#"{"cmd":"site_permission","site":"https://meet.example.com","kind":"camera","decision":"block"}"#),
+            Ok(UiCmd::SitePermission {
+                site,
+                kind: Perm::Camera,
+                decision: Some(Decision::Block)
+            }) if site == "https://meet.example.com"
+        ));
+        assert!(matches!(
+            parse(
+                r#"{"cmd":"site_permission","site":"https://a.example","kind":"camera","decision":null}"#
+            ),
+            Ok(UiCmd::SitePermission { decision: None, .. })
+        ));
+        // Не origin, показ экрана, неизвестный вид или решение — отказ.
+        for bad in [
+            r#"{"cmd":"site_permission","site":"javascript:1","kind":"camera","decision":"allow"}"#,
+            r#"{"cmd":"site_permission","site":"https://a.example/x","kind":"camera","decision":"allow"}"#,
+            r#"{"cmd":"site_permission","site":"https://a.example","kind":"screen","decision":"allow"}"#,
+            r#"{"cmd":"site_permission","site":"https://a.example","kind":"teleport","decision":"allow"}"#,
+            r#"{"cmd":"site_permission","site":"https://a.example","kind":"camera","decision":"maybe"}"#,
+            r#"{"cmd":"permission_default","kind":"screen","block":true}"#,
+        ] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        assert!(matches!(
+            parse(r#"{"cmd":"permission_default","kind":"notifications","block":true}"#),
+            Ok(UiCmd::PermissionDefault {
+                kind: Perm::Notifications,
+                block: true
+            })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"forget_app_link","site":"https://a.example","scheme":"tg"}"#),
+            Ok(UiCmd::ForgetAppLink { .. })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"forget_site","site":"https://a.example"}"#),
+            Ok(UiCmd::ForgetSite { .. })
+        ));
     }
 
     #[test]

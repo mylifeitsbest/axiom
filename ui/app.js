@@ -119,6 +119,9 @@
   });
   // ---------- ссылки на приложения (ui/applink.js) ----------
   const xap = createAppLink({ esc, send, setOverlay });
+  // ---------- разрешения сайтов (ui/permissions.js) ----------
+  // Функции ниже объявлены через function: к первому вызову они уже есть.
+  const pm = createPermissions({ esc, send, setOverlay, isPage, toast: (t) => toast(t), activeTab: () => activeTab(), favHtml: (u) => favHtml(u), openSettings: (s) => openSettings(s) });
 
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
@@ -647,6 +650,7 @@
     star.setAttribute('aria-pressed', String(!!t?.bookmarked));
     star.title = t?.bookmarked ? 'В закладках — убрать (Ctrl+D)' : 'Добавить в закладки (Ctrl+D)';
     tr.render(t, S.tabs);
+    pm.renderOmni(t);
     if (document.activeElement === inp || mode === 'find') return;
     if (!pageOpen) {
       omni.classList.add('empty');
@@ -707,11 +711,12 @@
     renderOmni();
   });
   // Кнопки в строке срабатывают с первого клика: нажатие не уводит фокус в поле,
-  // не выделяет адрес и не прячет сами кнопки. Клик по значку слева — как по полю.
+  // не выделяет адрес и не прячет сами кнопки. Клик по значку слева — как по полю,
+  // а на странице сайта значок — кнопка карточки сайта (ui/permissions.js).
   omni.addEventListener('mousedown', (e) => {
     if (e.button !== 0 || e.target === inp) return;
     e.preventDefault();
-    if (!e.target.closest('button')) inp.focus();
+    if (!e.target.closest('button') && !e.target.closest('.omni-ic.pm-click')) inp.focus();
   });
   inp.addEventListener('input', () => { hideMsg(); if (mode === 'find') find(false); else updateSug(); });
   inp.addEventListener('keydown', onOmniKey);
@@ -1064,6 +1069,7 @@
     system: () => SYS,
     update: () => upd.state(),
     translate: tr,
+    perms: pm,
     openUpdate() { dl.close(); upd.open(); },
     closeSettings,
     applyAppearance,
@@ -1171,6 +1177,8 @@
     // Закрыли активную вкладку настроек: лист уходит плавно, потом Rust покажет страницу.
     settings_leave() { panels.leave(() => send({ cmd: 'settings_left' })); },
     app_link(m) { xap.onRequest(m); },
+    permission_ask(m) { pm.onAsk(m); },
+    permissions(m) { pm.onList(m); },
     zoom(m) { zm.onZoom(m); },
     report_info(m) { panels.onReportInfo(m); },
     reported(m) { panels.onReported(m); },

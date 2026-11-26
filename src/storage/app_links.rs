@@ -64,6 +64,19 @@ impl AppLinks {
         self.trim();
     }
 
+    /// Все «Всегда разрешать» — для Настроек → Безопасность.
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    /// Убирает «Всегда разрешать»: сайт снова спросит перед запуском программы.
+    pub fn remove(&mut self, site: &str, scheme: &str) -> bool {
+        let before = self.entries.len();
+        self.entries
+            .retain(|e| !(e.site == site && e.scheme == scheme));
+        self.entries.len() != before
+    }
+
     fn sanitized(mut self) -> Self {
         self.entries.retain(|e| valid(&e.site, &e.scheme));
         let mut seen = std::collections::HashSet::new();

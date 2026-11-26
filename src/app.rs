@@ -2,6 +2,7 @@
 
 mod ai_tabs;
 mod app_links;
+mod permissions;
 mod tab_actions;
 mod translation;
 mod waking;
@@ -109,6 +110,8 @@ pub struct App {
     app_links: app_links::State,
     /// Масштаб по сайтам и окошко масштаба.
     zoom: zoom::State,
+    /// Разрешения сайтов: память и окошко «Сайт хочет…».
+    permissions: permissions::State,
     /// Где в окне чёлка островка (от интерфейса, логические px); `None` — её нет.
     island_dock: Option<ipc::IslandDock>,
     /// Видео вкладки, показанное внутри островка (`tabs::mini`).
@@ -150,6 +153,16 @@ impl App {
         crate::tabs::identity::remember_engine(&ui);
         crate::tabs::identity::install_ui(&ui);
         crate::tabs::identity::prepare(&paths.root);
+        // Что WebView2 запомнил своим окном разрешений — к себе (профиль у всех webview один).
+        #[cfg(windows)]
+        {
+            let events = events.clone();
+            crate::tabs::permissions::take_saved(&ui, move |saved| {
+                if !saved.is_empty() {
+                    let _ = events.send_event(UserEvent::PermissionsSaved(saved));
+                }
+            });
+        }
         let ai = AiPanel::new(&settings.ai_proxy);
 
         let mut app = Self {
@@ -184,6 +197,7 @@ impl App {
             settings_leaving: None,
             app_links: app_links::State::default(),
             zoom,
+            permissions: permissions::State::default(),
             island_dock: None,
             mini: None,
         };
@@ -280,6 +294,9 @@ impl App {
             }
             UserEvent::Waking(id, event) => self.on_waking(id, event),
             UserEvent::AppLink(event) => self.on_app_link(event),
+            UserEvent::Permission(request) => self.on_permission(request),
+            UserEvent::PermissionsSaved(saved) => self.on_permissions_saved(saved),
+            UserEvent::PermissionPageLeft(tab) => self.permissions_tab_gone(tab),
             UserEvent::Untracked { id, url } => self.load_untracked(id, url),
             UserEvent::Reported(outcome) => self.on_reported(outcome),
             UserEvent::Tick => self.on_tick(),
@@ -300,6 +317,7 @@ impl App {
                 });
                 self.push_state();
                 self.push_downloads();
+                self.push_permissions();
                 self.push_update(false);
                 self.push_window_state();
                 self.push_translate_all();
@@ -360,6 +378,8 @@ impl App {
             UiCmd::Ai { open, query } => {
                 self.ai_command(open, query.as_deref())?;
                 self.push_state();
+                // Запрос панели ИИ виден, только пока она открыта.
+                self.show_permission_ask();
             }
             UiCmd::AiPopOut => self.pop_out_ai(),
             UiCmd::Overlay { open } => self.set_overlay(open),
@@ -522,6 +542,15 @@ impl App {
             UiCmd::TranslateOriginal => self.translate_original(),
             UiCmd::TranslatePrefs { prefs } => self.translate_prefs(prefs),
             UiCmd::AppLink { id, open, always } => self.answer_app_link(id, open, always),
+            UiCmd::Permission { id, answer } => self.answer_permission(id, answer),
+            UiCmd::SitePermission {
+                site,
+                kind,
+                decision,
+            } => self.set_site_permission(&site, kind, decision),
+            UiCmd::ForgetSite { site } => self.forget_site(&site),
+            UiCmd::PermissionDefault { kind, block } => self.set_permission_default(kind, block),
+            UiCmd::ForgetAppLink { site, scheme } => self.forget_app_link(&site, &scheme),
             UiCmd::Zoom { step } => self.zoom_from_bubble(step),
             UiCmd::ZoomBubble { rect, radius } => self.set_zoom_bubble(rect, radius),
             UiCmd::ReportInfo => self.send(&ToUi::ReportInfo {
@@ -653,6 +682,8 @@ impl App {
         }
         self.tabs.active = Some(id);
         self.close_app_link_unless(id);
+        // Запросы уснувших страниц устарели: проснувшаяся спросит заново.
+        self.prune_permission_asks();
         if self.tabs.get(id).is_some_and(|t| t.is_sleeping())
             && let Err(err) = self.wake(id)
         {
@@ -686,6 +717,8 @@ impl App {
         self.limit_live_tabs();
         self.session_dirty = true;
         self.push_state();
+        // Вкладка, на которую перешли, могла ждать ответа на запрос разрешения.
+        self.show_permission_ask();
         // Под открытым окном был снимок прежней вкладки.
         if self.overlay {
             let targets = self.snapshot_targets();
@@ -841,6 +874,7 @@ impl App {
             return;
         };
         let was_active = self.tabs.active == Some(id);
+        self.permissions_tab_gone(id);
         // Закрытые настройки возвращают туда, откуда их открыли.
         let settings = self.tabs.get(id).filter(|t| t.is_settings());
         let prefer = prefer.or(settings.and_then(|t| t.opener));
@@ -955,6 +989,13 @@ impl App {
     }
 
     fn on_load(&mut self, id: TabId, started: bool, url: String) {
+        if self.tabs.get(id).is_none_or(|t| t.webview.is_none()) {
+            return;
+        }
+        // Ушли со страницы: её запросы и «только сейчас» кончились.
+        if started {
+            self.permissions_tab_gone(id);
+        }
         let Some(tab) = self.tabs.get_mut(id).filter(|t| t.webview.is_some()) else {
             return;
         };
@@ -1615,6 +1656,7 @@ impl App {
         let idle = self.idle_limit();
         self.sleep_idle_tabs(idle);
         self.limit_live_tabs();
+        self.prune_permission_asks();
         // Скачивание из панели ИИ прервалось бы вместе с её webview.
         if !self.downloads.busy_untracked() {
             self.ai.sleep_if_idle(idle);

@@ -54,7 +54,7 @@ input,textarea,select{font:inherit;color:inherit}
 .side{display:none;flex-direction:column;gap:6px;width:var(--side-w);flex:none;margin-right:var(--gap);min-height:0}
 [data-layout=side] .side{display:flex}
 .side-top{display:flex;align-items:center;gap:2px;height:32px;flex:none}
-.content{position:relative;flex:1;min-width:0;background:var(--pg);border-radius:var(--r);overflow:hidden;transition:background-color var(--d3),border-radius var(--d2)}
+.content{position:relative;flex:1;min-width:0;background:var(--pg);border-radius:var(--r);overflow:hidden;transition:background-color var(--d3),border-radius var(--d2),margin-top var(--d3) var(--e)}
 
 /* ---------- кнопки ---------- */
 .nav{display:flex;gap:1px}
@@ -799,6 +799,98 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 /* На месте спрятанного webview: выше контента, ниже окон (у них z-index от 15). */
 .snap{position:fixed;z-index:10;overflow:hidden;pointer-events:none}
 .snap img{position:absolute;left:0;top:0;max-width:none;user-select:none}
+
+/* ---------- островок (ui/island.js) ----------
+   Чёрная чёлка у верхнего края, как вырез на макбуке. В тишине её нет совсем: она
+   спрятана за краем окна, а промежутка в ряду вкладок нет. Выезжает вниз, когда звук
+   играет на другой вкладке или идёт загрузка. Цвета свои: чёлка чёрная в любой теме. */
+.isl{position:fixed;top:0;left:50%;z-index:12;width:var(--iw,240px);height:30px;color:#ededed;background:#000;border-radius:0 0 15px 15px;
+  transform:translate(-50%,-115%);opacity:0;pointer-events:none;
+  transition:transform calc(420ms*var(--k)) var(--sp),opacity calc(220ms*var(--k)),width calc(460ms*var(--k)) var(--sp),height calc(460ms*var(--k)) var(--sp),border-radius calc(300ms*var(--k)) var(--e),left calc(300ms*var(--k)) var(--e)}
+.isl.on{transform:translate(-50%,0);opacity:1;pointer-events:auto}
+.isl::before,.isl::after{content:"";position:absolute;top:0;width:10px;height:10px;pointer-events:none}
+.isl::before{left:-10px;background:radial-gradient(circle at 0 100%,transparent 9.5px,#000 10px)}
+.isl::after{right:-10px;background:radial-gradient(circle at 100% 100%,transparent 9.5px,#000 10px)}
+.isl.open{width:var(--ow);height:var(--oh);border-radius:0 0 22px 22px}
+/* Под чёлкой видео (остров ставит src/tabs/mini.rs): чёлка шириной с него,
+   его верх заходит под её скругление. Кнопки — прямо в чёлке. */
+.isl.vid{width:400px;border-radius:0 0 10px 10px}
+.isl.vid .isl-t{text-align:left}
+.isl.vid .isl-r{display:flex;align-items:center;gap:1px;width:auto;height:24px}
+.isl-r .ib{width:24px;height:24px;color:#d0d0d0}
+.isl-r .ib .i{width:14px;height:14px}
+.isl-r .ib:hover{background:#262626;color:#fff}
+.isl-r .isl-ring{margin-right:6px}
+.isl-c{position:absolute;left:0;right:0;top:0;height:30px;display:flex;align-items:center;gap:9px;padding:0 12px 0 7px;transition:opacity calc(160ms*var(--k))}
+.isl.open .isl-c{opacity:0;pointer-events:none}
+.isl-l{display:grid;place-items:center;width:18px;height:18px;flex:none}
+.isl-l .fav{width:18px;height:18px}
+.isl-t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#b8b8b8;font-size:12px;text-align:center}
+.isl-r{display:flex;align-items:center;gap:1px;height:24px;flex:none;color:#b8b8b8}
+.isl-r>.i{width:15px;height:15px}
+.isl-eq{display:flex;align-items:center;gap:2px;height:14px}
+.isl-eq i{display:block;width:3px;height:40%;border-radius:2px;background:var(--acc);animation:isl-eq calc(900ms*var(--k)) ease-in-out infinite}
+.isl-eq i:nth-child(2){animation-delay:calc(250ms*var(--k))}.isl-eq i:nth-child(3){animation-delay:calc(500ms*var(--k))}.isl-eq i:nth-child(4){animation-delay:calc(150ms*var(--k))}
+@keyframes isl-eq{0%,100%{height:30%}50%{height:100%}}
+.isl-ring{width:18px;height:18px;transform:rotate(-90deg)}
+.isl-ring .rt{fill:none;stroke:#2c2c2c;stroke-width:2.4}
+.isl-ring .rp{fill:none;stroke:#7ee08a;stroke-width:2.4;stroke-linecap:round;stroke-dasharray:100;transition:stroke-dashoffset calc(300ms*var(--k))}
+.isl-ring.ind{animation:spin calc(900ms*var(--k)) linear infinite}
+.isl-ok{display:grid;place-items:center;color:#7ee08a;animation:pop calc(300ms*var(--k)) var(--sp) both}
+.isl-ok .i{width:16px;height:16px}
+.isl-ext{display:grid;place-items:center;width:100%;height:100%;border-radius:5px;background:#262626;color:#d6d6d6;font:600 8px/1 var(--font);letter-spacing:.02em}
+.isl-ext .i{width:12px;height:12px}
+.isl-x{position:absolute;inset:0;padding:8px;display:flex;flex-direction:column;opacity:0;pointer-events:none;transition:opacity calc(120ms*var(--k))}
+.isl.open .isl-x{opacity:1;pointer-events:auto;transition:opacity calc(220ms*var(--k)) calc(160ms*var(--k))}
+.isl-row{display:flex;align-items:center;gap:10px;height:50px;padding:0 6px 0 8px;border-radius:14px;flex:none;transition:background-color var(--d1)}
+.isl-row:hover{background:#151515}
+.isl-cv{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#1c1c1c;flex:none}
+.isl-cv .fav{width:20px;height:20px}
+.isl-cv .isl-ext{width:34px;height:34px;border-radius:10px;font-size:10px}
+.isl-m{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.isl-m b{font-weight:600;font-size:13px;color:#f2f2f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.isl-m span{font-size:11.5px;color:#9a9a9a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.isl-a{display:flex;align-items:center;gap:2px;flex:none}
+.isl-a .isl-eq{margin-right:6px}
+.isl-a .isl-ring,.isl-a .isl-ok{margin-right:4px}
+.isl-a .ib{color:#b8b8b8}
+.isl-a .ib:hover{background:#262626;color:#fff}
+.isl-p{display:flex;align-items:center;gap:2px;margin-right:6px}
+.isl-p .ib{color:#ededed}
+.isl-p .ib.big{width:30px;height:30px;border-radius:50%}
+.isl-p .ib.big .i{width:17px;height:17px}
+.isl-gap{flex:none;height:30px;transition:width calc(420ms*var(--k)) var(--e)}
+/* Вкладки сбоку, островок «Сверху»: страница опускается на полосу под чёлку. */
+.app.isl-strip .content{margin-top:32px}
+.app.isl-strip-mini .content{margin-top:10px}
+/* Вкладки сбоку, островок «В боковой панели»: карточка во всю ширину панели над
+   вкладками, видео выезжает под ней. Место под неё держит .isl-slot. */
+.isl-slot{flex:none;height:0;transition:height calc(420ms*var(--k)) var(--e)}
+.isl.panel{width:var(--pw);height:34px;border-radius:12px;transform:none;opacity:0;
+  transition:opacity calc(220ms*var(--k)),height calc(460ms*var(--k)) var(--sp),border-radius calc(300ms*var(--k)) var(--e),top calc(300ms*var(--k)) var(--e)}
+.isl.panel.on{transform:none;opacity:1}
+.isl.panel::before,.isl.panel::after{display:none}
+.isl.panel .isl-c{height:34px}
+.isl.panel.vid{width:var(--pw);border-radius:12px 12px 0 0}
+.isl.panel.open{width:var(--pw);height:var(--oh);border-radius:12px}
+.isl.panel.mini,.isl.panel.mini:hover{width:var(--pw);height:6px;border-radius:3px}
+.isl.panel.mini:hover{height:10px}
+/* Свернуть — только при наведении, справа в чёлке. */
+.isl-fold{opacity:0;transition:opacity var(--d1)}
+.isl:hover .isl-fold,.isl.vid .isl-fold{opacity:1}
+.isl-st{display:grid;place-items:center;color:#b8b8b8;margin-right:2px}
+.isl-st .i{width:15px;height:15px}
+.isl.vid .isl-r,.isl .isl-r:has(.isl-fold){display:flex;align-items:center;gap:1px;width:auto;height:24px}
+/* Свёрнутый островок: тонкая полоска у верхнего края, вкладкам не мешает.
+   Внутри — полоска состояния (загрузка — прогресс). Клик разворачивает. */
+.isl.mini{width:64px;height:10px;border-radius:0 0 8px 8px;cursor:pointer}
+.isl.mini:hover{width:92px;height:14px;border-radius:0 0 10px 10px}
+.isl.mini::before,.isl.mini::after{display:none}
+.isl.mini .isl-c,.isl.mini .isl-x{display:none}
+.isl-pb{display:none;position:absolute;left:12px;right:12px;bottom:2px;height:3px;border-radius:2px;background:#ffffff26;overflow:hidden}
+.isl.mini .isl-pb{display:block}
+.isl-pb i{display:block;height:100%;width:100%;background:#d6d6d6;border-radius:2px;transition:width calc(300ms*var(--k))}
+.isl.mini.dl .isl-pb i{background:#7ee08a}
 
 ::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
 @media (prefers-reduced-motion:reduce){:root{--k:0}}

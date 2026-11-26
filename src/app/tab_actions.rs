@@ -1,11 +1,19 @@
 //! Действия с вкладкой: меню вкладки, звук и громкость, исходный код, печать, масштаб,
 //! инструменты разработчика и ссылки, открытые в фоне.
 
+use wry::{
+    Rect,
+    dpi::{LogicalPosition, LogicalSize},
+};
+
 use super::{App, display_title};
 use crate::{
     events::UserEvent,
     ipc::ToUi,
-    tabs::{Tab, TabId, links, omnibox, script, tools, volume, zoom::Zoom},
+    tabs::{
+        Tab, TabId, links, media, mini, omnibox, script, tools, volume, webview as tab_webview,
+        zoom::Zoom,
+    },
     ui::hotkeys::Hotkey,
 };
 
@@ -202,6 +210,313 @@ impl App {
         }
     }
 
+    // ---------- островок: что играет и кнопки (tabs::media) ----------
+
+    /// Спросить страницу, что играет, и, если надо, нажать кнопку. Ответ уходит в
+    /// интерфейс (`ToUi::Media`). Только живая страница: спящую не будим.
+    pub(super) fn media(&mut self, id: TabId, action: Option<media::Action>) {
+        match action {
+            Some(media::Action::Peek) => {
+                self.mini_open(id);
+                return;
+            }
+            Some(media::Action::Unpeek) => {
+                if let Some(show) = self.mini.as_ref().filter(|s| s.id == id) {
+                    show.stop();
+                }
+                return;
+            }
+            // Видео в окошко: из островка сразу (без анимации), потом окошко — по клику.
+            Some(media::Action::Pip) => {
+                if self.mini.as_ref().is_some_and(|s| s.id == id) {
+                    self.mini_finish(id);
+                }
+                if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
+                    script::run_as_click(webview, &media::action(media::Action::Pip));
+                }
+                self.ask_media(id);
+                return;
+            }
+            _ => {}
+        }
+        let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) else {
+            return;
+        };
+        if let Some(a) = action {
+            script::run(webview, &media::action(a));
+        }
+        self.ask_media(id);
+    }
+
+    fn ask_media(&self, id: TabId) {
+        let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) else {
+            return;
+        };
+        let events = self.events.clone();
+        script::ask(webview, media::QUERY, move |raw| {
+            let _ = events.send_event(UserEvent::TabMedia { id, raw });
+        });
+    }
+
+    // ---------- видео внутри островка (tabs::mini) ----------
+
+    /// Навели мышь на чёлку: страница готовит видео (`MiniReady`), потом вкладка выезжает
+    /// из чёлки. Только вкладка в фоне: на своей вкладке видео и так видно.
+    fn mini_open(&mut self, id: TabId) {
+        if self.mini.is_some() {
+            return;
+        }
+        let webview = self.tabs.get(id).and_then(|t| t.webview.as_ref());
+        let (Some(webview), Some(_), false) =
+            (webview, self.island_dock, self.tabs.active == Some(id))
+        else {
+            self.send(&ToUi::Peek {
+                id,
+                on: false,
+                height: 0.0,
+            });
+            return;
+        };
+        let events = self.events.clone();
+        let asked = script::ask(webview, &media::action(media::Action::Peek), move |raw| {
+            let _ = events.send_event(UserEvent::MiniReady { id, raw });
+        });
+        if asked {
+            self.mini = Some(mini::Show::new(id));
+        } else {
+            self.send(&ToUi::Peek {
+                id,
+                on: false,
+                height: 0.0,
+            });
+        }
+    }
+
+    /// Страница вывела видео поверх себя: вкладка встаёт под чёлку и выезжает.
+    pub(super) fn mini_ready(&mut self, id: TabId, raw: &str) {
+        let size = mini::video_size(raw);
+        let wanted = self.mini.as_ref().is_some_and(|s| s.id == id && !s.closing);
+        let (Some(size), true) = (size, wanted) else {
+            // Показывать нечего или уже не нужно: страницу — как была.
+            if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
+                script::run(webview, &media::action(media::Action::Unpeek));
+            }
+            if self.mini.as_ref().is_some_and(|s| s.id == id) {
+                self.mini = None;
+            }
+            self.send(&ToUi::Peek {
+                id,
+                on: false,
+                height: 0.0,
+            });
+            return;
+        };
+        let shared = match self.mini.as_mut() {
+            Some(show) => {
+                show.video = Some(size);
+                show.shared.clone()
+            }
+            None => return,
+        };
+        self.place_mini(0.0);
+        if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
+            let _ = webview.set_visible(true);
+            tab_webview::set_behind(webview, false);
+        }
+        self.sync_mini_areas();
+        let events = self.events.clone();
+        mini::watch(shared, move || {
+            let _ = events.send_event(UserEvent::MiniEnded(id));
+        });
+        self.mini_frames(id, true);
+        let height = self.mini_dock().map_or(0.0, |d| d.island(size.0, size.1).h);
+        self.send(&ToUi::Peek {
+            id,
+            on: true,
+            height,
+        });
+    }
+
+    /// Кадры выезда (`open`) или уезда: отдельный поток просто тикает, ставит главный.
+    fn mini_frames(&self, id: TabId, open: bool) {
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            for step in 1..=mini::FRAMES {
+                std::thread::sleep(mini::FRAME);
+                if events
+                    .send_event(UserEvent::MiniFrame { id, step, open })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+    }
+
+    pub(super) fn mini_frame(&mut self, id: TabId, step: u8, open: bool) {
+        let Some(show) = self.mini.as_ref().filter(|s| s.id == id) else {
+            return;
+        };
+        // Начал уезжать — кадры выезда больше не нужны.
+        if open == show.closing {
+            return;
+        }
+        let k = if open {
+            mini::open_k(step)
+        } else {
+            mini::close_k(step)
+        };
+        self.place_mini(k);
+        if !open && step >= mini::FRAMES {
+            self.mini_finish(id);
+        }
+    }
+
+    /// Мышь ушла с чёлки и острова (или показ остановили): остров уезжает в чёлку.
+    pub(super) fn mini_ended(&mut self, id: TabId) {
+        let Some(show) = self.mini.as_mut().filter(|s| s.id == id && !s.closing) else {
+            return;
+        };
+        show.closing = true;
+        show.stop();
+        self.mini_frames(id, false);
+    }
+
+    /// Показ закончен: страница как была, вкладка — снова на своём месте (в фоне — скрыта).
+    pub(super) fn mini_finish(&mut self, id: TabId) {
+        let Some(show) = self.mini.take_if(|s| s.id == id) else {
+            return;
+        };
+        show.stop();
+        let active = self.tabs.active == Some(id);
+        if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
+            script::run(webview, &media::action(media::Action::Unpeek));
+            mini::round_bottom(webview, None, 0);
+            if !active {
+                let _ = webview.set_visible(false);
+            }
+            if let Some(rect) = self.content {
+                tab_webview::set_bounds(webview, rect);
+            }
+        }
+        self.send(&ToUi::Peek {
+            id,
+            on: false,
+            height: 0.0,
+        });
+        self.ask_media(id);
+    }
+
+    /// Остров на месте: под чёлкой, высотой `k` от полной (анимация), скруглён снизу.
+    ///
+    /// Вкладка остаётся своего размера (иначе сайт перестроил бы страницу и унёс видео),
+    /// только встаёт левым верхним углом в угол острова (в боковой панели он левее
+    /// страницы); видно лишь вырез острова. Видео страница ставит ровно в остров, с рамкой
+    /// [`mini::PAD`].
+    fn place_mini(&mut self, k: f64) {
+        let scale = self.window.scale_factor();
+        let (Some(show), Some(dock), Some(content)) = (&self.mini, self.mini_dock(), self.content)
+        else {
+            return;
+        };
+        let Some((vw, vh)) = show.video else {
+            return;
+        };
+        let Some(webview) = self.tabs.get(show.id).and_then(|t| t.webview.as_ref()) else {
+            return;
+        };
+        let size = content.size.to_logical::<f64>(scale);
+        let island = dock.island(vw, vh);
+        tab_webview::set_bounds(
+            webview,
+            Rect {
+                position: LogicalPosition::new(island.x, island.y).into(),
+                size: LogicalSize::new(size.width, size.height).into(),
+            },
+        );
+        let px = |v: f64| (v * scale).round() as i32;
+        mini::round_bottom(
+            webview,
+            Some((0, px(island.w), px(island.grown(k).h))),
+            px(mini::RADIUS),
+        );
+        let video = (
+            mini::PAD,
+            mini::PAD,
+            island.w - 2.0 * mini::PAD,
+            island.h - 2.0 * mini::PAD,
+            scale,
+        );
+        if show.sent != Some(video) {
+            script::run(
+                webview,
+                &media::mini_script(video.0, video.1, video.2, video.3, scale),
+            );
+            if let Some(show) = self.mini.as_mut() {
+                show.sent = Some(video);
+            }
+        }
+    }
+
+    fn mini_dock(&self) -> Option<mini::Dock> {
+        let d = self.island_dock?;
+        Some(mini::Dock {
+            cx: d.cx,
+            top: d.top,
+            width: d.width,
+            notch_top: d.notch_top,
+        })
+    }
+
+    /// Чёлка и остров в px экрана — для слежения за мышью.
+    fn sync_mini_areas(&self) {
+        let Some(show) = &self.mini else {
+            return;
+        };
+        let areas = (|| {
+            let (vw, vh) = show.video?;
+            let dock = self.mini_dock()?;
+            if self.window.is_minimized() {
+                return None;
+            }
+            let scale = self.window.scale_factor();
+            let origin = self.window.inner_position().ok()?;
+            let screen = |a: mini::Area| mini::Area {
+                x: f64::from(origin.x) + a.x * scale,
+                y: f64::from(origin.y) + a.y * scale,
+                w: a.w * scale,
+                h: a.h * scale,
+            };
+            Some((screen(dock.notch()), screen(dock.island(vw, vh))))
+        })();
+        if let Ok(mut s) = show.shared.lock() {
+            s.areas = areas;
+        }
+    }
+
+    /// Окно переехало, поменяло размер или чёлка сдвинулась: остров — снова под чёлку.
+    pub(super) fn redock_mini(&mut self) {
+        if self
+            .mini
+            .as_ref()
+            .is_some_and(|s| !s.closing && s.video.is_some())
+        {
+            self.place_mini(1.0);
+        }
+        self.sync_mini_areas();
+    }
+
+    /// Остров поверх всего (выше только что показанной вкладки).
+    pub(super) fn raise_mini(&self) {
+        if let Some(show) = &self.mini
+            && let Some(webview) = self.tabs.get(show.id).and_then(|t| t.webview.as_ref())
+        {
+            tab_webview::set_behind(webview, false);
+        }
+    }
+}
+
+impl App {
     // ---------- ссылки в новой вкладке ----------
 
     /// Сайт просит новое окно. Сначала спрашиваем страницу, не средний ли это клик

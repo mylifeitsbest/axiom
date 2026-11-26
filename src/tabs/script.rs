@@ -23,7 +23,16 @@ use wry::WebView;
 /// Выполняет скрипт, ответ не нужен. `false` — до страницы не дошло.
 #[cfg(windows)]
 pub fn run(webview: &WebView, js: &str) -> bool {
-    evaluate(webview, js, |_| ())
+    evaluate(webview, js, false, |_| ())
+}
+
+/// Выполняет скрипт как действие пользователя. Только в ответ на клик человека в
+/// интерфейсе браузера по действию, которое страница без жеста не выполнит: окошко
+/// «картинка в картинке» (`requestPictureInPicture`) открывается только по клику.
+/// Страница после этого несколько секунд считается «кликнутой» (см. описание модуля).
+#[cfg(windows)]
+pub fn run_as_click(webview: &WebView, js: &str) -> bool {
+    evaluate(webview, js, true, |_| ())
 }
 
 /// Выполняет скрипт и отдаёт его значение в JSON, как `evaluate_script_with_callback`:
@@ -31,11 +40,17 @@ pub fn run(webview: &WebView, js: &str) -> bool {
 /// `false` — до страницы не дошло, ответа не будет.
 #[cfg(windows)]
 pub fn ask(webview: &WebView, js: &str, reply: impl Fn(String) + Send + 'static) -> bool {
-    evaluate(webview, js, reply)
+    evaluate(webview, js, false, reply)
 }
 
 #[cfg(not(windows))]
 pub fn run(webview: &WebView, js: &str) -> bool {
+    webview.evaluate_script(js).is_ok()
+}
+
+/// WebKitGTK и так выполняет скрипт с жестом (см. описание модуля).
+#[cfg(not(windows))]
+pub fn run_as_click(webview: &WebView, js: &str) -> bool {
     webview.evaluate_script(js).is_ok()
 }
 
@@ -45,7 +60,12 @@ pub fn ask(webview: &WebView, js: &str, reply: impl Fn(String) + Send + 'static)
 }
 
 #[cfg(windows)]
-fn evaluate(webview: &WebView, js: &str, reply: impl FnOnce(String) + 'static) -> bool {
+fn evaluate(
+    webview: &WebView,
+    js: &str,
+    gesture: bool,
+    reply: impl FnOnce(String) + 'static,
+) -> bool {
     use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
     use windows_core::HSTRING;
     use wry::WebViewExtWindows;
@@ -64,7 +84,7 @@ fn evaluate(webview: &WebView, js: &str, reply: impl FnOnce(String) + 'static) -
     unsafe {
         webview.webview().CallDevToolsProtocolMethod(
             &HSTRING::from("Runtime.evaluate"),
-            &HSTRING::from(params(js)),
+            &HSTRING::from(params(js, gesture)),
             &handler,
         )
     }
@@ -73,11 +93,11 @@ fn evaluate(webview: &WebView, js: &str, reply: impl FnOnce(String) + 'static) -
 
 /// Параметры `Runtime.evaluate`.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn params(js: &str) -> String {
+fn params(js: &str, gesture: bool) -> String {
     serde_json::json!({
         "expression": js,
-        // Главное: скрипт браузера — не действие человека.
-        "userGesture": false,
+        // Главное: скрипт браузера — не действие человека (кроме `run_as_click`).
+        "userGesture": gesture,
         // Ответ — сразу значением: в странице не остаются ссылки на объекты.
         "returnByValue": true,
         // Как `ExecuteScript`: обещание отдаётся как есть, его не ждём.
@@ -123,12 +143,14 @@ mod tests {
     #[test]
     fn params_without_gesture() {
         let js = r#"window.find("a\"b", false)"#;
-        let p: serde_json::Value = serde_json::from_str(&params(js)).unwrap_or_default();
+        let p: serde_json::Value = serde_json::from_str(&params(js, false)).unwrap_or_default();
         assert_eq!(p["expression"], js);
         assert_eq!(p["userGesture"], false);
         assert_eq!(p["returnByValue"], true);
         assert_eq!(p["awaitPromise"], false);
         assert_eq!(p["silent"], true);
+        let click: serde_json::Value = serde_json::from_str(&params(js, true)).unwrap_or_default();
+        assert_eq!(click["userGesture"], true);
     }
 
     #[test]

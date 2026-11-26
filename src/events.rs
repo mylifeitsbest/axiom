@@ -46,6 +46,24 @@ pub enum UserEvent {
         id: TabId,
         playing: bool,
     },
+    /// Страница ответила, что играет (`tabs::media::QUERY`), — для островка.
+    TabMedia {
+        id: TabId,
+        raw: String,
+    },
+    /// Страница вывела видео поверх себя для островка; `raw` — его размер (`tabs::mini`).
+    MiniReady {
+        id: TabId,
+        raw: String,
+    },
+    /// Кадр выезда (`open`) или уезда острова с видео.
+    MiniFrame {
+        id: TabId,
+        step: u8,
+        open: bool,
+    },
+    /// Мышь ушла с чёлки и острова (или показ остановили).
+    MiniEnded(TabId),
     /// Страница ответила перед усыплением: позиция прокрутки и нет ли недописанного текста.
     SleepChecked(TabId, PageState),
     FindResult(bool),

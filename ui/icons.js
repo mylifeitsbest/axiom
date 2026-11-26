@@ -49,6 +49,14 @@ const ICONS = {
   vol0: '<path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/>',
   mute: '<path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>',
   undo: '<path d="M9 14.5L4.5 10 9 5.5"/><path d="M4.5 10h10a5 5 0 0 1 0 10H11"/>',
+  // Островок: кнопки плеера и «картинка в картинке».
+  play: '<path d="M8 5.8v12.4a.8.8 0 0 0 1.2.7l9.6-6.2a.8.8 0 0 0 0-1.4L9.2 5.1a.8.8 0 0 0-1.2.7z" fill="currentColor"/>',
+  pause: '<rect x="6.5" y="5.5" width="3.8" height="13" rx="1.2" fill="currentColor"/><rect x="13.7" y="5.5" width="3.8" height="13" rx="1.2" fill="currentColor"/>',
+  next: '<path d="M6 6.8v10.4a.7.7 0 0 0 1.1.6l7.4-5.2a.7.7 0 0 0 0-1.2L7.1 6.2a.7.7 0 0 0-1.1.6z" fill="currentColor"/><path d="M18 6v12"/>',
+  prev: '<path d="M18 6.8v10.4a.7.7 0 0 1-1.1.6l-7.4-5.2a.7.7 0 0 1 0-1.2l7.4-5.2a.7.7 0 0 1 1.1.6z" fill="currentColor"/><path d="M6 6v12"/>',
+  pip: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><rect x="12" y="11.5" width="6" height="4.5" rx="1" fill="currentColor"/>',
+  // Свернуть островок в полоску.
+  fold: '<path d="M7 14.5l5-5 5 5"/>',
 };
 
 /// Логотип: плоская тёмная плитка, белая «Λ» без перекладины и акцентная точка.

@@ -105,6 +105,10 @@ fn run() -> Result<()> {
                     app.on_resize();
                     app::Flow::Continue
                 }
+                WindowEvent::Moved(_) => {
+                    app.on_moved();
+                    app::Flow::Continue
+                }
                 _ => app::Flow::Continue,
             },
             Event::UserEvent(user_event) => app.handle(user_event),

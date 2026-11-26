@@ -108,6 +108,10 @@ pub struct App {
     app_links: app_links::State,
     /// Масштаб по сайтам и окошко масштаба.
     zoom: zoom::State,
+    /// Где в окне чёлка островка (от интерфейса, логические px); `None` — её нет.
+    island_dock: Option<ipc::IslandDock>,
+    /// Видео вкладки, показанное внутри островка (`tabs::mini`).
+    mini: Option<crate::tabs::mini::Show>,
 }
 
 impl App {
@@ -175,6 +179,8 @@ impl App {
             settings_leaving: None,
             app_links: app_links::State::default(),
             zoom,
+            island_dock: None,
+            mini: None,
         };
         app.sync_tracking();
         app.restore_session(open);
@@ -221,6 +227,13 @@ impl App {
             }
             UserEvent::TabAudio { id, playing } => self.on_tab_audio(id, playing),
             UserEvent::TabZoom(id, event) => self.on_tab_zoom(id, event),
+            UserEvent::TabMedia { id, raw } => self.send(&ToUi::Media {
+                id,
+                info: crate::tabs::media::Info::parse(&raw),
+            }),
+            UserEvent::MiniReady { id, raw } => self.mini_ready(id, &raw),
+            UserEvent::MiniFrame { id, step, open } => self.mini_frame(id, step, open),
+            UserEvent::MiniEnded(id) => self.mini_ended(id),
             UserEvent::SleepChecked(id, page) => self.finish_sleep(id, page),
             UserEvent::FindResult(found) => self.send(&ToUi::Find { found }),
             UserEvent::Fullscreen { owner, on } => self.on_page_fullscreen(owner, on),
@@ -371,6 +384,11 @@ impl App {
             UiCmd::ReloadTab { id } => self.reload_tab(id),
             UiCmd::DuplicateTab { id } => self.duplicate_tab(id),
             UiCmd::ToggleMute { id } => self.toggle_mute(id),
+            UiCmd::Media { id, action } => self.media(id, action),
+            UiCmd::IslandDock { dock } => {
+                self.island_dock = dock;
+                self.redock_mini();
+            }
             UiCmd::SetVolume { id, volume } => self.set_volume(id, volume),
             UiCmd::CloseOtherTabs { id } => self.close_other_tabs(id),
             UiCmd::CloseTabsRight { id } => self.close_tabs_right(id),
@@ -610,6 +628,9 @@ impl App {
     }
 
     fn activate(&mut self, id: TabId) {
+        if self.mini.as_ref().is_some_and(|s| s.id == id) {
+            self.mini_finish(id);
+        }
         if let Some(prev) = self.tabs.active.filter(|&p| p != id)
             && let Some(tab) = self.tabs.get_mut(prev)
         {
@@ -1432,6 +1453,8 @@ impl App {
             Some(rect) => self.ai.place(ai_full.then_some(rect), false),
             None => self.ai.place(self.ai_bounds(), covered),
         }
+        // Остров с видео — выше показанной вкладки.
+        self.raise_mini();
     }
 
     /// Webview спрятаны под окном интерфейса: окно открыто, и снимок уже
@@ -1443,6 +1466,9 @@ impl App {
     /// Окно интерфейса поверх контента открылось или закрылось.
     fn set_overlay(&mut self, open: bool) {
         self.overlay = open;
+        if open && let Some(show) = &self.mini {
+            show.stop();
+        }
         if open {
             // Webview прячутся, когда интерфейс положит на их место снимок.
             let targets = self.snapshot_targets();
@@ -1495,6 +1521,13 @@ impl App {
         if self.maximized != Some(self.window.is_maximized()) {
             self.push_window_state();
         }
+        self.redock_mini();
+    }
+
+    /// Окно переехало: остров с видео — дочернее окно и едет сам, но мышь мы
+    /// отслеживаем в координатах экрана.
+    pub fn on_moved(&mut self) {
+        self.redock_mini();
     }
 
     fn show_window(&mut self) {

@@ -470,15 +470,13 @@ function createIsland(ax) {
   let gapTimer = 0;
   // Промежуток тянется от конца вкладки слева до правого края чёлки. Где ему встать,
   // решаем перебором: от конца ряда к началу ставим промежуток перед очередной вкладкой,
-  // даём вкладкам ужаться под его ширину (она зависит от того, где он начался, —
-  // несколько проходов; сходится, потому что промежуток до края чёлки растёт медленнее,
-  // чем вкладки сжимаются) и берём первое место, где ни одна вкладка и «+» не заходят
-  // на чёлку. Так пустого места слева от чёлки меньше одной вкладки.
+  // даём вкладкам ужаться под его ширину (она зависит от того, где он начался) и берём
+  // первое место, где ни одна вкладка и «+» не заходят на чёлку. Так пустого места
+  // слева от чёлки меньше одной вкладки.
   function placeGap(z) {
     const list = $('#tablist');
     clearTimeout(gapTimer);
     const was = gap.parentNode === list ? gap.getBoundingClientRect().width : 0;
-    const wasNext = gap.parentNode === list ? gap.nextElementSibling : undefined;
     gap.style.transition = 'none';
     gap.style.width = '0px';
     list.append(gap);
@@ -489,15 +487,31 @@ function createIsland(ax) {
       return;
     }
     const tabs = $$('.tab:not(.out)', list);
+    // Промежуток перед вкладкой k до правого края чёлки. Ширина двигает и его начало:
+    // вкладки слева ужимаются вместе со всеми. Правый край растёт с шириной медленнее её
+    // самой (в две строки, когда слева почти все вкладки, — в разы), поэтому не шагами
+    // «ширина = край − начало» (в узком окне они не доходили до края, промежуток
+    // бросали, и вкладки раздувались под видео), а секущими: пара замеров — и попадаем.
     const fit = (k) => {
       list.insertBefore(gap, tabs[k] || null);
-      let width = 0;
-      for (let i = 0; i < 12; i++) {
-        gap.style.width = `${width}px`;
-        const next = Math.max(0, Math.ceil(z.r - gap.getBoundingClientRect().left));
-        if (Math.abs(next - width) <= 1) { width = Math.max(width, next); break; }
-        width = next;
+      const edge = (w) => {
+        gap.style.width = `${w}px`;
+        return gap.getBoundingClientRect().right - z.r;
+      };
+      let w0 = 0;
+      let f0 = edge(0);
+      if (f0 >= 0) return 0;
+      let w1 = Math.ceil(-f0);
+      let f1 = edge(w1);
+      for (let i = 0; i < 8 && Math.abs(f1) > 0.5; i++) {
+        const step = f1 - f0 > 0.01 ? (f1 * (w1 - w0)) / (f1 - f0) : f1;
+        w0 = w1;
+        f0 = f1;
+        w1 = Math.max(0, w1 - step);
+        f1 = edge(w1);
       }
+      // До края, а не чуть-чуть не доходя: иначе вкладка справа заденет чёлку.
+      const width = Math.max(0, Math.ceil(w1 - Math.min(0, f1)));
       gap.style.width = `${width}px`;
       return width;
     };
@@ -515,8 +529,12 @@ function createIsland(ax) {
       gap.style.transition = '';
       return;
     }
-    // Плавно: от прежней ширины (на прежнем месте) или от нуля.
-    gap.style.width = `${gap.nextElementSibling === wasNext ? was : 0}px`;
+    // Плавно, от прежней ширины — и когда промежуток переехал к другой вкладке (видео
+    // выехало или уехало, и одна вкладка сменила сторону): вкладки сохраняют размер,
+    // перескакивает только эта одна, а потом все вместе ужимаются или раздаются за
+    // чёлкой. С нуля нельзя: на миг весь ряд свободен, вкладки раздаются во всю ширину
+    // с названиями и тут же сжимаются обратно.
+    gap.style.width = `${was}px`;
     void gap.offsetWidth;
     gap.style.transition = '';
     gap.style.width = `${width}px`;

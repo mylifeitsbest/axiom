@@ -1,6 +1,6 @@
 [package]
 name = "axiom"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 description = "Лёгкий десктопный браузер на Rust: минимум памяти, DuckDuckGo и панель Google AI Mode"
 repository = "https://github.com/mylifeitsbest/axiom"

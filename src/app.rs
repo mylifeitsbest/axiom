@@ -1177,6 +1177,9 @@ impl App {
                 let history = self.history.merge(data.history);
                 let _ = self.bookmarks.save(&self.paths);
                 let _ = self.history.save_if_dirty(&self.paths);
+                if bookmarks + history > 0 {
+                    crate::stats::imported();
+                }
                 self.send(&ToUi::Imported {
                     ok: true,
                     browser,

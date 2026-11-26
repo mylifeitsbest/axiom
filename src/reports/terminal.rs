@@ -10,8 +10,12 @@
 //! (поток умрёт вместе с процессом, а там последние слова WebKit и GLib), дописывает
 //! строку с именем сигнала прямо в файл журнала и в терминал, возвращает обработчик
 //! по умолчанию и повторяет сигнал: процесс завершается так же, как без него.
+//! Следом — стек (`backtrace_symbols_fd`): по строкам вида `libwebkit2gtk-4.1.so.0(+0x…)`
+//! видно, в какой библиотеке случился вылет, — нужно для порчи кучи
+//! («free(): corrupted unsorted chunks»), где сама строка о сигнале ничего не говорит.
 //! В обработчике — только то, что можно звать из обработчика сигнала: атомики,
-//! `read`, `write`, `signal`, `raise`.
+//! `read`, `write`, `signal`, `raise`; `backtrace` прогрет заранее (первый вызов
+//! подгружает libgcc_s и выделяет память), а `backtrace_symbols_fd` память не выделяет.
 
 use std::{
     fs::File,
@@ -265,6 +269,7 @@ fn raw_write(fd: RawFd, mut bytes: &[u8]) {
 
 /// Строка о вылете в журнале и на экране для сигналов из [`SIGNALS`].
 pub fn catch_crashes() {
+    warm_up_stack();
     let handler = on_crash as extern "C" fn(libc::c_int);
     for (signal, _) in SIGNALS {
         // SAFETY: `sigaction` из нулей — допустимое значение (без флагов, пустая маска),
@@ -294,6 +299,7 @@ extern "C" fn on_crash(signal: libc::c_int) {
     if tty >= 0 {
         raw_write(tty, line.as_bytes());
     }
+    write_stack(LOG.load(Ordering::Acquire), tty);
     // SAFETY: `signal` и `raise` можно звать из обработчика сигнала. Сигнал заблокирован,
     // пока обработчик не вернётся, — тогда он и сработает по умолчанию (завершение,
     // дамп памяти), с тем же кодом, что и без Axiom.
@@ -302,3 +308,42 @@ extern "C" fn on_crash(signal: libc::c_int) {
         libc::raise(signal);
     }
 }
+
+/// Кадров стека в строке о вылете: хватает дойти от `abort` до виновника.
+#[cfg(target_env = "gnu")]
+const FRAMES: usize = 48;
+
+/// Первый `backtrace` подгружает libgcc_s и выделяет память — делаем это сейчас,
+/// а не в обработчике, где куча может быть уже испорчена.
+#[cfg(target_env = "gnu")]
+fn warm_up_stack() {
+    let mut frames = [std::ptr::null_mut::<libc::c_void>(); 2];
+    // SAFETY: буфер на два кадра, длина передана; функция только заполняет его.
+    unsafe { libc::backtrace(frames.as_mut_ptr(), 2) };
+}
+
+#[cfg(not(target_env = "gnu"))]
+fn warm_up_stack() {}
+
+/// Стек вылета — в журнал и в терминал: адреса со смещениями внутри библиотек.
+/// Только `backtrace` (прогрет) и `backtrace_symbols_fd` (без выделения памяти).
+#[cfg(target_env = "gnu")]
+fn write_stack(log: RawFd, tty: RawFd) {
+    const TITLE: &str = "стек вылета:\n";
+    let mut frames = [std::ptr::null_mut::<libc::c_void>(); FRAMES];
+    // SAFETY: буфер на FRAMES кадров, длина передана; функция только заполняет его.
+    let n = unsafe { libc::backtrace(frames.as_mut_ptr(), FRAMES as libc::c_int) };
+    if n <= 0 {
+        return;
+    }
+    for fd in [log, tty] {
+        if fd >= 0 {
+            raw_write(fd, TITLE.as_bytes());
+            // SAFETY: `n` кадров из `backtrace`; пишет прямо в дескриптор, без malloc.
+            unsafe { libc::backtrace_symbols_fd(frames.as_ptr(), n, fd) };
+        }
+    }
+}
+
+#[cfg(not(target_env = "gnu"))]
+fn write_stack(_log: RawFd, _tty: RawFd) {}

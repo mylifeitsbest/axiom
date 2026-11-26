@@ -649,8 +649,39 @@
   let mode = 'url';
 
   function setIc(name) { $('#omniIc').innerHTML = icon(name); }
-  // Адрес, который строка показывает без правки: к нему возвращают Esc и потеря фокуса.
+  // Адрес, который строка показывает без правки: к нему возвращает Esc.
   const shownUrl = () => { const t = activeTab(); return isPage(t) ? t.url : ''; };
+
+  // Набранное, но не отправленное остаётся в строке, когда из неё уходят (клик по
+  // странице, перетаскивание окна, другое окно), как в Chrome: у каждой вкладки своё.
+  // Сбрасывают его Esc, Enter и переход вкладки на другой адрес.
+  const drafts = new Map(); // id вкладки → { text, url }: что набрали поверх какого адреса
+  let fieldTab = null; // вкладка, чей текст сейчас в поле
+  let typed = false; // в поле печатали с тех пор, как его заполнили
+  function draftFor(t) {
+    const d = t && drafts.get(t.id);
+    if (!d) return null;
+    if (d.url === (isPage(t) ? t.url : '')) return d.text;
+    drafts.delete(t.id);
+    return null;
+  }
+  function keepDraft() {
+    if (!typed || mode !== 'url') return;
+    typed = false;
+    const t = S.tabs.find((x) => x.id === fieldTab);
+    const url = isPage(t) ? t.url : '';
+    if (t && inp.value.trim() && inp.value !== url) drafts.set(t.id, { text: inp.value, url });
+    else drafts.delete(fieldTab);
+  }
+  function dropDraft() {
+    typed = false;
+    drafts.delete(fieldTab);
+  }
+  function fillField() {
+    fieldTab = S.active;
+    typed = false;
+    inp.value = draftFor(activeTab()) ?? shownUrl();
+  }
 
   function renderOmni() {
     const t = activeTab();
@@ -662,16 +693,24 @@
     star.title = t?.bookmarked ? 'В закладках — убрать (Ctrl+D)' : 'Добавить в закладки (Ctrl+D)';
     tr.render(t, S.tabs);
     pm.renderOmni(t);
-    if (document.activeElement === inp || mode === 'find') return;
+    if (mode === 'find') return;
+    if (document.activeElement === inp) {
+      // Вкладку сменили, не выходя из строки (Ctrl+Tab): набранное остаётся своей вкладке.
+      if (fieldTab !== S.active) { keepDraft(); fillField(); inp.select(); }
+      return;
+    }
+    for (const id of drafts.keys()) if (!S.tabs.some((x) => x.id === id)) drafts.delete(id);
+    const draft = draftFor(t);
+    omni.classList.toggle('draft', draft != null);
     if (!pageOpen) {
       omni.classList.add('empty');
-      inp.value = '';
+      inp.value = draft ?? '';
       view.innerHTML = '';
       setIc('search');
       return;
     }
     omni.classList.remove('empty');
-    inp.value = t.url;
+    inp.value = draft ?? t.url;
     const u = parseUrl(t.url);
     // Адрес без хоста (исходный код страницы, view-source:) показываем целиком.
     if (!u || !u.host) { view.textContent = t.url; setIc('globe'); return; }
@@ -707,10 +746,11 @@
     omni.classList.add('focus');
     hideMsg();
     isl.onOmniFocus();
-    if (mode === 'url') inp.value = shownUrl();
+    if (mode === 'url') fillField();
     requestAnimationFrame(() => { if (document.activeElement === inp) inp.select(); });
   });
   inp.addEventListener('blur', () => {
+    keepDraft();
     // Фокус ушёл из окна интерфейса — на страницу или в другое окно. Поле при этом
     // остаётся «активным» и при возврате фокуса снова выделило бы адрес и спрятало
     // кнопки под курсором (звезда не нажималась). Снимаем фокус по-настоящему.
@@ -729,7 +769,7 @@
     e.preventDefault();
     if (!e.target.closest('button') && !e.target.closest('.omni-ic.pm-click')) inp.focus();
   });
-  inp.addEventListener('input', () => { hideMsg(); if (mode === 'find') find(false); else updateSug(); });
+  inp.addEventListener('input', () => { hideMsg(); if (mode === 'find') find(false); else { typed = true; updateSug(); } });
   inp.addEventListener('keydown', onOmniKey);
 
   const looksLikeUrl = (q) => !/\s/.test(q) && (/^[a-z][a-z0-9+.-]*:\/\//i.test(q) || /^localhost(:\d+)?(\/|$)/i.test(q) || /^[^/?#]+\.[\p{L}]{2,}(:\d+)?([/?#]|$)/u.test(q)
@@ -838,6 +878,7 @@
       if (open) hideSug();
       if (field !== inp) { if (!open) field.blur(); return; }
       const url = shownUrl();
+      dropDraft();
       if (inp.value !== url) { inp.value = url; inp.select(); } else inp.blur();
     }
   }
@@ -846,11 +887,13 @@
     if (it.kind === 'ai') { askAi(it.input); return; }
     send(newTab ? { cmd: 'new_tab', input: it.input } : { cmd: 'navigate', input: it.input });
     if (it.kind === 'search' && B.double_search) send({ cmd: 'ai', open: true, query: it.input });
+    if (sugSrc === inp) dropDraft();
     hideSug();
     sugSrc.blur();
   }
   function askAi(q) {
     send({ cmd: 'ai', open: true, query: q });
+    if (sugSrc === inp) dropDraft();
     hideSug();
     sugSrc.blur();
   }
@@ -893,6 +936,7 @@
 
   // ---------- поиск на странице ----------
   function startFind() {
+    if (document.activeElement === inp) keepDraft();
     mode = 'find';
     hideSug();
     omni.classList.add('find');
@@ -907,6 +951,8 @@
     omni.classList.remove('find', 'nf');
     inp.placeholder = 'Поиск или адрес';
     send({ cmd: 'find', q: '', backwards: false });
+    // Ctrl+L из поиска на странице: в поле снова адрес (или набранное), а не запрос поиска.
+    if (document.activeElement === inp) fillField();
     renderOmni();
   }
   let findTimer;

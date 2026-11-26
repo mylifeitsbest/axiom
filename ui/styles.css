@@ -127,8 +127,8 @@ input,textarea,select{font:inherit;color:inherit}
 .omni.focus #omniInput::selection{background:color-mix(in oklab,var(--acc) 34%,transparent);color:var(--t1)}
 .omni-view{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:1px;pointer-events:none;white-space:nowrap;overflow:hidden;color:var(--t1)}
 .omni-view .p{color:var(--t3);overflow:hidden;text-overflow:ellipsis;min-width:0}
-.omni.focus .omni-view,.omni.empty .omni-view,.omni.find .omni-view{display:none}
-.omni:not(.focus):not(.empty):not(.find) #omniInput{color:transparent}
+.omni.focus .omni-view,.omni.empty .omni-view,.omni.find .omni-view,.omni.draft .omni-view{display:none}
+.omni:not(.focus):not(.empty):not(.find):not(.draft) #omniInput{color:transparent}
 /* Сообщение: появляется быстро, держится около секунды и плавно гаснет (время — в app.js). */
 .omni-msg{position:absolute;inset:0;display:block;line-height:32px;text-align:center;background:var(--s1);color:var(--t1);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;visibility:hidden;transition:opacity calc(400ms*var(--k)) ease-in-out,visibility 0s calc(400ms*var(--k))}
 .omni-msg.on{opacity:1;visibility:visible;transition:opacity calc(120ms*var(--k)) var(--e)}

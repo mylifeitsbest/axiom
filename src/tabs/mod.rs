@@ -1,5 +1,6 @@
 //! Модель вкладок. Вкладка без webview — «спящая» или новая: память не занимает.
 
+pub mod error_page;
 pub mod external;
 pub mod fullscreen;
 pub mod identity;

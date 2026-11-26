@@ -203,6 +203,7 @@ pub fn build_tab(
     super::tools::watch_audio(&webview, id, events.clone());
     super::zoom::watch(&webview, id, events.clone());
     crate::reports::watch(&webview, crate::reports::Source::Tab);
+    super::error_page::install(&webview);
     if spec.muted {
         super::tools::set_muted(&webview, true);
     }

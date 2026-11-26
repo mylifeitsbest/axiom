@@ -149,6 +149,10 @@ jobs:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      # Нужны CHANGELOG.md и теги: из них собирается описание релиза.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
@@ -157,27 +161,10 @@ jobs:
         run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Публикация
         run: |
-          cat > notes.md <<'EOF'
-          ## Установка
-
-          **Windows** — скачайте `Axiom-windows-x64.exe` и запустите, или в PowerShell:
-          ```powershell
-          irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
-          ```
-
-          **Linux одной командой** (Ubuntu, Debian, Kali, Arch). На Ubuntu, Debian и Kali подключит
-          подписанный репозиторий, обновления придут через `apt upgrade`. На Arch поставит
-          `axiom-browser-bin` из AUR без обновления системы:
-          ```sh
-          curl -fsSL https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.sh | sh
-          ```
-
-          **Arch из AUR:** `yay -S axiom-browser-bin`.
-
-          Ручная настройка репозиториев: https://mylifeitsbest.github.io/axiom/
-          Пакет на Linux называется `axiom-browser` (в AUR — `axiom-browser-bin`), команда запуска — `axiom-browser`.
-
-          EOF
+          # Описание — что нового в версии: раздел из CHANGELOG.md
+          # (или заголовки коммитов, если раздел забыли дописать).
+          sh packaging/release-notes.sh "$TAG" "$GITHUB_SHA" > notes.md
+          cat notes.md
           # Latest — только самая новая версия. Иначе перевыпуск старого тега
           # стал бы «последним», и обновление предложило бы откат.
           NEWEST=$( { gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name'; echo "$TAG"; } \
@@ -186,8 +173,9 @@ jobs:
           echo "Самая новая версия: $NEWEST, $TAG помечается Latest: $LATEST"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
             if [ "$LATEST" = true ]; then gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest; fi
           else
             gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Axiom $TAG" --notes-file notes.md --generate-notes --latest="$LATEST"
+              --title "Axiom $TAG" --notes-file notes.md --latest="$LATEST"
           fi

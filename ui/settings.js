@@ -39,6 +39,13 @@ function refererOk(v) {
   try { const u = new URL(v.includes('://') ? v : `https://${v}`); return /^https?:$/.test(u.protocol) && !!u.hostname; } catch { return false; }
 }
 
+// ---------- файлы к «Сообщить о проблеме» (как в src/reports/files.rs) ----------
+const BUG_MAX_FILES = 10;
+const BUG_MAX_MB = 50;
+const BUG_SLOTS = 64;
+const BUG_CHUNK = 176 * 1024;
+const BUG_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/avif,video/*,.mkv,.mov,.3gp,text/plain,.txt,.log,.json,.md,.csv';
+
 // ---------- сайты, которые не усыпляем (как в src/tabs/sleep.rs) ----------
 const MAX_SLEEP_SITES = 200;
 // Сайт для списка «не усыплять» (как sleep::site в Rust): https://www.YouTube.com/watch → youtube.com.
@@ -308,9 +315,12 @@ function createPanels(ax) {
         </div>
         <div class="card">
           ${row('Отправлять отчёты об ошибках', 'Автоматически отправлять разработчику отчёт, если Axiom вылетит. Без адресов страниц и личных данных.', toggle('data-bkey', 'crash_reports'), 'data-kw="отчёт ошибка вылет краш crash баг падение"')}
-          <div class="srow" data-kw="баг ошибка отчёт проблема жалоба не работает ответ разработчика сообщения"><span class="sl"><b>Сообщить о проблеме</b><small>Что-то сломалось или ведёт себя странно — расскажите, это уйдёт разработчику</small></span><span class="sc"><button class="btn" data-act="bug-open" id="bugOpen">Сообщить о проблеме</button></span></div>
+          <div class="srow" data-kw="баг ошибка отчёт проблема жалоба не работает ответ разработчика сообщения скриншот снимок экрана фото видео файл"><span class="sl"><b>Сообщить о проблеме</b><small>Что-то сломалось или ведёт себя странно — расскажите, это уйдёт разработчику</small></span><span class="sc"><button class="btn" data-act="bug-open" id="bugOpen">Сообщить о проблеме</button></span></div>
           <div class="bug-box" id="bugBox" hidden>
             <textarea id="bugText" maxlength="4000" placeholder="Что не работает?"></textarea>
+            <div class="bug-files" id="bugFiles" hidden></div>
+            <div class="bug-attach"><button class="btn" data-act="bug-attach">${icon('clip')}Приложить файлы</button><small id="bugFilesNote">Снимки экрана, фото, видео, текст — до ${BUG_MAX_FILES} файлов и ${BUG_MAX_MB} МБ. Можно перетащить сюда или вставить снимок через Ctrl+V</small></div>
+            <input type="file" id="bugPick" multiple hidden accept="${BUG_ACCEPT}">
             <label class="bug-log"><input type="checkbox" class="tg" id="bugLog" checked><span class="sl"><b>Приложить журнал</b><small id="bugLogNote">Последние записи Axiom о его работе</small></span></label>
             <div class="btns"><button class="btn primary" data-act="bug-send" id="bugSend">Отправить</button><button class="btn ghost" data-act="bug-cancel">Отмена</button><small class="bug-hint">Если разработчик ответит, ответ появится здесь же, в Axiom</small></div>
           </div>
@@ -731,6 +741,8 @@ function createPanels(ax) {
       case 'bug-open': toggleBug(); break;
       case 'bug-cancel': toggleBug(false); break;
       case 'bug-send': sendBug(); break;
+      case 'bug-attach': $('#bugPick').click(); break;
+      case 'bug-unattach': unattach(+b.dataset.slot); break;
       default: break;
     }
   }
@@ -755,9 +767,177 @@ function createPanels(ax) {
     if ($('#bugSend').classList.contains('busy')) return;
     if (!text) { ax.toast('Опишите, что не работает'); input.focus(); return; }
     $('#bugSend').classList.add('busy');
-    ax.send({ cmd: 'report', text, log: $('#bugLog').checked });
+    // Файлы ещё переписываются в Axiom — отчёт уйдёт, как только они допишутся.
+    if (bugFiles.some((f) => f.state === 'wait' || f.state === 'copy')) { bugSendLater = true; return; }
+    const files = bugFiles.filter((f) => f.state === 'ok').map((f) => ({ slot: f.slot, name: f.name }));
+    ax.send({ cmd: 'report', text, log: $('#bugLog').checked, files });
   }
-  const size = (n) => (n < 1024 ? `${n} Б` : `${Math.max(1, Math.round(n / 1024))} КБ`);
+
+  // Файлы к отчёту. Интерфейс читает их сам и передаёт в Rust кусками (base64):
+  // следующий кусок — после ответа на предыдущий. Rust ещё раз проверяет тип по
+  // первым байтам, а перед отправкой убирает у фото и видео место съёмки.
+  let bugFiles = [];
+  let bugSlot = 0;
+  let bugCopying = null;
+  let bugSendLater = false;
+  function bugKind(f) {
+    const ext = (f.name.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
+    const type = (f.type || '').toLowerCase();
+    if (/heic|heif/.test(type) || ext === 'heic' || ext === 'heif') return 'heic';
+    if (/^image\/(png|jpeg|gif|webp|avif)$/.test(type) || /^(png|jpe?g|gif|webp|avif)$/.test(ext)) return 'image';
+    if (/^video\//.test(type) || /^(mp4|m4v|mov|webm|mkv|3gp)$/.test(ext)) return 'video';
+    if (/^text\//.test(type) || /^(txt|log|json|md|csv)$/.test(ext)) return 'text';
+    return '';
+  }
+  function attach(list) {
+    const box = $('#bugBox');
+    if (!list?.length || !box || box.hidden) return;
+    let total = bugFiles.reduce((n, f) => n + f.size, 0);
+    for (const file of list) {
+      const kind = bugKind(file);
+      let why = '';
+      if (bugFiles.length >= BUG_MAX_FILES) why = `Не больше ${BUG_MAX_FILES} файлов`;
+      else if (kind === 'heic') why = 'HEIC не открыть в браузере — сохраните фото как JPG или PNG';
+      else if (!kind) why = `«${file.name}» не приложить: подойдут фото, снимки экрана, видео и текст`;
+      else if (!file.size) why = `«${file.name}» пустой`;
+      else if (total + file.size > BUG_MAX_MB * 1024 * 1024) why = `Файлы вместе — не больше ${BUG_MAX_MB} МБ`;
+      if (why) { ax.toast(why); if (bugFiles.length >= BUG_MAX_FILES) break; continue; }
+      // Место по кругу: ответ про убранный файл не спутать с новым на том же месте.
+      while (bugFiles.some((f) => f.slot === bugSlot)) bugSlot = (bugSlot + 1) % BUG_SLOTS;
+      // Снимок из буфера обмена приходит как image.png.
+      const name = /^image\.(png|jpe?g|gif|webp)$/i.test(file.name) ? `Снимок экрана.${file.name.split('.').pop()}` : file.name;
+      bugFiles.push({ slot: bugSlot, file, name, size: file.size, kind, sent: 0, state: 'wait', url: kind === 'text' ? '' : URL.createObjectURL(file) });
+      bugSlot = (bugSlot + 1) % BUG_SLOTS;
+      total += file.size;
+    }
+    renderBugFiles();
+    pumpBugFiles();
+  }
+  function unattach(slot) {
+    const f = bugFiles.find((x) => x.slot === slot);
+    if (!f) return;
+    if (f.url) URL.revokeObjectURL(f.url);
+    bugFiles = bugFiles.filter((x) => x !== f);
+    if (bugCopying === f) bugCopying = null;
+    if (f.state !== 'wait') ax.send({ cmd: 'report_file_drop', slot });
+    renderBugFiles();
+    pumpBugFiles();
+  }
+  function clearBugFiles() {
+    for (const f of bugFiles) if (f.url) URL.revokeObjectURL(f.url);
+    bugFiles = [];
+    bugCopying = null;
+    renderBugFiles();
+  }
+  const b64 = (bytes) => {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
+  async function pumpBugFiles() {
+    if (bugCopying) return;
+    const f = bugFiles.find((x) => x.state === 'wait');
+    if (!f) {
+      if (bugSendLater) { bugSendLater = false; $('#bugSend')?.classList.remove('busy'); sendBug(); }
+      return;
+    }
+    bugCopying = f;
+    f.state = 'copy';
+    sendBugChunk(f);
+  }
+  async function sendBugChunk(f) {
+    let bytes;
+    try {
+      bytes = new Uint8Array(await f.file.slice(f.sent, f.sent + BUG_CHUNK).arrayBuffer());
+    } catch {
+      onReportFile({ slot: f.slot, error: `«${f.name}» не прочитать — может, его переместили` });
+      return;
+    }
+    if (bugCopying !== f) return;
+    f.expect = f.sent + bytes.length;
+    ax.send({ cmd: 'report_file', slot: f.slot, offset: f.sent, data: b64(bytes) });
+  }
+  function onReportFile(m) {
+    const f = bugCopying;
+    if (!f || f.slot !== m.slot) return;
+    if (m.error) {
+      bugCopying = null;
+      if (f.url) URL.revokeObjectURL(f.url);
+      bugFiles = bugFiles.filter((x) => x !== f);
+      ax.toast(m.error);
+      // Файл не принят — и отчёт с ним не уйдёт сам: человек решит, отправлять ли без него.
+      if (bugSendLater) { bugSendLater = false; $('#bugSend')?.classList.remove('busy'); }
+      renderBugFiles();
+      pumpBugFiles();
+      return;
+    }
+    if (m.size !== f.expect) return;
+    f.sent = m.size;
+    if (f.sent >= f.size) { f.state = 'ok'; bugCopying = null; }
+    renderBugFile(f);
+    if (bugCopying === f) sendBugChunk(f);
+    else pumpBugFiles();
+  }
+  function bugThumb(f) {
+    if (f.kind === 'image') return `<img src="${esc(f.url)}" alt="">`;
+    if (f.kind === 'video') return `<video src="${esc(f.url)}" muted preload="metadata"></video><span class="play">${icon('play')}</span>`;
+    return icon('file');
+  }
+  function renderBugFiles() {
+    const wrap = $('#bugFiles');
+    if (!wrap) return;
+    wrap.hidden = !bugFiles.length;
+    wrap.innerHTML = bugFiles.map((f) => `<div class="bug-file" data-slot="${f.slot}">
+        <span class="th">${bugThumb(f)}</span>
+        <span class="nm"><b title="${esc(f.name)}">${esc(f.name)}</b><small></small></span>
+        <button class="ib sm" data-act="bug-unattach" data-slot="${f.slot}" title="Убрать">${icon('x')}</button>
+        <span class="bar"><i></i></span></div>`).join('')
+      + (bugFiles.length ? '<p class="bug-files-note">У фото и видео Axiom уберёт место съёмки и данные камеры. То, что видно на самом снимке, уйдёт как есть.</p>' : '');
+    for (const f of bugFiles) renderBugFile(f);
+    const note = $('#bugFilesNote');
+    if (note) {
+      const left = BUG_MAX_FILES - bugFiles.length;
+      const used = bugFiles.reduce((n, x) => n + x.size, 0);
+      note.textContent = bugFiles.length
+        ? `${bugFiles.length} из ${BUG_MAX_FILES}, ${size(used)} из ${BUG_MAX_MB} МБ${left ? '' : ' — больше не добавить'}`
+        : `Снимки экрана, фото, видео, текст — до ${BUG_MAX_FILES} файлов и ${BUG_MAX_MB} МБ. Можно перетащить сюда или вставить снимок через Ctrl+V`;
+    }
+  }
+  function renderBugFile(f) {
+    const el = $(`.bug-file[data-slot="${f.slot}"]`);
+    if (!el) return;
+    const done = f.state === 'ok';
+    el.classList.toggle('copy', !done);
+    $('small', el).textContent = done || !f.size ? size(f.size) : `${size(f.size)} · ${Math.floor((f.sent / f.size) * 100)}%`;
+    $('.bar i', el).style.width = `${done ? 100 : (f.sent / f.size) * 100}%`;
+  }
+  function bindBugFiles() {
+    const box = $('#bugBox');
+    const pick = $('#bugPick');
+    pick.addEventListener('change', () => { attach(Array.from(pick.files || [])); pick.value = ''; });
+    const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+    box.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      box.classList.add('drag');
+    });
+    box.addEventListener('dragleave', (e) => { if (!box.contains(e.relatedTarget)) box.classList.remove('drag'); });
+    box.addEventListener('drop', (e) => {
+      box.classList.remove('drag');
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      attach(Array.from(e.dataTransfer.files || []));
+    });
+    // Снимок экрана из буфера: Win+Shift+S, PrtSc, «Копировать изображение».
+    box.addEventListener('paste', (e) => {
+      const files = Array.from(e.clipboardData?.files || []);
+      if (!files.length || (e.clipboardData.types || []).includes('text/plain')) return;
+      e.preventDefault();
+      attach(files);
+    });
+  }
+  const size = (n) => (n < 1024 ? `${n} Б` : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} МБ`);
   function onReportInfo(m) {
     const note = $('#bugLogNote');
     if (!note) return;
@@ -787,8 +967,18 @@ function createPanels(ax) {
 
   function onReported(m) {
     $('#bugSend')?.classList.remove('busy');
-    if (!m.done || !built) return;
+    bugSendLater = false;
+    if (!built) return;
+    if (!m.done) {
+      // Rust уже забрал файлы под неудавшийся отчёт: для новой попытки перепишем их заново.
+      for (const f of bugFiles) { f.state = 'wait'; f.sent = 0; }
+      bugCopying = null;
+      renderBugFiles();
+      pumpBugFiles();
+      return;
+    }
     $('#bugText').value = '';
+    clearBugFiles();
     toggleBug(false);
   }
 
@@ -846,6 +1036,7 @@ function createPanels(ax) {
   function bindSheet() {
     sheet.addEventListener('input', onInput);
     sheet.addEventListener('click', onClick);
+    bindBugFiles();
     sheet.addEventListener('keydown', (e) => {
       if (e.target.id === 'proxyIn' && e.key === 'Enter') applyProxy(sheet);
       if (e.target.id === 'seCustomIn' && e.key === 'Enter') applyCustomSearch();
@@ -1173,5 +1364,5 @@ function createPanels(ax) {
     return many;
   }
 
-  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon, onReportInfo, onReported, bugSoon };
+  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon, onReportInfo, onReported, onReportFile, bugSoon };
 }

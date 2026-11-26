@@ -33,8 +33,11 @@ pub fn is_ui_origin(url: &str) -> bool {
 /// других картинок из сети не грузит, а свой CSS человека (тоже часть интерфейса)
 /// не сможет ничего унести на чужой сервер под видом картинки по другому адресу.
 /// Свой CSS ещё и чистится перед применением (`applyUserCss` в `ui/app.js`).
+/// `blob:` — превью файлов, выбранных в «Сообщить о проблеме»: адреса `blob:`
+/// создаёт только сама страница интерфейса.
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                   img-src 'self' data: https://*:*/favicon.ico http://*:*/favicon.ico; \
+                   img-src 'self' data: blob: https://*:*/favicon.ico http://*:*/favicon.ico; \
+                   media-src blob:; \
                    font-src 'self'; connect-src 'none'; \
                    base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -205,13 +208,19 @@ mod tests {
             .map(str::trim)
             .find(|d| d.starts_with("img-src"))
             .unwrap_or_default();
-        // Ни `https:` целиком, ни `*`: из сети — только /favicon.ico.
+        // Ни `https:` целиком, ни `*`: из сети — только /favicon.ico. `blob:` — не сеть,
+        // а файлы, которые сама страница выбрала для «Сообщить о проблеме».
         for source in img.split_whitespace().skip(1) {
             assert!(
-                matches!(source, "'self'" | "data:") || source.ends_with("/favicon.ico"),
+                matches!(source, "'self'" | "data:" | "blob:") || source.ends_with("/favicon.ico"),
                 "{source}"
             );
         }
+        let media = CSP
+            .split(';')
+            .map(str::trim)
+            .find(|d| d.starts_with("media-src"));
+        assert_eq!(media, Some("media-src blob:"));
     }
 
     #[test]

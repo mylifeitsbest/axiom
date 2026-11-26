@@ -544,6 +544,26 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 .bug-box{padding:14px 0 16px;border-top:1px solid var(--line)}
 .bug-box[hidden]{display:none}
 .sheet .bug-box textarea{min-height:96px;font:inherit;font-size:calc(var(--fs) + 1px);line-height:1.5}
+.bug-box.drag{margin:0 -10px;padding-left:10px;padding-right:10px;border-radius:calc(var(--r)*.75);background:color-mix(in oklab,var(--acc) 8%,transparent);box-shadow:inset 0 0 0 1.5px var(--acc)}
+.bug-attach{display:flex;align-items:center;gap:12px;margin-top:10px}
+.bug-attach .btn{flex:none}
+.bug-attach .btn .i{width:15px;height:15px}
+.bug-attach small{color:var(--t3);line-height:1.4}
+.bug-files{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin-top:10px}
+.bug-files[hidden]{display:none}
+.bug-file{position:relative;display:flex;align-items:center;gap:10px;min-width:0;height:54px;padding:6px 6px 6px 7px;border-radius:calc(var(--r)*.75);background:var(--s1);box-shadow:inset 0 0 0 1px var(--line);animation:fade var(--d2) both}
+.bug-file .th{position:relative;display:grid;place-items:center;width:40px;height:40px;flex:none;overflow:hidden;border-radius:calc(var(--r)*.5);background:var(--s2);color:var(--t2)}
+.bug-file .th img,.bug-file .th video{width:100%;height:100%;object-fit:cover;display:block}
+.bug-file .th .i{width:18px;height:18px}
+.bug-file .th .play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;background:rgb(0 0 0/.28)}
+.bug-file .th .play .i{width:14px;height:14px}
+.bug-file .nm{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.bug-file .nm b{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:500;color:var(--t1)}
+.bug-file .nm small{color:var(--t3);font-variant-numeric:tabular-nums}
+.bug-file .bar{position:absolute;left:57px;right:12px;bottom:6px;height:2px;overflow:hidden;border-radius:2px;background:var(--line);opacity:0;transition:opacity var(--d2)}
+.bug-file.copy .bar{opacity:1}
+.bug-file .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width var(--d1)}
+.bug-files-note{grid-column:1/-1;margin:2px 0 0;color:var(--t3);font-size:var(--fs);line-height:1.45}
 .bug-log{display:flex;align-items:center;gap:14px;margin-top:12px;cursor:pointer}
 .bug-log .sl b{font-size:calc(var(--fs) + 1px)}
 .bug-hint{align-self:center;margin-left:auto;color:var(--t3);font-size:calc(var(--fs) - 1px)}

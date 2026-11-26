@@ -5,16 +5,19 @@
 //!   (сбой в нативном коде, снятый процесс) виден при следующем запуске по оставшейся
 //!   метке `axiom.running` — тогда в отчёт идёт конец журнала прошлого запуска.
 //! - Падение процесса страницы или интерфейса (см. [`watch`]).
-//! - «Сообщить о проблеме» в настройках — его отправляет сам человек.
+//! - «Сообщить о проблеме» в настройках — его отправляет сам человек, можно с файлами
+//!   (снимки экрана, фото, видео, текст; см. [`files`]).
 //!
 //! Отчёты ждут в папке `reports` профиля и уходят фоновым потоком через системный
-//! `curl` на `POST {STATS_URL}/r`. Ещё до записи на диск из текста и журнала
-//! вычищаются адреса, пути с именем пользователя, почта и токены (см. [`scrub`]).
-//! Автоматические отчёты уходят, только если включено «Отправлять отчёты об ошибках»;
-//! выключено — они удаляются, не уходя никуда.
+//! `curl` на `POST {STATS_URL}/r` (с файлами — на `/rf`). Ещё до записи на диск из
+//! текста и журнала вычищаются адреса, пути с именем пользователя, почта и токены
+//! (см. [`scrub`]). Автоматические отчёты уходят, только если включено «Отправлять
+//! отчёты об ошибках»; выключено — они удаляются, не уходя никуда.
 
 pub mod answers;
+mod files;
 mod journal;
+mod meta;
 mod scrub;
 #[cfg(target_os = "linux")]
 mod terminal;
@@ -39,8 +42,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tao::event_loop::EventLoopProxy;
 
+pub use self::files::{MAX_CHUNK, MAX_FILES, SLOTS};
 pub use self::watch::{Source, watch};
 use crate::events::UserEvent;
+use files::Attached;
 
 /// Метка «Axiom запущен»: остаётся на диске, только если процесс не закрылся сам.
 const MARKER: &str = "axiom.running";
@@ -98,6 +103,9 @@ struct Report {
     /// спросит ответ разработчика (см. [`answers`]). Ни с чем больше не связан.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token: Option<String>,
+    /// Файлы к «Сообщить о проблеме»: имена и размеры, байты — в папке отчёта.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    files: Vec<Attached>,
 }
 
 /// Чем закончилась отправка «Сообщить о проблеме».
@@ -108,6 +116,8 @@ pub enum Outcome {
     Queued,
     /// Сервер не принял или отправка невозможна.
     Failed,
+    /// Выбранный файл не приложить (текст для человека): отчёт не ушёл.
+    Files(&'static str),
 }
 
 /// Что лежит в метке запуска.
@@ -214,6 +224,7 @@ pub fn start(root: &Path, heavy: bool) {
         record(Kind::Crash, &version, &text, &log);
     }
     write_marker(root, false);
+    files::sweep(&root.join(DIR));
     spawn_sender(rx);
     // Только для проверки отчётов (debug-сборка): паника в фоновом потоке через 5 с.
     #[cfg(debug_assertions)]
@@ -275,20 +286,51 @@ pub fn log_size() -> usize {
             text: state.about.clone(),
             log: journal::tail(&state.root, READ_LOG),
             token: None,
+            files: Vec::new(),
         };
         report.clean(&state.private);
         report.log.len()
     })
 }
 
+/// Кусок файла, выбранного в «Сообщить о проблеме» (`slot` — его место в форме,
+/// `offset` — сколько байт уже пришло, `data` — base64). Ответ — сколько байт файла
+/// теперь на диске или почему файл не принят (текст для человека).
+pub fn attach(slot: usize, offset: u64, data: &str) -> Result<u64, &'static str> {
+    let Some(state) = STATE.get() else {
+        return Err(files::Refused::Io.text());
+    };
+    files::write_chunk(&state.root, slot, offset, data).map_err(files::Refused::text)
+}
+
+/// Файл убрали из формы.
+pub fn detach(slot: usize) {
+    if let Some(state) = STATE.get() {
+        files::drop_slot(&state.root, slot);
+    }
+}
+
 /// «Сообщить о проблеме»: отправить сейчас в фоне; без связи — сохранить на потом.
-/// Итог приходит событием `UserEvent::Reported`.
-pub fn send_user(text: &str, with_log: bool, events: EventLoopProxy<UserEvent>) {
+/// `files` — места выбранных файлов и их имена. Итог приходит событием
+/// `UserEvent::Reported`.
+pub fn send_user(
+    text: &str,
+    with_log: bool,
+    files: &[(usize, String)],
+    events: EventLoopProxy<UserEvent>,
+) {
     let Some(state) = STATE.get() else {
         let _ = events.send_event(UserEvent::Reported(Outcome::Failed));
         return;
     };
     let token = answers::token();
+    let taken = match files::take(&state.root, files, &stamp()) {
+        Ok(taken) => taken,
+        Err(refused) => {
+            let _ = events.send_event(UserEvent::Reported(Outcome::Files(refused.text())));
+            return;
+        }
+    };
     let mut report = Report {
         kind: Kind::User,
         version: crate::update::current_string().into(),
@@ -300,14 +342,20 @@ pub fn send_user(text: &str, with_log: bool, events: EventLoopProxy<UserEvent>) 
             String::new()
         },
         token: Some(token.clone()),
+        files: Vec::new(),
     };
-    report.clean(&state.private);
     let text = text.to_string();
     thread::spawn(move || {
-        let outcome = match endpoint("r").map(|url| post(&url, &report)) {
+        // Метаданные фото и видео вырезаются здесь: на видео в 50 МБ это заметно.
+        let dir = taken.map(|taken| {
+            report.files = files::clean(&taken.dir, &taken.files, &state.private);
+            taken.dir
+        });
+        report.clean(&state.private);
+        let outcome = match endpoint("r").map(|url| post_report(&url, &report, dir.as_deref())) {
             Some(Posted::Ok) => Outcome::Sent,
             Some(Posted::Rejected) | None => Outcome::Failed,
-            Some(Posted::Later) => match save(&state.root, &report) {
+            Some(Posted::Later) => match save(&state.root, &report, dir.as_deref()) {
                 Ok(()) => Outcome::Queued,
                 Err(_) => Outcome::Failed,
             },
@@ -315,6 +363,10 @@ pub fn send_user(text: &str, with_log: bool, events: EventLoopProxy<UserEvent>) 
         // Ушло или уйдёт само — ждём ответа.
         if outcome != Outcome::Failed {
             answers::remember(&state.root, token, &text);
+        }
+        // Ушёл или не сохранился — файлы больше не нужны (сохранённый их уже забрал).
+        if let Some(dir) = dir {
+            let _ = fs::remove_dir_all(dir);
         }
         let _ = events.send_event(UserEvent::Reported(outcome));
     });
@@ -482,32 +534,55 @@ fn record(kind: Kind, version: &str, text: &str, log: &str) {
         text: format!("{}\n\n{text}", state.about),
         log: log.into(),
         token: None,
+        files: Vec::new(),
     };
     report.clean(&state.private);
-    if let Err(err) = save(&state.root, &report) {
+    if let Err(err) = save(&state.root, &report, None) {
         eprintln!("отчёт об ошибке не записан: {err:#}");
         return;
     }
     let _ = state.wake.send(());
 }
 
-fn save(root: &Path, report: &Report) -> anyhow::Result<()> {
+/// Сохранить отчёт до следующей попытки. `files` — папка с его файлами: она
+/// переезжает к отчёту (`reports/<имя>/`).
+fn save(root: &Path, report: &Report, files: Option<&Path>) -> anyhow::Result<()> {
     let dir = root.join(DIR);
     fs::create_dir_all(&dir)?;
     // Место под новый: самые старые уходят.
     let pending = pending(&dir);
     let extra = (pending.len() + 1).saturating_sub(MAX_PENDING);
     for (path, _) in pending.iter().take(extra) {
-        let _ = fs::remove_file(path);
+        remove(path);
     }
-    // Имя сортируется как время: миллисекунды и номер внутри одной миллисекунды.
+    let path = dir.join(format!("{}-{}.json", stamp(), report.kind.as_str()));
+    // Сначала файлы, потом сам отчёт: отправка смотрит только на отчёты.
+    let mut report = report.clone();
+    match files {
+        Some(from) if !report.files.is_empty() => {
+            if fs::rename(from, files::dir_of(&path)).is_err() {
+                report.files.clear();
+            }
+        }
+        _ => report.files.clear(),
+    }
+    crate::storage::write_json_compact(&path, &report)
+}
+
+/// Имя, которое сортируется как время: миллисекунды и номер внутри одной миллисекунды.
+fn stamp() -> String {
     static SEQ: AtomicU32 = AtomicU32::new(0);
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     let seq = SEQ.fetch_add(1, Ordering::Relaxed) % 10_000;
-    let name = format!("{millis:013}-{seq:04}-{}.json", report.kind.as_str());
-    crate::storage::write_json_compact(&dir.join(name), report)
+    format!("{millis:013}-{seq:04}")
+}
+
+/// Удалить отчёт вместе с его файлами.
+fn remove(path: &Path) {
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_dir_all(files::dir_of(path));
 }
 
 /// Неотправленные отчёты, старые первыми. Битые и просроченные удаляются.
@@ -532,9 +607,7 @@ fn pending(dir: &Path) -> Vec<(PathBuf, Report)> {
             .and_then(|b| serde_json::from_slice::<Report>(&b).ok());
         match report {
             Some(report) if !old => out.push((path, report)),
-            _ => {
-                let _ = fs::remove_file(&path);
-            }
+            _ => remove(&path),
         }
     }
     out
@@ -577,7 +650,7 @@ fn send_pending() {
                 0 => continue,
                 // Человек выключил отчёты: не храним то, что не уйдёт.
                 1 => {
-                    let _ = fs::remove_file(&path);
+                    remove(&path);
                     continue;
                 }
                 _ if quiet => continue,
@@ -587,10 +660,8 @@ fn send_pending() {
         let mut report = report;
         // Отчёт мог записать прежний Axiom: очищаем ещё раз по нынешним правилам.
         report.clean(&state.private);
-        match post(&url, &report) {
-            Posted::Ok | Posted::Rejected => {
-                let _ = fs::remove_file(&path);
-            }
+        match post_report(&url, &report, Some(&files::dir_of(&path))) {
+            Posted::Ok | Posted::Rejected => remove(&path),
             // Нет связи или сервер просит подождать — остальные тоже не уйдут.
             Posted::Later => return,
         }
@@ -618,18 +689,66 @@ fn endpoint(path: &str) -> Option<String> {
     Some(format!("{base}/{path}"))
 }
 
-fn post(url: &str, report: &Report) -> Posted {
-    let Ok(body) = serde_json::to_vec(report) else {
+/// Отчёт без файлов — JSON на `/r`, с файлами (`dir` — их папка) — на `/rf`:
+/// строка JSON со списком файлов и сами файлы подряд. Старый сервер про `/rf` не знает
+/// и отвечает 404 (а старый Caddy — 413): такой отчёт ждёт, а не теряется.
+fn post_report(url: &str, report: &Report, dir: Option<&Path>) -> Posted {
+    let dir = dir.filter(|_| !report.files.is_empty());
+    let attached = dir.map_or_else(Vec::new, |dir| files::on_disk(dir, &report.files));
+    let (Some(dir), false) = (dir, attached.is_empty()) else {
+        let report = Report {
+            files: Vec::new(),
+            ..report.clone()
+        };
+        let Ok(body) = serde_json::to_vec(&report) else {
+            return Posted::Rejected;
+        };
+        return post(url, "application/json", 0, |stdin| stdin.write_all(&body));
+    };
+    let report = Report {
+        files: attached,
+        ..report.clone()
+    };
+    let Ok(header) = serde_json::to_vec(&report) else {
         return Posted::Rejected;
     };
+    let size: u64 = report.files.iter().map(|f| f.size).sum();
+    post(
+        &format!("{url}f"),
+        "application/x-axiom-report",
+        size,
+        |stdin| files::write_body(stdin, &header, dir, report.files.len()),
+    )
+}
+
+/// `POST` через curl: `body` пишет тело в его stdin, `big` — сколько в нём байт файлов
+/// (от этого зависит, сколько ждать).
+fn post(
+    url: &str,
+    content_type: &str,
+    big: u64,
+    body: impl FnOnce(&mut std::process::ChildStdin) -> std::io::Result<()>,
+) -> Posted {
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let mut cmd = crate::stats::curl();
-    cmd.args(["-X", "POST", "-H", "Content-Type: application/json"])
+    cmd.args(["-X", "POST", "-H"])
+        .arg(format!("Content-Type: {content_type}"))
         .args(["--data-binary", "@-", "--output", null])
-        .args(["--write-out", "%{http_code}"])
-        .arg(url)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped());
+        .args(["--write-out", "%{http_code}"]);
+    if big > 0 {
+        // Видео на медленной связи идёт минутами: ждём по 32 КБ/с, но не дольше получаса,
+        // а совсем застрявшую отправку (меньше 1 КБ/с за минуту) бросаем.
+        let secs = (60 + big / (32 * 1024)).min(30 * 60);
+        cmd.arg("--max-time").arg(secs.to_string()).args([
+            "--speed-limit",
+            "1024",
+            "--speed-time",
+            "60",
+            "-H",
+            "Expect:",
+        ]);
+    }
+    cmd.arg(url).stdin(Stdio::piped()).stdout(Stdio::piped());
     let Ok(mut child) = cmd.spawn() else {
         return Posted::Later;
     };
@@ -637,7 +756,7 @@ fn post(url: &str, report: &Report) -> Posted {
     let written = child
         .stdin
         .take()
-        .is_some_and(|mut stdin| stdin.write_all(&body).is_ok());
+        .is_some_and(|mut stdin| body(&mut stdin).is_ok());
     let Ok(out) = child.wait_with_output() else {
         return Posted::Later;
     };
@@ -739,6 +858,7 @@ mod tests {
             text: text.into(),
             log: log.into(),
             token: None,
+            files: Vec::new(),
         }
     }
 
@@ -800,7 +920,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("axiom-reports-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         for i in 0..(MAX_PENDING + 3) {
-            save(&root, &report(&format!("r{i}"), ""))?;
+            save(&root, &report(&format!("r{i}"), ""), None)?;
         }
         let _ = fs::write(root.join(DIR).join("0-broken.json"), b"{");
         let left = pending(&root.join(DIR));
@@ -809,6 +929,39 @@ mod tests {
         // Остались самые новые, битый удалён.
         assert_eq!(left.last().map(|(_, r)| r.text.as_str()), Some("r10"));
         assert!(left.iter().all(|(p, _)| !p.ends_with("0-broken.json")));
+        Ok(())
+    }
+
+    #[test]
+    fn saved_report_keeps_its_files_until_it_is_gone() -> anyhow::Result<()> {
+        let root = std::env::temp_dir().join(format!("axiom-report-files-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let sending = root.join("sending");
+        fs::create_dir_all(&sending)?;
+        fs::write(sending.join("0"), b"GIF89a")?;
+        let mut with_files = report("с файлом", "");
+        with_files.kind = Kind::User;
+        with_files.files = vec![Attached {
+            name: "a.gif".into(),
+            size: 6,
+        }];
+        save(&root, &with_files, Some(&sending))?;
+        assert!(!sending.exists());
+        let (path, saved) = pending(&root.join(DIR))
+            .pop()
+            .ok_or_else(|| anyhow::anyhow!("отчёт не сохранён"))?;
+        assert_eq!(saved.files, with_files.files);
+        assert_eq!(fs::read(files::dir_of(&path).join("0"))?, b"GIF89a");
+        // Без папки файлов список не сохраняется: отправлять было бы нечего.
+        save(&root, &with_files, None)?;
+        let newest = pending(&root.join(DIR)).pop().map(|(_, r)| r.files);
+        assert_eq!(newest, Some(Vec::new()));
+        // Новые отчёты вытеснили его — файлы ушли вместе с ним.
+        for i in 0..MAX_PENDING {
+            save(&root, &report(&format!("r{i}"), ""), None)?;
+        }
+        assert!(!path.exists() && !files::dir_of(&path).exists());
+        let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 

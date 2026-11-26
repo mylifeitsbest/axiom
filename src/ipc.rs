@@ -401,15 +401,36 @@ pub enum UiCmd {
     },
     /// Открыли «Сообщить о проблеме»: сколько журнала уйдёт вместе с отчётом.
     ReportInfo,
-    /// «Отправить»: что не работает и приложить ли журнал (его читает Rust, не интерфейс).
+    /// «Отправить»: что не работает и приложить ли журнал (его читает Rust, не интерфейс),
+    /// и выбранные файлы — их места и имена (сами файлы уже пришли `report_file`).
     Report {
         text: String,
         log: bool,
+        #[serde(default)]
+        files: Vec<ReportAttachment>,
     },
     /// «Понятно» под ответом разработчика: эти ответы прочитаны.
     AnswersSeen {
         ids: Vec<String>,
     },
+    /// Кусок выбранного файла: `slot` — место файла в форме, `offset` — сколько его
+    /// байт уже пришло, `data` — следующие байты в base64.
+    ReportFile {
+        slot: usize,
+        offset: u64,
+        data: String,
+    },
+    /// Файл убрали из формы.
+    ReportFileDrop {
+        slot: usize,
+    },
+}
+
+/// Файл к «Сообщить о проблеме».
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReportAttachment {
+    pub slot: usize,
+    pub name: String,
 }
 
 /// Что нажали в окошке разрешения.
@@ -534,11 +555,35 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::PermissionDefault { kind, .. } if !kind.remembered() => {
             return Err(IpcError::Invalid("permission"));
         }
-        UiCmd::Report { text, .. } => {
+        UiCmd::Report { text, files, .. } => {
             short(text, crate::reports::MAX_USER_TEXT, "report")?;
             if text.trim().is_empty() {
                 return Err(IpcError::Invalid("report_empty"));
             }
+            if files.len() > crate::reports::MAX_FILES {
+                return Err(IpcError::Invalid("report_files"));
+            }
+            let mut slots = std::collections::HashSet::new();
+            for file in files {
+                short(&file.name, 1024, "report_file")?;
+                if file.slot >= crate::reports::SLOTS || !slots.insert(file.slot) {
+                    return Err(IpcError::Invalid("report_file"));
+                }
+            }
+        }
+        UiCmd::ReportFile { slot, offset, data } => {
+            // base64 от куска в MAX_CHUNK байт.
+            short(
+                data,
+                crate::reports::MAX_CHUNK.div_ceil(3) * 4,
+                "report_file",
+            )?;
+            if *slot >= crate::reports::SLOTS || *offset > 1 << 32 {
+                return Err(IpcError::Invalid("report_file"));
+            }
+        }
+        UiCmd::ReportFileDrop { slot } if *slot >= crate::reports::SLOTS => {
+            return Err(IpcError::Invalid("report_file"));
         }
         UiCmd::AnswersSeen { ids } => {
             if ids.len() > 32 {
@@ -761,6 +806,12 @@ pub enum ToUi<'a> {
         items: Vec<crate::reports::answers::View>,
         /// Пришёл ответ, которого ещё не видели (не при запуске): сказать об этом.
         fresh: bool,
+    },
+    /// Ответ на кусок файла: сколько байт файла уже на диске или почему он не принят.
+    ReportFile {
+        slot: usize,
+        size: u64,
+        error: Option<&'a str>,
     },
     /// Записи для страницы истории: ответ на `history` с теми же `q` и `offset`.
     History {
@@ -1245,7 +1296,7 @@ mod tests {
     fn parses_bug_report() {
         assert!(matches!(
             parse(r#"{"cmd":"report","text":"вкладка не грузится","log":true}"#),
-            Ok(UiCmd::Report { text, log: true }) if text == "вкладка не грузится"
+            Ok(UiCmd::Report { text, log: true, files }) if text == "вкладка не грузится" && files.is_empty()
         ));
         assert!(matches!(
             parse(r#"{"cmd":"report_info"}"#),
@@ -1263,6 +1314,67 @@ mod tests {
         assert!(matches!(parse(&long), Err(e) if e.user_text() == Some("Слишком длинный текст")));
         let out = serde_json::to_string(&ToUi::Reported { done: true }).unwrap_or_default();
         assert_eq!(out, r#"{"type":"reported","done":true}"#);
+    }
+
+    #[test]
+    fn parses_report_files() {
+        assert!(matches!(
+            parse(r#"{"cmd":"report","text":"x","log":false,"files":[{"slot":3,"name":"снимок.png"},{"slot":0,"name":"a.mp4"}]}"#),
+            Ok(UiCmd::Report { files, .. }) if files == [
+                ReportAttachment { slot: 3, name: "снимок.png".into() },
+                ReportAttachment { slot: 0, name: "a.mp4".into() },
+            ]
+        ));
+        // Одно место дважды, место за пределами и путь вместо имени не проходят.
+        assert!(parse(r#"{"cmd":"report","text":"x","log":false,"files":[{"slot":1,"name":"a"},{"slot":1,"name":"b"}]}"#).is_err());
+        assert!(
+            parse(r#"{"cmd":"report","text":"x","log":false,"files":[{"slot":64,"name":"a"}]}"#)
+                .is_err()
+        );
+        assert!(
+            parse(r#"{"cmd":"report","text":"x","log":false,"files":[{"slot":1,"path":"C:\\a"}]}"#)
+                .is_err()
+        );
+        let many: Vec<String> = (0..=crate::reports::MAX_FILES)
+            .map(|i| format!(r#"{{"slot":{i},"name":"f"}}"#))
+            .collect();
+        let many = format!(
+            r#"{{"cmd":"report","text":"x","log":false,"files":[{}]}}"#,
+            many.join(",")
+        );
+        assert!(parse(&many).is_err());
+
+        assert!(matches!(
+            parse(r#"{"cmd":"report_file","slot":2,"offset":0,"data":"iVBORw0KGgo="}"#),
+            Ok(UiCmd::ReportFile { slot: 2, offset: 0, data }) if data == "iVBORw0KGgo="
+        ));
+        // Полный кусок в base64 влезает и в проверку, и в предел сообщения.
+        let full = format!(
+            r#"{{"cmd":"report_file","slot":63,"offset":1048576,"data":"{}"}}"#,
+            "A".repeat(crate::reports::MAX_CHUNK.div_ceil(3) * 4)
+        );
+        assert!(parse(&full).is_ok());
+        let over = format!(
+            r#"{{"cmd":"report_file","slot":1,"offset":0,"data":"{}"}}"#,
+            "A".repeat(crate::reports::MAX_CHUNK.div_ceil(3) * 4 + 4)
+        );
+        assert!(parse(&over).is_err());
+        assert!(parse(r#"{"cmd":"report_file","slot":64,"offset":0,"data":""}"#).is_err());
+        assert!(matches!(
+            parse(r#"{"cmd":"report_file_drop","slot":5}"#),
+            Ok(UiCmd::ReportFileDrop { slot: 5 })
+        ));
+        assert!(parse(r#"{"cmd":"report_file_drop","slot":99}"#).is_err());
+        let out = serde_json::to_string(&ToUi::ReportFile {
+            slot: 2,
+            size: 10,
+            error: None,
+        })
+        .unwrap_or_default();
+        assert_eq!(
+            out,
+            r#"{"type":"report_file","slot":2,"size":10,"error":null}"#
+        );
     }
 
     #[test]

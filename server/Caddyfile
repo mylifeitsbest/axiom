@@ -17,6 +17,13 @@ __DOMAIN__ {
 		}
 		reverse_proxy 127.0.0.1:8787
 	}
+	# Отчёт с файлами (снимки, видео): до 50 МБ файлов и 64 КБ отчёта.
+	handle /rf {
+		request_body {
+			max_size 52MiB
+		}
+		reverse_proxy 127.0.0.1:8787
+	}
 	# Пинг — меньше 200 байт; большие тела не пропускаем дальше Caddy.
 	handle {
 		request_body {

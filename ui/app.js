@@ -1271,6 +1271,7 @@
     report_info(m) { panels.onReportInfo(m); },
     reported(m) { panels.onReported(m); },
     answers(m) { ans.onList(m); },
+    report_file(m) { panels.onReportFile(m); },
     history(m) { hist.onPage(m); },
     history_count(m) { hist.onCount(m); },
   };

@@ -572,10 +572,21 @@ impl App {
                 log: crate::reports::log_size(),
             }),
             // Человек сам нажал «Отправить»: уходит и при выключенных автоматических отчётах.
-            UiCmd::Report { text, log } => {
-                crate::reports::send_user(&text, log, self.events.clone());
+            UiCmd::Report { text, log, files } => {
+                let files: Vec<(usize, String)> =
+                    files.into_iter().map(|f| (f.slot, f.name)).collect();
+                crate::reports::send_user(&text, log, &files, self.events.clone());
             }
             UiCmd::AnswersSeen { ids } => crate::reports::answers::seen(&ids),
+            UiCmd::ReportFile { slot, offset, data } => {
+                let written = crate::reports::attach(slot, offset, &data);
+                self.send(&ToUi::ReportFile {
+                    slot,
+                    size: *written.as_ref().unwrap_or(&0),
+                    error: written.err(),
+                });
+            }
+            UiCmd::ReportFileDrop { slot } => crate::reports::detach(slot),
         }
         Ok(Flow::Continue)
     }
@@ -586,9 +597,10 @@ impl App {
             Outcome::Sent => "Спасибо! Отчёт отправлен разработчику",
             Outcome::Queued => "Нет связи с сервером — отчёт уйдёт позже сам",
             Outcome::Failed => "Не удалось отправить отчёт",
+            Outcome::Files(why) => why,
         };
         self.send(&ToUi::Reported {
-            done: outcome != Outcome::Failed,
+            done: matches!(outcome, Outcome::Sent | Outcome::Queued),
         });
         self.send(&ToUi::Toast { text });
     }

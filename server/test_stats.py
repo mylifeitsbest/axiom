@@ -52,9 +52,11 @@ class Server(unittest.TestCase):
     def setUp(self):
         # Свежие вёдра: тесты не делят лимиты между собой.
         stats.LIMITERS = {p: stats.Limiter(*lim) for p, lim in stats.LIMITS.items()}
+        stats.FILE_BYTES = stats.Limiter(*stats.FILE_BYTES_LIMIT)
         con = stats.db()
         with con:
             con.execute("DELETE FROM reports")
+            stats.prune_files(con)
         con.close()
         self.ip = 0
 
@@ -328,6 +330,189 @@ class Server(unittest.TestCase):
             stats.MAX_REPORTS = old
         self.assertEqual([r[3] for r in self.rows()], [f"r{i}" for i in range(3, 8)])
 
+    # ---------- /rf: отчёт с файлами ----------
+
+    PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(40))
+    MP4 = b"\0\0\0\x18ftypisom" + b"\0" * 100
+    EXE = b"MZ\x90\0\x03\0\0\0" + b"\0" * 20
+
+    def files_body(self, files, **over):
+        payload = report(kind="user", files=[{"name": n, "size": len(b)} for n, b in files])
+        payload.update(over)
+        return json.dumps(payload).encode() + b"\n" + b"".join(b for _, b in files)
+
+    def post_files(self, body, **kw):
+        return self.request("POST", "/rf", body,
+                            headers={"Content-Type": "application/x-axiom-report"}, **kw)
+
+    def last_id(self):
+        con = stats.db()
+        rid = con.execute("SELECT MAX(id) FROM reports").fetchone()[0]
+        con.close()
+        return rid
+
+    def stored_files(self, rid):
+        con = stats.db()
+        rows = con.execute("SELECT n, name, type, size, gone FROM report_files WHERE report=? ORDER BY n",
+                           (rid,)).fetchall()
+        con.close()
+        return rows
+
+    def test_report_with_files_is_stored_and_shown(self):
+        text = "журнал <b>1</b>\nстрока 2\n".encode()
+        body = self.files_body([("C:\\Users\\x\\снимок.png", self.PNG), ("видео.mp4", self.MP4),
+                                ("app.exe", self.EXE), ("лог.txt", text)])
+        self.assertEqual(self.post_files(body)[0], 204)
+        rid = self.last_id()
+        # Незнакомый тип (exe) не сохранён, остальные — с типом по байтам.
+        self.assertEqual(self.stored_files(rid), [
+            (0, "снимок.png", "image/png", len(self.PNG), 0),
+            (1, "видео.mp4", "video/mp4", len(self.MP4), 0),
+            (3, "лог.txt", "text/plain; charset=utf-8", len(text), 0),
+        ])
+        self.assertFalse(os.path.exists(stats.file_path(rid, 2)))
+        with open(stats.file_path(rid, 0), "rb") as f:
+            self.assertEqual(f.read(), self.PNG)
+
+        status, page, resp = self.request("GET", f"/d/{KEY}/r/{rid}")
+        self.assertEqual(status, 200)
+        base = f"/d/{KEY}/r/{rid}/f"
+        self.assertIn(f'<img src="{base}/0"', page)
+        self.assertIn(f'<video src="{base}/1" controls', page)
+        self.assertIn("журнал &lt;b&gt;1&lt;/b&gt;", page)
+        self.assertIn(f'href="{base}/3?dl=1"', page)
+        self.assertIn("img-src 'self'; media-src 'self'", resp.getheader("Content-Security-Policy"))
+        self.check_headers(resp, page)
+        _, dash, _ = self.request("GET", f"/d/{KEY}")
+        self.assertIn("📎3</span>", dash)
+
+        status, data, resp = self.request("GET", f"{base}/0")
+        self.assertEqual(status, 200)
+        self.assertEqual(resp.getheader("Content-Type"), "image/png")
+        self.assertEqual(resp.getheader("X-Content-Type-Options"), "nosniff")
+        self.assertIn("sandbox", resp.getheader("Content-Security-Policy"))
+        self.assertTrue(resp.getheader("Content-Disposition").startswith("inline;"))
+        self.assertIn("filename*=UTF-8''%D1%81%D0%BD%D0%B8%D0%BC%D0%BE%D0%BA.png",
+                      resp.getheader("Content-Disposition"))
+        _, _, resp = self.request("GET", f"{base}/3?dl=1")
+        self.assertTrue(resp.getheader("Content-Disposition").startswith("attachment;"))
+        # Без ключа, чужой номер и незнакомый тип — нет.
+        self.assertEqual(self.request("GET", f"/d/wrong/r/{rid}/f/0")[0], 404)
+        self.assertEqual(self.request("GET", f"{base}/2")[0], 404)
+        self.assertEqual(self.request("GET", f"/d/{KEY}/r/{rid + 1}/f/0")[0], 404)
+
+    def raw_get(self, path, headers):
+        con = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        con.request("GET", path, headers=headers)
+        resp = con.getresponse()
+        data = resp.read()
+        con.close()
+        return resp, data
+
+    def test_video_can_be_seeked(self):
+        self.assertEqual(self.post_files(self.files_body([("v.mp4", self.MP4)]))[0], 204)
+        path = f"/d/{KEY}/r/{self.last_id()}/f/0"
+        resp, data = self.raw_get(path, {"Range": "bytes=10-19"})
+        self.assertEqual(resp.status, 206)
+        self.assertEqual(resp.getheader("Content-Range"), f"bytes 10-19/{len(self.MP4)}")
+        self.assertEqual(data, self.MP4[10:20])
+        resp, data = self.raw_get(path, {"Range": "bytes=-5"})
+        self.assertEqual((resp.status, data), (206, self.MP4[-5:]))
+        resp, data = self.raw_get(path, {"Range": "bytes=100-"})
+        self.assertEqual((resp.status, data), (206, self.MP4[100:]))
+        resp, _ = self.raw_get(path, {"Range": "bytes=5000-"})
+        self.assertEqual(resp.status, 416)
+        resp, data = self.raw_get(path, {"Range": "pages=1"})
+        self.assertEqual((resp.status, data), (200, self.MP4))
+
+    def test_bad_file_reports_are_rejected(self):
+        good = [("a.png", self.PNG)]
+        payload = json.loads(self.files_body(good).split(b"\n")[0])
+        bad = [
+            # Размеры не сходятся с телом.
+            self.files_body(good) + b"x",
+            self.files_body(good)[:-1],
+            # Без списка, пустой, слишком длинный, неверные записи.
+            json.dumps(report()).encode() + b"\n" + self.PNG,
+            self.files_body([]),
+            self.files_body([("f.png", self.PNG)] * (stats.MAX_FILES + 1)),
+            json.dumps({**payload, "files": [{"name": "a.png", "size": True}]}).encode() + b"\n" + b"x",
+            json.dumps({**payload, "files": [{"name": 5, "size": 1}]}).encode() + b"\n" + b"x",
+            json.dumps({**payload, "files": ["a.png"]}).encode() + b"\n" + b"x",
+            # Сам отчёт неверный или без перевода строки после него.
+            self.files_body(good, kind="hack"),
+            json.dumps(payload).encode() + self.PNG,
+            b"\n" + self.PNG,
+        ]
+        for body in bad:
+            self.assertEqual(self.post_files(body)[0], 400, body[:120])
+        self.assertEqual(self.rows(), [])
+        self.assertEqual(self.tmp_dirs(), [])
+
+    def test_unfinished_upload_leaves_nothing(self):
+        import io
+        files = [("a.png", 48), ("b.png", 48)]
+        self.assertIsNone(stats.receive_files(io.BytesIO(self.PNG + b"\x89PNG"), files, True))
+        self.assertEqual(self.tmp_dirs(), [])
+
+    def tmp_dirs(self):
+        root = stats.files_root()
+        return [n for n in os.listdir(root) if n.startswith("tmp-")] if os.path.isdir(root) else []
+
+    def test_files_have_a_byte_limit_per_ip(self):
+        body = self.files_body([("a.png", self.PNG)] * 2)
+        # Хватает на один такой отчёт, но не на два.
+        stats.FILE_BYTES = stats.Limiter(len(body) * 3 // 2, 3600)
+        self.assertEqual(self.post_files(body, ip="203.0.113.20")[0], 204)
+        self.assertEqual(self.post_files(body, ip="203.0.113.20")[0], 429)
+        self.assertEqual(self.post_files(body, ip="203.0.113.21")[0], 204)
+
+    def test_old_files_go_first_when_space_runs_out(self):
+        saved = stats.FILES_KEEP_BYTES, stats.MAX_REPORTS
+        stats.FILES_KEEP_BYTES = 3 * len(self.PNG)
+        try:
+            self.assertEqual(self.post_files(self.files_body([("1.png", self.PNG)] * 2))[0], 204)
+            first = self.last_id()
+            self.assertEqual(self.post_files(self.files_body([("2.png", self.PNG)] * 2))[0], 204)
+            # Четыре файла в место на три: ушёл самый старый, отчёт остался.
+            self.assertEqual([r[4] for r in self.stored_files(first)], [1, 0])
+            self.assertFalse(os.path.exists(stats.file_path(first, 0)))
+            self.assertIn("удалён", self.request("GET", f"/d/{KEY}/r/{first}")[1])
+            self.assertEqual(self.request("GET", f"/d/{KEY}/r/{first}/f/0")[0], 404)
+            # Удалённый отчёт уносит и свою папку.
+            stats.MAX_REPORTS = 1
+            stats.store_report(stats.check_report(report()))
+            self.assertEqual(self.stored_files(first), [])
+            self.assertFalse(os.path.exists(os.path.join(stats.files_root(), str(first))))
+        finally:
+            stats.FILES_KEEP_BYTES, stats.MAX_REPORTS = saved
+
+    def test_low_disk_keeps_the_report_without_files(self):
+        saved = stats.room_for
+        stats.room_for = lambda n: False
+        try:
+            self.assertEqual(self.post_files(self.files_body([("a.png", self.PNG)]))[0], 204)
+        finally:
+            stats.room_for = saved
+        rid = self.last_id()
+        self.assertEqual(self.stored_files(rid), [])
+        self.assertIn("Файлы не сохранены", self.rows()[-1][3])
+
+    def test_sniff_knows_only_what_the_dashboard_shows(self):
+        self.assertEqual(stats.sniff(b"\xff\xd8\xff\xe0"), "image/jpeg")
+        self.assertEqual(stats.sniff(b"RIFF\0\0\0\0WEBPVP8 "), "image/webp")
+        self.assertEqual(stats.sniff(b"\0\0\0\x14ftypqt  "), "video/mp4")
+        self.assertEqual(stats.sniff(b"\0\0\0\x1cftypavif"), "image/avif")
+        self.assertIsNone(stats.sniff(b"\0\0\0\x18ftypheic"))
+        self.assertEqual(stats.sniff(b"\x1a\x45\xdf\xa3\x9f\x42\x82\x84webm"), "video/webm")
+        self.assertEqual(stats.sniff(b"\x1a\x45\xdf\xa3\x9f\x42\x82\x88matroska"), "video/x-matroska")
+        self.assertEqual(stats.sniff("ёж".encode()[:3]), "text/plain; charset=utf-8")
+        self.assertEqual(stats.sniff(b"\x1b[31mred\x1b[0m\r\n"), "text/plain; charset=utf-8")
+        for bad in (b"", b"PK\x03\x04", b"%PDF-1.7\n\xe2\xe3\xcf\xd3\x00", b"\xff\xfeh\0i\0"):
+            self.assertIsNone(stats.sniff(bad), bad)
+        self.assertEqual(stats.clean_name("C:\\Users\\x\\a\u202e.png"), "a.png")
+        self.assertEqual(stats.clean_name(" /tmp/ "), "файл")
+
     def test_migration_adds_reports_to_an_old_database(self):
         path = os.path.join(self.tmp.name, "old.db")
         con = sqlite3.connect(path)
@@ -348,7 +533,7 @@ class Server(unittest.TestCase):
             con.close()
         finally:
             stats.DB = saved
-        self.assertTrue({"hits", "recent", "reports"} <= tables)
+        self.assertTrue({"hits", "recent", "reports", "report_files"} <= tables)
         self.assertEqual(vdau, 2)
 
 

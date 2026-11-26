@@ -10,11 +10,18 @@
 (IP живёт лишь в памяти ограничителя частоты, и то в виде хэша с солью).
 Зависимостей нет: всё из стандартной библиотеки, запускается на голой Ubuntu.
 
+Отчёт из «Сообщить о проблеме» может прийти с файлами (`POST /rf`): снимки экрана,
+фото, видео, текст. Они лежат на диске рядом с базой (`files/<номер отчёта>/<n>`),
+на панели картинки и видео показываются прямо в отчёте.
+
 Переменные окружения:
-  AXIOM_STATS_DB    путь к базе (по умолчанию ./stats.db)
-  AXIOM_STATS_HOST  адрес прослушивания (по умолчанию 127.0.0.1 — за Caddy)
-  AXIOM_STATS_PORT  порт (по умолчанию 8787)
-  AXIOM_STATS_KEY   секрет в адресе панели: /d/<ключ>. Без него панель закрыта.
+  AXIOM_STATS_DB        путь к базе (по умолчанию ./stats.db)
+  AXIOM_STATS_HOST      адрес прослушивания (по умолчанию 127.0.0.1 — за Caddy)
+  AXIOM_STATS_PORT      порт (по умолчанию 8787)
+  AXIOM_STATS_KEY       секрет в адресе панели: /d/<ключ>. Без него панель закрыта.
+  AXIOM_STATS_FILES     папка для файлов к отчётам (по умолчанию files рядом с базой)
+  AXIOM_STATS_FILES_MB  сколько места им можно занять, МБ (по умолчанию 2048):
+                        больше — самые старые файлы удаляются, отчёты остаются
 """
 
 import hashlib
@@ -23,14 +30,15 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from html import escape
-from urllib.parse import parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, urlsplit
 
 DB = os.environ.get("AXIOM_STATS_DB", "stats.db")
 HOST = os.environ.get("AXIOM_STATS_HOST", "127.0.0.1")
@@ -59,10 +67,28 @@ MAX_ASK_BODY = 2048
 # Сколько ключей браузер спрашивает за раз (своих сообщений у него не больше).
 MAX_ASK = 16
 
+# Файлы к «Сообщить о проблеме» (POST /rf): строка JSON отчёта со списком файлов
+# [{"name", "size"}], перевод строки и сами файлы подряд. Как и в браузере
+# (src/reports/files.rs): до 10 файлов, вместе до 50 МБ.
+MAX_FILES = 10
+MAX_FILES_BYTES = 50 * 1024 * 1024
+MAX_FILE_NAME = 200
+FILES_KEEP_BYTES = int(os.environ.get("AXIOM_STATS_FILES_MB", "2048")) * 1024 * 1024
+# Сколько свободного места оставить на диске: меньше — файлы не сохраняются.
+FILES_FREE_BYTES = 1024 * 1024 * 1024
+# Текстовый файл на странице отчёта — первые 64 КБ, целиком — по ссылке.
+TEXT_PREVIEW = 64 * 1024
+# Тип файла узнаётся по первым байтам; браузеру отдаётся только один из этих.
+FILE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif",
+              "video/mp4", "video/webm", "video/x-matroska", "text/plain; charset=utf-8"}
+HEIC_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1"}
+
 # Ограничение частоты по IP: (запросов, за секунд). Браузер пингует раз в час,
 # а отчёты шлёт редко — больше бывает только у накрутки. Об ответах спрашивает
-# раз в 20 минут; запас — на несколько браузеров за одним адресом.
-LIMITS = {"/p": (30, 3600), "/r": (20, 3600), "/a": (120, 3600)}
+# раз в 20 минут; запас — на несколько браузеров за одним адресом. Отчёты с файлами
+# ещё и по байтам: не больше 300 МБ файлов в час с одного адреса.
+LIMITS = {"/p": (30, 3600), "/r": (20, 3600), "/a": (120, 3600), "/rf": (10, 3600)}
+FILE_BYTES_LIMIT = (300 * 1024 * 1024, 3600)
 MAX_BUCKETS = 50_000
 # Строк (версия × ОС) за день. Поддельные версии иначе раздували бы базу без предела.
 MAX_ROWS_PER_DAY = 200
@@ -142,7 +168,26 @@ def init():
             if col not in pcols:
                 con.execute(f"ALTER TABLE reports ADD COLUMN {col} TEXT")
         con.execute("CREATE INDEX IF NOT EXISTS reports_token ON reports(token)")
+        # report_files — файлы к отчётам: сами байты в files/<report>/<n>.
+        # gone — файл удалён, чтобы уложиться в FILES_KEEP_BYTES (отчёт остался).
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS report_files(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                report INTEGER NOT NULL, n INTEGER NOT NULL,
+                name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL,
+                gone INTEGER NOT NULL DEFAULT 0)"""
+        )
+        con.execute("CREATE INDEX IF NOT EXISTS report_files_report ON report_files(report)")
     con.close()
+
+
+def files_root():
+    return os.environ.get("AXIOM_STATS_FILES") or os.path.join(
+        os.path.dirname(os.path.abspath(DB)), "files")
+
+
+def file_path(report, n):
+    return os.path.join(files_root(), str(int(report)), str(int(n)))
 
 
 def utcnow():
@@ -248,7 +293,9 @@ def check_report(payload):
     return kind, v, os_, text.replace("\0", ""), log.replace("\0", ""), token
 
 
-def store_report(report):
+def store_report(report, files=(), tmp=None):
+    """Записать отчёт. files — [(n, имя, тип, размер)] из папки tmp: она становится
+    files/<номер отчёта>. Старые отчёты уходят вместе со своими файлами."""
     kind, v, os_, text, log, token = report
     now = utcnow()
     con = db()
@@ -256,13 +303,154 @@ def store_report(report):
         cur = con.execute(
             "INSERT INTO reports(at, kind, v, os, text, log, token) VALUES(?,?,?,?,?,?,?)",
             (now.strftime("%Y-%m-%dT%H:%M:%SZ"), kind, v, os_, text, log, token))
+        rid = cur.lastrowid
+        if files and tmp:
+            # Папка с этим номером могла остаться от прежней базы.
+            target = os.path.join(files_root(), str(rid))
+            shutil.rmtree(target, ignore_errors=True)
+            os.replace(tmp, target)
+            con.executemany(
+                "INSERT INTO report_files(report, n, name, type, size) VALUES(?,?,?,?,?)",
+                [(rid, *f) for f in files])
         con.execute("DELETE FROM reports WHERE at<?",
                     ((now - REPORTS_KEEP).strftime("%Y-%m-%dT%H:%M:%SZ"),))
         con.execute(
             "DELETE FROM reports WHERE id NOT IN (SELECT id FROM reports ORDER BY id DESC LIMIT ?)",
             (MAX_REPORTS,))
+        prune_files(con)
     con.close()
-    return cur.lastrowid
+    return rid
+
+
+def prune_files(con):
+    """Файлы удалённых отчётов — с диска; сверх FILES_KEEP_BYTES — самые старые."""
+    for (rid,) in con.execute(
+            "SELECT DISTINCT report FROM report_files WHERE report NOT IN (SELECT id FROM reports)"
+    ).fetchall():
+        shutil.rmtree(os.path.join(files_root(), str(int(rid))), ignore_errors=True)
+    con.execute("DELETE FROM report_files WHERE report NOT IN (SELECT id FROM reports)")
+    total = q1(con, "SELECT SUM(size) FROM report_files WHERE gone=0")
+    if total <= FILES_KEEP_BYTES:
+        return
+    for fid, rid, n, size in con.execute(
+            "SELECT id, report, n, size FROM report_files WHERE gone=0 ORDER BY id").fetchall():
+        if total <= FILES_KEEP_BYTES:
+            break
+        try:
+            os.remove(file_path(rid, n))
+        except FileNotFoundError:
+            pass
+        con.execute("UPDATE report_files SET gone=1 WHERE id=?", (fid,))
+        total -= size
+
+
+def sniff(head):
+    """MIME-тип файла по первым байтам или None, если такой не принимаем."""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in (b"avif", b"avis"):
+            return "image/avif"
+        # MOV тоже: Chrome играет его как MP4.
+        return None if brand in HEIC_BRANDS else "video/mp4"
+    if head[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm" if b"webm" in head[:64] else "video/x-matroska"
+    if head and all(b >= 0x20 or b in b"\t\n\r\x0c\x1b" for b in head):
+        try:
+            head.decode("utf-8")
+            return "text/plain; charset=utf-8"
+        except UnicodeDecodeError as e:
+            # Начало файла могло оборваться посреди буквы.
+            if e.start >= len(head) - 3 and e.reason == "unexpected end of data":
+                return "text/plain; charset=utf-8"
+    return None
+
+
+def clean_name(name):
+    name = re.split(r"[\\/]", name)[-1]
+    name = "".join(c for c in name if c.isprintable()).strip()
+    return name[:MAX_FILE_NAME] or "файл"
+
+
+def check_files(payload, body_left):
+    """Список файлов из отчёта: [(имя, размер)] или None. Размеры в сумме — ровно
+    остаток тела запроса."""
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
+        return None
+    out = []
+    for f in files:
+        if not isinstance(f, dict):
+            return None
+        name, size = f.get("name"), f.get("size")
+        if not isinstance(name, str) or len(name) > 1024:
+            return None
+        if not isinstance(size, int) or isinstance(size, bool) or size < 1:
+            return None
+        out.append((clean_name(name), size))
+    total = sum(size for _, size in out)
+    if total != body_left or total > MAX_FILES_BYTES:
+        return None
+    return out
+
+
+def receive_files(rfile, files, keep):
+    """Прочитать файлы из тела запроса во временную папку. Каждый проверяется по
+    первым байтам: незнакомый тип не сохраняется. keep=False — только дочитать
+    (на диске мало места). Вернуть (папка, [(n, имя, тип, размер)]) или None,
+    если тело оборвалось."""
+    tmp = os.path.join(files_root(), "tmp-" + secrets.token_hex(8))
+    if keep:
+        os.makedirs(tmp)
+    stored = []
+    try:
+        for n, (name, size) in enumerate(files):
+            path = os.path.join(tmp, str(n))
+            out = open(path, "wb") if keep else None
+            # kind: None — ещё не ясно, "" — не принимаем, иначе MIME-тип.
+            left, head, kind = size, b"", None
+            try:
+                while left > 0:
+                    chunk = rfile.read(min(left, 65536))
+                    if not chunk:
+                        raise EOFError
+                    left -= len(chunk)
+                    if kind is None:
+                        head += chunk[:4096 - len(head)]
+                        if len(head) >= 4096 or left == 0:
+                            kind = sniff(head) or ""
+                    if out:
+                        out.write(chunk)
+                        if kind == "":
+                            # Незнакомый тип: дочитываем, не сохраняя.
+                            out.close()
+                            os.remove(path)
+                            out = None
+            finally:
+                if out:
+                    out.close()
+            if keep and kind:
+                stored.append((n, name, kind, size))
+    except (EOFError, OSError):
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None
+    if not stored:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return tmp, stored
+
+
+def room_for(length):
+    """Хватит ли места на диске под ещё столько байт файлов."""
+    root = files_root()
+    os.makedirs(root, exist_ok=True)
+    return shutil.disk_usage(root).free - length > FILES_FREE_BYTES
 
 
 def check_ask(payload):
@@ -336,7 +524,8 @@ def set_answer(id_, form):
 
 class Limiter:
     """Ведро с жетонами на каждый IP: `rate` запросов за `per` секунд, с запасом
-    на всплеск того же размера. IP хранится только хэшем с солью этого процесса."""
+    на всплеск того же размера. IP хранится только хэшем с солью этого процесса.
+    `cost` — сколько жетонов стоит запрос (для предела по байтам — его размер)."""
 
     def __init__(self, rate, per, clock=time.monotonic):
         self.rate, self.per, self.clock = rate, per, clock
@@ -344,14 +533,14 @@ class Limiter:
         self.buckets = {}
         self.lock = threading.Lock()
 
-    def allow(self, ip):
+    def allow(self, ip, cost=1):
         key = hashlib.blake2s(ip.encode(), key=self.salt, digest_size=12).digest()
         now = self.clock()
         with self.lock:
             tokens, at = self.buckets.get(key, (self.rate, now))
             tokens = min(self.rate, tokens + (now - at) * self.rate / self.per)
-            ok = tokens >= 1
-            self.buckets[key] = (tokens - 1 if ok else tokens, now)
+            ok = tokens >= cost
+            self.buckets[key] = (tokens - cost if ok else tokens, now)
             if len(self.buckets) > MAX_BUCKETS:
                 self._prune(now)
             return ok
@@ -367,6 +556,7 @@ class Limiter:
 
 
 LIMITERS = {path: Limiter(*limit) for path, limit in LIMITS.items()}
+FILE_BYTES = Limiter(*FILE_BYTES_LIMIT)
 
 
 def client_ip(peer, forwarded):
@@ -468,8 +658,10 @@ def dashboard(nonce=""):
            HAVING a>0 ORDER BY a DESC""", (t,)).fetchall()
     # Отчёты об ошибках: свежие сверху и сколько каких пришло за сутки.
     s["reports"] = con.execute(
-        """SELECT id, at, kind, v, os, substr(text, 1, 2000), token IS NOT NULL, ans, ans_got
-           FROM reports ORDER BY id DESC LIMIT 30""").fetchall()
+        """SELECT r.id, r.at, r.kind, r.v, r.os, substr(r.text, 1, 2000), r.token IS NOT NULL,
+                  r.ans, r.ans_got,
+                  (SELECT COUNT(*) FROM report_files f WHERE f.report = r.id)
+           FROM reports r ORDER BY r.id DESC LIMIT 30""").fetchall()
     s["reports_day"] = dict(con.execute(
         "SELECT kind, COUNT(*) FROM reports WHERE at>=? GROUP BY kind",
         ((now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),)).fetchall())
@@ -621,17 +813,19 @@ def reports_html(rows):
         return ('<div class="panel feed-empty">Отчётов пока нет. Сюда придут вылеты, упавшие '
                 'процессы страниц и сообщения из «Сообщить о проблеме».</div>')
     trs = []
-    for id_, at, kind, v, os_, text, can, ans, got in rows:
+    for id_, at, kind, v, os_, text, can, ans, got, nfiles in rows:
         line = first_line(text)
         if len(line) > 140:
             line = line[:139] + "…"
         href = report_href(id_)
+        clip = (f' <span class="clip" title="{nfiles} {plural(nfiles, "файл", "файла", "файлов")}">'
+                f'📎{nfiles}</span>') if nfiles else ""
         trs.append(
             f'<tr><td><a href="{href}"><time data-utc="{escape(at)}" data-fmt="feed">'
             f'{escape(at[:16].replace("T", " "))}</time></a></td>'
             f'<td><span class="kind k-{escape(kind)}">{escape(REPORT_KINDS.get(kind, kind))}</span></td>'
             f'<td>{escape(v)}</td><td>{escape(os_)}</td>'
-            f'<td class="line"><a href="{href}">{escape(line) or "—"}</a></td>'
+            f'<td class="line"><a href="{href}">{escape(line) or "—"}</a>{clip}</td>'
             f'<td>{answer_badge(kind, can, ans, got)}</td></tr>')
     return ('<table class="reps"><thead><tr><th>когда</th><th>что</th><th>версия</th>'
             f'<th>система</th><th>о чём</th><th>ответ</th></tr></thead><tbody>{"".join(trs)}</tbody></table>')
@@ -701,6 +895,16 @@ REPORT_CSS = """
   .a-wait { background:#232735; color:var(--muted); }
   .nav { display:flex; justify-content:space-between; margin-top:22px; font-size:14px; }
   .muted { color:var(--muted); }
+  .files { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
+  .file { margin:0; background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    overflow:hidden; display:flex; flex-direction:column; }
+  .file.wide { grid-column:1/-1; }
+  .file img, .file video { display:block; width:100%; max-height:70vh; object-fit:contain; background:#000; }
+  .file pre { border:0; border-radius:0; max-height:480px; overflow:auto; }
+  .file figcaption { padding:9px 14px; font-size:13px; color:var(--ink2); display:flex; gap:8px;
+    flex-wrap:wrap; border-top:1px solid var(--line); }
+  .file figcaption b { font-weight:600; color:var(--ink); word-break:break-all; }
+  .file.gone { padding:12px 14px; color:var(--muted); font-size:13px; }
 """
 
 
@@ -742,6 +946,50 @@ def answer_html(id_, kind, token, ans, ans_text, ans_v, ans_at, ans_got, error=N
   </form></div>"""
 
 
+def human_size(n):
+    if n < 1024:
+        return f"{n} Б"
+    if n < 1024 * 1024:
+        return f"{max(1, round(n / 1024))} КБ"
+    return f"{n / 1024 / 1024:.1f} МБ".replace(".", ",")
+
+
+def file_href(id_, n):
+    return f"{report_href(id_)}/f/{int(n)}"
+
+
+def files_html(id_, files):
+    """Файлы отчёта: картинки и видео — прямо на странице, текст — началом."""
+    if not files:
+        return ""
+    items = []
+    for n, name, type_, size, gone in files:
+        what = f"<b>{escape(name)}</b><span class=\"muted\">{human_size(size)}</span>"
+        if gone:
+            items.append(f'<div class="file gone">{what} — удалён: файлы к отчётам заняли всё '
+                         f'отведённое им место</div>')
+            continue
+        href = file_href(id_, n)
+        cls = "file"
+        if type_.startswith("image/"):
+            body = f'<a href="{href}"><img src="{href}" alt="{escape(name)}" loading="lazy"></a>'
+        elif type_.startswith("video/"):
+            body = f'<video src="{href}" controls preload="metadata"></video>'
+        else:
+            cls = "file wide"
+            try:
+                with open(file_path(id_, n), "rb") as f:
+                    text = f.read(TEXT_PREVIEW).decode("utf-8", "replace")
+            except OSError:
+                text = "(файл не прочитать)"
+            more = f"\n…ещё {human_size(size - TEXT_PREVIEW)} — целиком по ссылке «скачать»" \
+                if size > TEXT_PREVIEW else ""
+            body = f'<pre class="log">{escape(text + more)}</pre>'
+        items.append(f'<figure class="{cls}">{body}<figcaption>{what}'
+                     f'<a href="{href}?dl=1">скачать</a></figcaption></figure>')
+    return f'<h2>Файлы</h2><div class="files">{"".join(items)}</div>'
+
+
 def report_page(id_, nonce="", error=None, form=None):
     """Один отчёт целиком. Всё, что прислал браузер, — только через escape()."""
     con = db()
@@ -750,6 +998,9 @@ def report_page(id_, nonce="", error=None, form=None):
            FROM reports WHERE id=?""", (id_,)).fetchone()
     older = con.execute("SELECT MAX(id) FROM reports WHERE id<?", (id_,)).fetchone()[0]
     newer = con.execute("SELECT MIN(id) FROM reports WHERE id>?", (id_,)).fetchone()[0]
+    files = con.execute(
+        "SELECT n, name, type, size, gone FROM report_files WHERE report=? ORDER BY n",
+        (id_,)).fetchall()
     con.close()
     if not row:
         return None
@@ -770,6 +1021,7 @@ def report_page(id_, nonce="", error=None, form=None):
     · версия {escape(v)} · {escape(os_)}</div>
   <h2>Что случилось</h2>
   <pre class="text">{escape(text) or "—"}</pre>
+  {files_html(id_, files)}
   {answer}
   <h2>Журнал</h2>
   {log_html}
@@ -890,6 +1142,7 @@ def render(s, nonce=""):
   .a-fixed {{ background:#163d2a; color:#8fe3b0; }}
   .a-reply {{ background:#16324f; color:#9cc8f5; }}
   .a-wait {{ background:#232735; color:var(--muted); }}
+  .clip {{ color:var(--muted); font-size:12px; white-space:nowrap; margin-left:6px; }}
   details {{ margin-top:30px; color:var(--ink2); font-size:14px; }}
   summary {{ cursor:pointer; color:var(--muted); font-size:13px; }}
   details ul {{ padding-left:18px; margin:10px 0 0; }}
@@ -956,6 +1209,10 @@ def render(s, nonce=""):
     <li>Отчёты об ошибках браузер шлёт сам, когда вылетел или упал процесс страницы (если человек
       не выключил это в настройках), и по кнопке «Сообщить о проблеме». Адреса страниц, пути с именем
       пользователя, почту и токены он вычищает ещё до отправки. Хранятся 90 дней, не больше {MAX_REPORTS}.</li>
+    <li>К «Сообщить о проблеме» можно приложить снимки экрана, фото, видео и текст (📎 в списке):
+      до {MAX_FILES} файлов и {MAX_FILES_BYTES // 1024 // 1024} МБ на отчёт. У фото и видео браузер
+      убирает место съёмки и данные камеры. Всем файлам вместе отведено {FILES_KEEP_BYTES // 1024 // 1024} МБ:
+      больше — самые старые файлы удаляются, сами отчёты остаются.</li>
   </ul></details>
 </div>
 <script nonce="{escape(nonce)}">
@@ -1002,10 +1259,12 @@ class Handler(BaseHTTPRequestHandler):
             # Панель показывает присланный кем угодно текст: даже если escape() где-то
             # пропустят, чужой скрипт не выполнится. Ключ в адресе не уйдёт в Referer.
             # Формы — только на странице отчёта (ответ человеку) и только на этот же сервер.
+            # Картинки и видео — только файлы отчётов с этого же сервера.
             action = "'self'" if forms else "'none'"
             self.send_header(
                 "Content-Security-Policy",
                 f"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; "
+                "img-src 'self'; media-src 'self'; "
                 f"base-uri 'none'; form-action {action}; frame-ancestors 'none'")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Cache-Control", "no-store")
@@ -1051,6 +1310,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.post_answer(m)
         if path not in LIMITERS:
             return self._send(404, b"not found")
+        if path == "/rf":
+            return self.post_files()
         limit = {"/p": MAX_BODY, "/a": MAX_ASK_BODY}.get(path, MAX_REPORT_BODY)
         raw = self.body(limit)
         if raw is None:
@@ -1107,12 +1368,117 @@ class Handler(BaseHTTPRequestHandler):
         if page is None:
             return self._send(404, b"not found")
         self._send(400, page.encode("utf-8"), "text/html; charset=utf-8", nonce, forms=True)
+    def post_files(self):
+        """Отчёт с файлами: строка JSON (отчёт и список файлов), `\\n`, файлы подряд.
+        Файлы идут прямо на диск, в память целиком не читаются."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            return self._send(400, b"bad")
+        if length > MAX_REPORT_BODY + 1 + MAX_FILES_BYTES:
+            self.drain(length)
+            return self._send(413, b"too large")
+        ip = client_ip(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
+        if not LIMITERS["/rf"].allow(ip) or not FILE_BYTES.allow(ip, length):
+            self.drain(length)
+            return self._send(429, b"too many")
+        # Видео на медленной связи идёт долго: каждый кусок ждём дольше обычного.
+        self.connection.settimeout(60)
+        line = self.rfile.readline(min(length, MAX_REPORT_BODY + 2))
+        left = length - len(line)
+        try:
+            payload = json.loads(line) if line.endswith(b"\n") else None
+        except (ValueError, UnicodeDecodeError):
+            payload = None
+        report = check_report(payload)
+        files = check_files(payload, left) if report else None
+        if files is None:
+            self.drain(left)
+            return self._send(400, b"bad")
+        keep = room_for(left)
+        got = receive_files(self.rfile, files, keep)
+        if got is None:
+            return self._send(400, b"bad")
+        tmp, stored = got
+        if not keep:
+            kind, v, os_, text, log, token = report
+            report = (kind, v, os_, text + "\n\n(Файлы не сохранены: на сервере мало места.)",
+                      log, token)
+        try:
+            ok = bool(store_report(report, stored, tmp))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        self._send(204 if ok else 400)
+
+    def send_file(self, rid, n, download):
+        """Файл отчёта. Тип — только из списка, определённого сервером по байтам;
+        скрипты не выполнятся (sandbox), видео можно перематывать (Range)."""
+        con = db()
+        row = con.execute(
+            "SELECT name, type FROM report_files WHERE report=? AND n=? AND gone=0",
+            (rid, n)).fetchone()
+        con.close()
+        if not row or row[1] not in FILE_TYPES:
+            return self._send(404, b"not found")
+        name, type_ = row
+        try:
+            f = open(file_path(rid, n), "rb")
+        except OSError:
+            return self._send(404, b"not found")
+        with f:
+            size = os.fstat(f.fileno()).st_size
+            start, end, status = 0, size - 1, 200
+            m = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", "").strip())
+            if m and (m[1] or m[2]):
+                if m[1]:
+                    start, end = int(m[1]), min(int(m[2]) if m[2] else size - 1, size - 1)
+                else:
+                    start = max(0, size - int(m[2]))
+                if start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = 206
+            self.send_response(status)
+            self.send_header("Content-Type", type_)
+            self.send_header("Content-Length", str(end - start + 1))
+            self.send_header("Accept-Ranges", "bytes")
+            if status == 206:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Cache-Control", "private, max-age=86400")
+            plain = re.sub(r"[^A-Za-z0-9._-]", "_", name) or "file"
+            self.send_header(
+                "Content-Disposition",
+                f"{'attachment' if download else 'inline'}; filename=\"{plain}\"; "
+                f"filename*=UTF-8''{quote(name, safe='')}")
+            self.end_headers()
+            if self.command == "HEAD":
+                return
+            f.seek(start)
+            left = end - start + 1
+            try:
+                while left > 0:
+                    chunk = f.read(min(left, 65536))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # перемотали видео — браузер бросил прежний запрос
 
     def do_GET(self):
-        if self.path == "/health":
+        url = urlsplit(self.path)
+        if url.path == "/health":
             return self._send(200, b"ok")
-        m = re.fullmatch(r"/d/([^/?#]+)(?:/r/(\d{1,12}))?/?", self.path)
+        m = re.fullmatch(r"/d/([^/?#]+)(?:/r/(\d{1,12})(?:/f/(\d{1,3}))?)?/?", url.path)
         if KEY and m and hmac.compare_digest(m[1].encode(), KEY.encode()):
+            if m[3] is not None:
+                return self.send_file(int(m[2]), int(m[3]), url.query == "dl=1")
             nonce = secrets.token_urlsafe(16)
             page = dashboard(nonce) if m[2] is None else report_page(int(m[2]), nonce)
             if page is not None:

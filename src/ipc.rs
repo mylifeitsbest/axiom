@@ -137,6 +137,9 @@ pub struct SettingsIn {
     /// Отправлять отчёты об ошибках. Нет поля — не менять.
     #[serde(default)]
     pub crash_reports: Option<bool>,
+    /// Новый разговор в панели ИИ при каждом открытии. Нет поля или null — не менять.
+    #[serde(default)]
+    pub ai_new_chat: Option<bool>,
     /// Бета-версии. Нет поля или null — не менять.
     #[serde(default)]
     pub beta: Option<bool>,
@@ -920,6 +923,20 @@ mod tests {
             s.apply(settings);
         }
         assert!(!s.crash_reports);
+    }
+
+    #[test]
+    fn new_ai_chat_setting_is_optional() {
+        let save = |extra: &str| match parse(&format!(
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+        )) {
+            Ok(UiCmd::SaveSettings { settings }) => Some(settings.ai_new_chat),
+            _ => None,
+        };
+        assert_eq!(save(""), Some(None));
+        assert_eq!(save(r#","ai_new_chat":false"#), Some(Some(false)));
+        assert_eq!(save(r#","ai_new_chat":null"#), Some(None));
+        assert_eq!(save(r#","ai_new_chat":"нет""#), None);
     }
 
     #[test]

@@ -52,7 +52,7 @@
   // ---------- состояние ----------
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: null, maximized: false };
   let A = { ...DEFAULTS };
-  let B = { double_search: true, ai_proxy: '', sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
+  let B = { double_search: true, ai_proxy: '', ai_new_chat: true, sleep_minutes: 5, live_tabs: 3, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -338,6 +338,7 @@
         search_custom: String(B.search_custom || ''),
         double_search: !!B.double_search,
         ai_proxy: String(B.ai_proxy || ''),
+        ai_new_chat: B.ai_new_chat !== false,
         sleep_minutes: Math.round(clamp(B.sleep_minutes, 0, 1440, 5)),
         live_tabs: Math.round(clamp(B.live_tabs, 0, 20, 3)),
         onboarded: !!B.onboarded,
@@ -1077,7 +1078,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', ai_new_chat: s.ai_new_chat !== false, sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {

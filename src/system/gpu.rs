@@ -18,9 +18,12 @@
 //! запасным выводом (`webkitvideosink`): каждый кадр — в обычной памяти. Аппаратные
 //! декодеры NVIDIA (nvcodec) и VA-API (на NVIDIA — через nvidia-vaapi-driver) в песочнице
 //! WebKit без GL — частая причина вылетов на видео, а выигрыша от них здесь почти нет:
-//! кадр всё равно копируется в память. Поэтому в тяжёлых режимах на NVIDIA видео
-//! декодирует процессор: ранг этих декодеров в GStreamer — NONE (`GST_PLUGIN_FEATURE_RANK`),
-//! и WebKit их не выбирает. Сайт видит, какие кодеки остались, и берёт их.
+//! кадр всё равно копируется в память. И в «Авто» они на NVIDIA подводят: видео
+//! дёргается (тестер на Hyprland, 24 и 26 ноября), а nvidia-vaapi-driver известен
+//! рывками и в Firefox, где его по умолчанию не включают. Поэтому на NVIDIA видео
+//! всегда декодирует процессор, кроме «Ничего не менять»: ранг этих декодеров в
+//! GStreamer — NONE (`GST_PLUGIN_FEATURE_RANK`), и WebKit их не выбирает. Сайт видит,
+//! какие кодеки остались, и берёт их.
 //!
 //! Тяжёлый режим, с которым Axiom [`CRASH_LIMIT`] раз подряд закрылся аварийно,
 //! сам возвращается в «Авто» (см. [`guard`]).
@@ -76,7 +79,7 @@ vavp8alphadecodebin:NONE,vavp9alphadecodebin:NONE";
 
 /// Какие переменные поставить и в какие значения. Явную синхронизацию отключаем только
 /// там, где она есть: NVIDIA под Wayland. Ступени тяжелее человек выбрал сам — для любой
-/// карты; декодирование процессором к ним — только на NVIDIA.
+/// карты. Декодирование видео процессором — на NVIDIA в любом режиме, кроме «Off».
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn plan(mode: Gpu, nvidia: bool, wayland: bool) -> Vec<(&'static str, &'static str)> {
     let mut vars = Vec::new();
@@ -92,7 +95,7 @@ fn plan(mode: Gpu, nvidia: bool, wayland: bool) -> Vec<(&'static str, &'static s
     if mode == Gpu::NoCompositing {
         vars.push((COMPOSITING, "1"));
     }
-    if mode.heavy() && nvidia {
+    if nvidia {
         vars.push((RANKS, NO_HW_DECODERS));
     }
     vars
@@ -214,8 +217,8 @@ mod tests {
 
     #[test]
     fn steps_from_light_to_heavy() {
-        assert_eq!(names(plan(Gpu::Auto, true, true)), [EXPLICIT_SYNC]);
-        assert!(plan(Gpu::Auto, true, false).is_empty());
+        assert_eq!(names(plan(Gpu::Auto, true, true)), [EXPLICIT_SYNC, RANKS]);
+        assert_eq!(names(plan(Gpu::Auto, true, false)), [RANKS]);
         assert!(plan(Gpu::Auto, false, true).is_empty());
         assert_eq!(
             names(plan(Gpu::NoDmabuf, true, true)),
@@ -234,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn heavy_modes_on_nvidia_decode_video_on_the_cpu() {
+    fn nvidia_decodes_video_on_the_cpu() {
         let ranks = plan(Gpu::NoDmabuf, true, false)
             .into_iter()
             .find(|(name, _)| *name == RANKS)
@@ -254,12 +257,13 @@ mod tests {
                 .iter()
                 .all(|(name, value)| *name == RANKS || *value == "1")
         );
-        // «Авто» видео не трогает.
+        // Без NVIDIA и в «Off» декодеры не трогаем.
         assert!(
-            plan(Gpu::Auto, true, true)
+            plan(Gpu::Auto, false, true)
                 .iter()
                 .all(|(name, _)| *name != RANKS)
         );
+        assert!(plan(Gpu::Off, true, true).is_empty());
     }
 
     #[test]

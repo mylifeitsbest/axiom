@@ -365,9 +365,8 @@ function createIsland(ax) {
     if (!enabled) return null;
     const k = mode();
     if (k === 'bar') {
-      // Пока выехало видео (или чёлка раскрыта вширь), чёлка шириной с него; не хватает
-      // места в ряду — поверх.
-      const z = ((m.video || m.wide) && !collapsed && zone(VW)) || zone(W);
+      // Пока выехало видео (или чёлка раскрыта вширь), чёлка шириной с него (см. zone).
+      const z = zone((m.video || m.wide) && !collapsed);
       return z && { ...z, mode: k };
     }
     if (k === 'top') {
@@ -387,32 +386,84 @@ function createIsland(ax) {
   // Чёлка стоит посередине окна, а если ряд вкладок туда не доходит — посередине ряда.
   // В одну строку ряд узкий (справа адресная строка): чёлка встаёт в свободное место
   // между «+» и адресной строкой — вкладки не двигаются; тесно — посередине ряда.
-  function zone(w) {
+  // Вкладки, ужавшись до предела, не помещаются по сторонам — чёлка уже (не уже 150 px),
+  // а совсем тесно — островка нет.
+  // Пока выехало видео, чёлка шириной с него и вкладки расступаются шире, но середина
+  // та же: сдвинься чёлка, она уехала бы из-под мыши, видео спряталось бы, и всё
+  // поехало бы обратно. Шире не помещается — видео выезжает из обычной чёлки поверх
+  // соседних вкладок, пока на него смотрят.
+  function zone(video) {
     const tabs = $('#tabs');
     if (!enabled || ax.layout() === 'side' || !tabs || !tabs.offsetParent) return null;
     const b = tabs.getBoundingClientRect();
-    const size = zoneOf(w);
-    if (b.width < size + 80) return null;
-    let half = size / 2;
-    let mid = innerWidth / 2;
-    let iw = w;
+    const row = rowTabs(b);
+    const at = (cx, iw) => ({ cx, l: cx - zoneOf(iw) / 2, r: cx + zoneOf(iw) / 2, iw });
+    let z = null;
     if (ax.layout() === 'one') {
-      const end = $('#newTabBtn').getBoundingClientRect().right - (gap.parentNode ? gap.getBoundingClientRect().width : 0) + 6;
+      const end = row.end + 6;
       const free = b.right - end;
       // Свободное место после «+» — чёлка в нём, сузившись (но не уже 150 px).
-      const fit = Math.min(w, free - zoneOf(0));
-      if (w === W && fit >= 150) {
-        iw = Math.floor(fit);
-        half = zoneOf(iw) / 2;
-        mid = end + free / 2;
-      } else if (free >= size) {
-        mid = end + free / 2;
-      } else {
-        mid = b.left + b.width / 2;
-      }
+      const fit = Math.min(W, free - zoneOf(0));
+      if (fit >= 150) z = at(end + free / 2, Math.floor(fit));
     }
-    const cx = Math.min(b.right - half, Math.max(b.left + half, mid));
-    return { cx, l: cx - half, r: cx + half, iw };
+    const mid = ax.layout() === 'one' ? b.left + b.width / 2 : innerWidth / 2;
+    for (let iw = W; !z && iw >= 150; iw -= 10) {
+      const half = zoneOf(iw) / 2;
+      if (b.width < 2 * half) continue;
+      const c = at(Math.min(b.right - half, Math.max(b.left + half, mid)), iw);
+      if (row.fits(c)) z = c;
+    }
+    if (z && video) {
+      const v = at(z.cx, VW);
+      if (v.l >= b.left && v.r <= b.right && row.fits(v)) return v;
+    }
+    return z;
+  }
+  // Вкладки ряда сами по себе, без промежутка под чёлку: где кончался бы «+» (end) и
+  // встанут ли вкладки с «+» по сторонам от чёлки (fits).
+  // Промежуток в расчёт не берём: он сам зависит от места чёлки — по нему чёлка и
+  // промежуток в узком окне догоняли друг друга, и вкладки скакали.
+  // Ширины — как их раздаёт ряд: каждая вкладка хочет свои 190 px (flex-basis) в пределах
+  // min/max-width, а когда справа тесно, все уступают поровну (s); в одну строку первой
+  // ужимается открытая вкладка, остальные и так узкие. Открытая вкладка слева от чёлки
+  // сама не ужмётся: ряд жмёт вкладки, только когда им не хватает места справа.
+  function rowTabs(b) {
+    const list = $('#tablist');
+    const g = parseFloat(getComputedStyle(list).columnGap) || 0;
+    const plus = $('#newTabBtn').getBoundingClientRect().width;
+    const tabs = $$('.tab:not(.out)', list).map((t) => {
+      const s = getComputedStyle(t);
+      return { lo: parseFloat(s.minWidth) || 0, hi: parseFloat(s.maxWidth) || Infinity, basis: parseFloat(s.flexBasis) || 0 };
+    });
+    const n = tabs.length;
+    // Вкладки from…to-1 (каждая со своим зазором g), когда все уступили по s px.
+    const span = (from, to, s) => {
+      let w = 0;
+      for (let i = from; i < to; i++) w += Math.max(tabs[i].lo, Math.min(tabs[i].hi, tabs[i].basis - s)) + g;
+      return w;
+    };
+    const most = Math.max(0, ...tabs.map((t) => t.basis)); // уступив столько, все — по min-width
+    const end = b.left + Math.min(Math.max(0, span(0, n, 0) - g), b.width - g - plus) + g + plus;
+    const fits = (z) => {
+      // Без промежутка: все вкладки и «+» до чёлки.
+      if (b.left + span(0, n, 0) + plus <= z.l + 2) return true;
+      // Промежуток перед вкладкой k: справа от чёлки вкладки k… и «+», ужатые сколько
+      // нужно (s), слева — остальные, ужатые так же. Чем меньше k, тем теснее справа.
+      const right = (k, s) => z.r + span(k, n, s) + g + plus <= b.right + 1;
+      for (let k = n; k >= 0; k--) {
+        if (!right(k, most)) return false;
+        let s = 0;
+        if (!right(k, 0)) {
+          let lo = 0;
+          let hi = most;
+          for (let i = 0; i < 14; i++) { const mid = (lo + hi) / 2; if (right(k, mid)) hi = mid; else lo = mid; }
+          s = hi;
+        }
+        if (k === 0 || b.left + span(0, k, s) - g <= z.l + 2) return true;
+      }
+      return false;
+    };
+    return { end, fits };
   }
   let gapTimer = 0;
   // Промежуток тянется от конца вкладки слева до правого края чёлки. Где ему встать,
@@ -449,9 +500,18 @@ function createIsland(ax) {
       return width;
     };
     let width = 0;
-    for (let k = tabs.length; k >= 0; k--) {
+    let ok = false;
+    for (let k = tabs.length; k >= 0 && !ok; k--) {
       width = fit(k);
-      if (!overlaps(z)) break;
+      ok = !overlaps(z);
+    }
+    if (!ok) {
+      // Нигде не влезли (zone() считает с запасом, но вдруг): вкладки остаются на своих
+      // местах под чёлкой, а не уезжают за «+» и адресную строку.
+      gap.remove();
+      gap.style.width = '0px';
+      gap.style.transition = '';
+      return;
     }
     // Плавно: от прежней ширины (на прежнем месте) или от нуля.
     gap.style.width = `${gap.nextElementSibling === wasNext ? was : 0}px`;
@@ -463,19 +523,25 @@ function createIsland(ax) {
   // вкладкам в момент появления чёлки, а они могут ещё ехать (открылась, закрылась,
   // переключилась вкладка): тогда пересчитываем.
   let lastZone = null;
-  // Не годится и место, при котором «+» уехал за край ряда: вкладки не влезли.
+  // Не годится и место, при котором «+» уехал за край ряда или вкладки, ужавшись до
+  // предела, уехали под него: вкладки не влезли.
   function overlaps(z) {
     const hit = (b) => b.right > z.l + 2 && b.left < z.r - 2;
     const plus = $('#newTabBtn').getBoundingClientRect();
-    return $$('.tab:not(.out)', $('#tablist')).some((t) => hit(t.getBoundingClientRect()))
-      || hit(plus) || plus.right > $('#tabs').getBoundingClientRect().right + 1;
+    const rects = $$('.tab:not(.out)', $('#tablist')).map((t) => t.getBoundingClientRect());
+    return rects.some(hit) || hit(plus) || plus.right > $('#tabs').getBoundingClientRect().right + 1
+      || (rects.length > 0 && rects[rects.length - 1].right > plus.left + 1);
   }
   function fixGap() {
     if (!shown || collapsed || !lastZone || lastZone.mode !== 'bar' || $('#tablist .tab.drag')) return;
     if (overlaps(lastZone)) placeGap(lastZone);
   }
   // После анимаций вкладок и на всякий случай раз в полсекунды, пока чёлка видна.
-  $('#tablist').addEventListener('transitionend', (e) => { if (e.target !== gap) requestAnimationFrame(fixGap); });
+  // Вкладка доехала до своей ширины (переключили, закрыли) — в одну строку от этого
+  // зависит и место чёлки: считаем заново.
+  $('#tablist').addEventListener('transitionend', (e) => {
+    if (e.target !== gap) requestAnimationFrame(e.propertyName === 'max-width' && shown ? sync : fixGap);
+  });
   $('#tablist').addEventListener('animationend', () => requestAnimationFrame(fixGap));
   setInterval(fixGap, 500);
 
@@ -735,10 +801,14 @@ function createIsland(ax) {
     sync();
   }
 
-  const ro = new ResizeObserver(() => { if (shown) sync(); });
+  // И когда островка не видно: свёрнутое окно сжимает интерфейс в ноль, островок
+  // прячется, а развернули — должен вернуться. Ряд вкладок меняется и без окна:
+  // адресная строка раздаётся при вводе и доезжает до своей ширины после разворота.
+  const ro = new ResizeObserver(() => sync());
   ro.observe($('#row1'));
   ro.observe($('#side'));
-  addEventListener('resize', () => { if (shown) sync(); });
+  ro.observe($('#tabs'));
+  addEventListener('resize', () => sync());
 
   // Начали вводить адрес — видео втягивается в чёлку, чтобы не закрывать подсказки.
   function onOmniFocus() {

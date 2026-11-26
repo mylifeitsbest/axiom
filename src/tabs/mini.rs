@@ -317,14 +317,58 @@ pub fn round_bottom(webview: &wry::WebView, cut: Option<(f64, f64)>, radius: f64
     }
 }
 
-/// Linux: форма окна GDK у webview (своё окно у WebKitGTK на GTK3 есть всегда). Окно
-/// дочернее и рисуется вместе с окном браузера, поэтому форма обрезает и картинку, и мышь.
-/// Координаты GDK — уже логические.
+/// Linux: webview WebKitGTK на GTK3 — дочернее окно GDK, оно рисуется вместе с окном
+/// браузера. Картинку режет обработчик `draw` самого webview: он срабатывает раньше, чем
+/// WebKitGTK рисует страницу, и обрезает кадр по вырезу (полосы — прямоугольники, такую
+/// обрезку понимает и рисование через GL). Мышь режет форма окна GDK: вне выреза клики и
+/// колесо достаются странице под ним. Координаты GDK — уже логические.
 #[cfg(target_os = "linux")]
 pub fn round_bottom(webview: &wry::WebView, cut: Option<(f64, f64)>, radius: f64, _scale: f64) {
-    use gtk::{cairo, gdk, glib::translate::ToGlibPtr, prelude::*};
+    use gtk::{cairo, gdk, glib, glib::translate::ToGlibPtr, prelude::*};
+    use std::{cell::RefCell, rc::Rc};
     use wry::WebViewExtUnix;
+
+    type Rows = Rc<RefCell<Vec<(i32, i32, i32, i32)>>>;
+    thread_local! {
+        /// Webview под чёлкой, его обработчик `draw` и вырез, по которому тот режет кадр.
+        static CLIP: RefCell<Option<(glib::WeakRef<gtk::Widget>, glib::SignalHandlerId, Rows)>> =
+            const { RefCell::new(None) };
+    }
+
     let widget = webview.webview().upcast::<gtk::Widget>();
+    let rows =
+        cut.map(|(w, h)| rounded_rows(w.round() as i32, h.round() as i32, radius.round() as i32));
+    CLIP.with(|clip| {
+        let mut clip = clip.borrow_mut();
+        let same = clip
+            .as_ref()
+            .is_some_and(|(w, _, _)| w.upgrade().is_some_and(|w| w == widget));
+        // Показ кончился или перешёл на другую вкладку — прежний обработчик долой.
+        if (rows.is_none() || !same)
+            && let Some((w, id, _)) = clip.take()
+            && let Some(w) = w.upgrade()
+        {
+            w.disconnect(id);
+        }
+        let Some(rows) = &rows else {
+            return;
+        };
+        if let Some((_, _, now)) = clip.as_ref() {
+            *now.borrow_mut() = rows.clone();
+            return;
+        }
+        let now: Rows = Rc::new(RefCell::new(rows.clone()));
+        let cut = now.clone();
+        let id = widget.connect_draw(move |_, cr| {
+            for &(x, y, w, h) in cut.borrow().iter() {
+                cr.rectangle(f64::from(x), f64::from(y), f64::from(w), f64::from(h));
+            }
+            cr.clip();
+            glib::Propagation::Proceed
+        });
+        *clip = Some((widget.downgrade(), id, now));
+    });
+    widget.queue_draw();
     // Без своего окна `window()` — окно родителя: обрезали бы весь браузер.
     if !widget.has_window() {
         return;
@@ -332,12 +376,12 @@ pub fn round_bottom(webview: &wry::WebView, cut: Option<(f64, f64)>, radius: f64
     let Some(window) = widget.window() else {
         return;
     };
-    let region = cut.map(|(w, h)| {
-        let rows: Vec<_> = rounded_rows(w.round() as i32, h.round() as i32, radius.round() as i32)
+    let region = rows.map(|rows| {
+        let rects: Vec<_> = rows
             .into_iter()
             .map(|(x, y, w, h)| cairo::RectangleInt::new(x, y, w, h))
             .collect();
-        cairo::Region::create_rectangles(&rows)
+        cairo::Region::create_rectangles(&rects)
     });
     window.shape_combine_region(region.as_ref(), 0, 0);
     // SAFETY: живое окно GDK; NULL снимает форму для мыши, регион GDK копирует.

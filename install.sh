@@ -6,7 +6,8 @@
 # приходят вместе с системой (`sudo apt upgrade`).
 # Arch и производные: ставит пакет axiom-browser-bin из AUR — через yay или paru,
 # а без них собирает его makepkg. Систему при этом не обновляет: зависимости
-# ставятся через `pacman -S --needed`, как у любого пакета из AUR.
+# ставятся через `pacman -S --needed`, как у любого пакета из AUR. Видеокодек,
+# который потянул бы обновление gstreamer, откладывается (см. codecs_later).
 # Подписанный репозиторий pacman — по желанию, и это `sudo pacman -Syu`
 # (обновится вся система):
 #   curl -fsSL .../install.sh | sh -s -- --arch-repo     (или AXIOM_ARCH_REPO=1)
@@ -69,7 +70,51 @@ chmod 755 "$tmp"
 if (exec </dev/tty) 2>/dev/null; then TTY=/dev/tty; NOCONFIRM=""; else TTY=/dev/null; NOCONFIRM=1; fi
 
 sync_hint() {
-  die "установка не удалась. Если pacman не смог скачать пакеты (ошибка 404), базы пакетов устарели: обновите систему (sudo pacman -Syu) и запустите скрипт снова."
+  die "установка не удалась. Обычно это значит, что система и базы pacman разошлись (pacman -Sy без -u или ошибка 404 при скачивании): обновите систему (sudo pacman -Syu) и запустите скрипт снова."
+}
+
+# Видеокодеки из depends пакета: без них вместо видео чёрный прямоугольник,
+# но сам Axiom работает.
+CODECS="gst-plugins-good gst-libav"
+
+# Кодеки, которые сейчас не поставить без обновления системы, — в LATER.
+#
+# Кодеки — из семейства gstreamer, где пакеты требуют друг друга ровно той же
+# версии (gst-libav 1.28 требует gst-plugins-base-libs=1.28). Если базы pacman
+# новее системы (pacman -Sy без -u, автообновление баз в pamac), недостающий
+# кодек потянул бы обновление всего gstreamer, а установленные gst-plugins-bad
+# и прочие держат старую версию: pacman отказывает («breaks dependency»).
+codecs_later() {
+  LATER=""
+  # shellcheck disable=SC2086 # CODECS — список через пробел
+  for c in $(pacman -T $CODECS 2>/dev/null || true); do
+    # Что поставит pacman ради кодека. Уже установленный пакет в этом списке —
+    # обновление, а не установка. pacman -Sp ничего не меняет и root не требует.
+    if targets=$(pacman -Sp --needed --noconfirm --print-format '%n' "$c" </dev/null 2>/dev/null); then
+      upgrade=""
+      for t in $targets; do
+        if pacman -Qq "$t" >/dev/null 2>&1; then upgrade=1; break; fi
+      done
+      [ -z "$upgrade" ] && continue
+    fi
+    LATER="$LATER $c"
+  done
+}
+
+# Ставит собранный пакет: pacman -U докачивает зависимости без обновления системы.
+# Кодеки из LATER не ставим (--assume-installed): Axiom встанет, а видео
+# заработает, когда система обновится и кодек поставят.
+pacman_install() {
+  codecs_later
+  file=$1
+  set --
+  for c in $LATER; do set -- "$@" --assume-installed "$c"; done
+  $SUDO pacman -U --needed ${NOCONFIRM:+--noconfirm} "$@" "$file" <"$TTY" || sync_hint
+  if [ -n "$LATER" ]; then
+    say "Внимание: часть видео (mp4, webm) будет чёрной — не поставлено:$LATER."
+    note "Эти кодеки сейчас потянули бы обновление gstreamer: базы pacman новее системы, а частичное обновление ломает другие пакеты."
+    note "Обновите систему (sudo pacman -Syu), затем: sudo pacman -S --needed --asdeps$LATER"
+  fi
 }
 
 # Пакет уже есть в AUR? (До первой публикации его там нет.)
@@ -121,7 +166,7 @@ arch_beta() {
     note "Сейчас стоит пакет axiom-browser: pacman предложит заменить его на $AUR_PKG — ответьте y."
   fi
   say "Устанавливаю (pacman -U, без обновления системы)…"
-  $SUDO pacman -U --needed ${NOCONFIRM:+--noconfirm} "$tmp/$pkg" <"$TTY" || sync_hint
+  pacman_install "$tmp/$pkg"
   UPDATES="Новые бета-версии Axiom предложит сам. Вернуться к обычным версиям: выключите «Бета-версии» в настройках, следующая версия придёт из AUR."
 }
 
@@ -154,7 +199,10 @@ arch_aur() {
       if command -v "$h" >/dev/null 2>&1; then helper=$h; break; fi
     done
   fi
-  if [ -n "$helper" ] && in_aur; then
+  # yay и paru поставили бы и те кодеки, что тянут обновление gstreamer, —
+  # и упали бы. Тогда собираем сами (arch_makepkg), без этих кодеков.
+  codecs_later
+  if [ -n "$helper" ] && [ -z "$LATER" ] && in_aur; then
     say "Устанавливаю $AUR_PKG из AUR через $helper…"
     "$helper" -S --needed ${NOCONFIRM:+--noconfirm} "$AUR_PKG" <"$TTY" || sync_hint
     UPDATES="Обновления: $helper -Syu, вместе с остальными пакетами."
@@ -179,26 +227,24 @@ arch_makepkg() {
     say "Ставлю fakeroot, он нужен makepkg…"
     $SUDO pacman -S --needed --asdeps ${NOCONFIRM:+--noconfirm} fakeroot <"$TTY" || sync_hint
   fi
+  # Собираем без проверки зависимостей (--nodeps): их поставит pacman_install.
   # Всё, что качает и собирает makepkg, — во временной папке, даже если
   # в makepkg.conf заданы свои BUILDDIR, PKGDEST или SRCDEST.
+  say "Собираю пакет…"
   if [ -z "$SUDO" ]; then
-    # makepkg не запускается от root: собираем от nobody, ставим сами.
-    # pacman -U докачает зависимости через pacman -S, без обновления системы.
+    # makepkg не запускается от root: собираем от nobody.
     command -v runuser >/dev/null 2>&1 || die "нужен runuser (util-linux)"
     chown -R nobody "$build"
-    say "Собираю пакет…"
     (cd "$build" && runuser -u nobody -- env HOME="$build" \
       BUILDDIR="$build" PKGDEST="$build" SRCDEST="$build" makepkg --nodeps --noconfirm) \
       || die "makepkg не собрал пакет"
-    set -- "$build/$AUR_PKG"-*.pkg.tar.*
-    say "Устанавливаю…"
-    pacman -U --needed ${NOCONFIRM:+--noconfirm} "$1" <"$TTY" || sync_hint
   else
-    # makepkg -s ставит зависимости через pacman -S --needed --asdeps, систему не обновляет.
-    say "Собираю и устанавливаю пакет (makepkg -si)…"
     (cd "$build" && env BUILDDIR="$build" PKGDEST="$build" SRCDEST="$build" \
-      makepkg -si --needed ${NOCONFIRM:+--noconfirm} <"$TTY") || sync_hint
+      makepkg --nodeps --noconfirm) || die "makepkg не собрал пакет"
   fi
+  set -- "$build/$AUR_PKG"-*.pkg.tar.*
+  say "Устанавливаю (pacman -U, без обновления системы)…"
+  pacman_install "$1"
 }
 
 if command -v pacman >/dev/null 2>&1; then

@@ -277,9 +277,11 @@
   }
 
   // Видео из чёлки и «Видео в окне» — только Windows: на Linux чёлка с кнопками и загрузками.
+  // Снимка страницы под окнами на Linux нет (src/tabs/snapshot.rs): там раскрытый островок
+  // не заходит на страницу (`overPage`), иначе она спряталась бы до серого фона.
   function configureIsland() {
     const win = SYS.platform === 'windows';
-    isl.configure({ enabled: A.island !== false, video: win && A.islandVideo !== false, pip: win && A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide });
+    isl.configure({ enabled: A.island !== false, video: win && A.islandVideo !== false, pip: win && A.islandPip !== false, collapsed: !!A.islandCollapsed, side: A.islandSide, overPage: SYS.platform !== 'linux' });
   }
   function applyAppearance() {
     const mode =A.mode === 'system' ? (darkScheme.matches ? 'dark' : 'light') : (A.mode === 'light' ? 'light' : 'dark');

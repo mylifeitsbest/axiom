@@ -75,7 +75,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Зависимости
-        run: pacman -Syu --noconfirm --needed git rust webkit2gtk-4.1 gtk3 libsoup3 xdg-utils hicolor-icon-theme
+        run: pacman -Syu --noconfirm --needed git rust webkit2gtk-4.1 gtk3 libsoup3 xdg-utils hicolor-icon-theme gst-plugins-good gst-libav
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: makepkg
         run: |

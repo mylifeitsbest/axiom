@@ -4,7 +4,7 @@
 # После правки: makepkg --printsrcinfo > .SRCINFO (CI сверяет их).
 pkgname=axiom-browser-bin
 _pkgname=axiom-browser
-pkgver=0.6.0
+pkgver=0.6.1
 pkgrel=1
 pkgdesc='Lightweight Rust browser with DuckDuckGo and a Google AI Mode side panel (prebuilt binary)'
 arch=('x86_64')
@@ -20,7 +20,7 @@ conflicts=("$_pkgname")
 # Бинарник в архиве уже без отладочных символов.
 options=('!strip' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/axiom-linux-x86_64.tar.gz")
-sha256sums=('d36483689446053adacfd2ff2f1a5498f20d6922caccbe36501d8f2ee0c06551')
+sha256sums=('443c00c2b1895fc2ddad1a1801c32c539e0acc764ac190cf64673bfea39d21cc')
 
 package() {
   cd axiom

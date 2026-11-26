@@ -22,8 +22,19 @@ New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
     Write-Host $(if ($beta) { 'Скачиваю бета-версию Axiom...' } else { 'Скачиваю Axiom...' })
-    Invoke-WebRequest "$base/$name" -OutFile "$tmp\$name" -UseBasicParsing
-    Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile "$tmp\SHA256SUMS.txt" -UseBasicParsing
+    # Вместо страницы ошибки GitHub целиком — одна понятная строка.
+    function Get-File($url, $out) {
+        try { Invoke-WebRequest $url -OutFile $out -UseBasicParsing }
+        catch {
+            # На 404 GitHub (или прокси) иногда просто рвёт соединение — кода ответа нет.
+            $code = [int]$_.Exception.Response.StatusCode
+            if ($beta) { throw "Бета-версия не скачалась: её ещё нет (появляется минут через 20-30 после изменения) или нет связи с GitHub. Попробуйте позже. ($($_.Exception.Message))" }
+            if ($code -eq 404) { throw "Файл не найден на GitHub: $url" }
+            throw "Не удалось скачать $url — проверьте интернет или прокси. ($($_.Exception.Message))"
+        }
+    }
+    Get-File "$base/$name" "$tmp\$name"
+    Get-File "$base/SHA256SUMS.txt" "$tmp\SHA256SUMS.txt"
 
     $line = Get-Content "$tmp\SHA256SUMS.txt" | Where-Object { $_ -match ("\s" + [regex]::Escape($name) + '$') }
     $expected = ("$line" -split '\s+')[0]

@@ -109,7 +109,8 @@ arch_repo() {
 arch_beta() {
   pkg="$AUR_PKG-x86_64.pkg.tar.zst"
   say "Скачиваю бета-версию Axiom…"
-  fetch "$BETA_URL/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt"
+  fetch "$BETA_URL/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt" 2>/dev/null \
+    || die "бета-версия ещё не опубликована (или нет связи с GitHub). Она появляется минут через 20-30 после изменения — попробуйте позже."
   fetch "$BETA_URL/$pkg" "$tmp/$pkg"
   sum=$(awk -v f="$pkg" '$2 == f { print $1 }' "$tmp/SHA256SUMS.txt")
   [ -n "$sum" ] || die "в SHA256SUMS.txt бета-версии нет строки для $pkg"

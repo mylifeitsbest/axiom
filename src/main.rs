@@ -97,10 +97,10 @@ fn run() -> Result<()> {
     gpu.announce(&paths);
     update::cleanup();
     stats::start(&paths.root);
-    system::started(&paths);
+    let updated_from = system::started(&paths);
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
-    let mut app = App::new(&event_loop, paths, &urls, updated)?;
+    let mut app = App::new(&event_loop, paths, &urls, updated, updated_from)?;
     events::spawn_ticker(event_loop.create_proxy());
     let registration = server.map(|server| server.spawn(event_loop.create_proxy()));
 

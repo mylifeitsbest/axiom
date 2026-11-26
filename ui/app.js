@@ -1085,6 +1085,7 @@
     translate: tr,
     perms: pm,
     openUpdate() { dl.close(); upd.open(); },
+    openNotes() { dl.close(); upd.openNotes(); },
     closeSettings,
     openHistory: () => openHistory(),
     applyAppearance,
@@ -1149,14 +1150,14 @@
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел, #onb:шаг, #downloads, #update[:install], #translate[:menu|:revert], #history[:запрос]
+        // #settings:раздел, #onb:шаг, #downloads, #update[:install|:notes|:current], #translate[:menu|:revert], #history[:запрос]
         // или #import:браузер (сразу начать перенос) — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') openSettings(arg);
         else if (screen === 'onb') panels.openOnboarding(+arg || 0);
         else if (screen === 'import') { openSettings('data'); panels.importSoon(arg); }
         else if (screen === 'downloads') dl.open();
-        else if (screen === 'update') upd.openSoon(arg === 'install');
+        else if (screen === 'update') upd.openSoon(arg);
         else if (screen === 'translate') tr.debug(arg);
         else if (screen === 'history') openHistory(arg);
         else if (!B.onboarded) panels.openOnboarding();
@@ -1198,6 +1199,7 @@
     media(m) { isl.onMedia(m); },
     peek(m) { isl.onPeek(m); },
     update(m) { upd.onState(m); },
+    update_notes(m) { upd.onNotes(m); },
     translate(m) { tr.onState(m); },
     snapshot(m) { snap.onMessage(m); },
     // Закрыли активную вкладку настроек: лист уходит плавно, потом Rust покажет страницу.

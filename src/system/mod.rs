@@ -23,10 +23,12 @@ use serde::Serialize;
 
 /// Этот процесс стал главным окном профиля: отмечаем версию в профиле
 /// и в фоне подтягиваем устаревшую установленную копию (Windows).
-pub fn started(paths: &crate::storage::Paths) {
-    handoff::record(paths);
+/// Возвращает прежнюю версию, если Axiom с неё обновился.
+pub fn started(paths: &crate::storage::Paths) -> Option<crate::update::Version> {
+    let before = handoff::record(paths);
     #[cfg(windows)]
     refresh::spawn();
+    before
 }
 
 /// Что интерфейс показывает в разделе «Система» и на экране приветствия.

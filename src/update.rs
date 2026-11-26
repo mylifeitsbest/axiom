@@ -37,6 +37,9 @@ use tao::event_loop::EventLoopProxy;
 
 use crate::events::UserEvent;
 
+mod notes;
+pub use notes::{Range as NotesRange, Section as NotesSection, Which as NotesWhich};
+
 const REPO: &str = "https://github.com/mylifeitsbest/axiom";
 #[cfg_attr(not(windows), allow(dead_code))]
 const ASSET: &str = "Axiom-windows-x64.exe";
@@ -119,6 +122,11 @@ impl std::fmt::Display for Version {
             None => Ok(()),
         }
     }
+}
+
+/// Страница релиза на GitHub, где лежит эта версия.
+pub fn release_page(version: Version) -> String {
+    format!("{REPO}/releases/tag/{}", version.tag())
 }
 
 /// Версия этой сборки строкой: `0.5.4` или `0.5.4-beta.312`.
@@ -252,6 +260,8 @@ pub enum UpdateEvent {
     #[cfg_attr(not(windows), allow(dead_code))]
     Progress(u64),
     Downloaded(Result<Downloaded, String>),
+    /// Список изменений для «Что нового».
+    Notes(NotesWhich, NotesRange, Result<Vec<NotesSection>, String>),
 }
 
 /// Скачанный и проверенный exe новой версии (сам скачивает только Windows).
@@ -292,6 +302,8 @@ pub struct View {
     pub beta_build: bool,
     /// Бета-версии для этой системы есть: показываем переключатель.
     pub beta_available: bool,
+    /// Axiom только что обновился с этой версии: интерфейс предложит «Что нового».
+    pub updated_from: Option<String>,
 }
 
 pub struct Updater {
@@ -307,6 +319,8 @@ pub struct Updater {
     how: How,
     /// Следить и за бета-версиями (если они есть для этой системы).
     beta: bool,
+    /// С какой версии Axiom обновился перед этим запуском.
+    updated_from: Option<Version>,
 }
 
 impl Updater {
@@ -322,7 +336,33 @@ impl Updater {
             manual: false,
             how: How::detect(),
             beta: false,
+            updated_from: None,
         }
+    }
+
+    /// Профиль до этого запуска открывала более старая версия.
+    pub fn set_updated_from(&mut self, from: Option<Version>) {
+        self.updated_from = from.filter(|&v| v < Version::current());
+    }
+
+    /// «Что нового»: скачать список изменений в фоне.
+    pub fn notes(&self, which: NotesWhich, events: &EventLoopProxy<UserEvent>) {
+        let current = Version::current();
+        let range = match (which, self.latest) {
+            (NotesWhich::Next, Some(latest)) => NotesRange {
+                from: Some(current),
+                to: latest,
+            },
+            _ => NotesRange {
+                from: self.updated_from,
+                to: current,
+            },
+        };
+        let events = events.clone();
+        thread::spawn(move || {
+            let result = notes::fetch(range).map_err(|e| format!("{e:#}"));
+            let _ = events.send_event(UserEvent::Update(UpdateEvent::Notes(which, range, result)));
+        });
     }
 
     /// Включает или выключает бета-версии. Канал сменился — прежний ответ
@@ -439,7 +479,7 @@ impl Updater {
 
     pub fn view(&self, manual: bool, busy: bool) -> View {
         let page = match self.latest {
-            Some(v) => format!("{REPO}/releases/tag/{}", v.tag()),
+            Some(v) => release_page(v),
             None => format!("{REPO}/releases/latest"),
         };
         View {
@@ -458,6 +498,7 @@ impl Updater {
             beta: self.beta,
             beta_build: Version::current().is_beta(),
             beta_available: self.how.has_beta(),
+            updated_from: self.updated_from.map(|v| v.to_string()),
         }
     }
 }

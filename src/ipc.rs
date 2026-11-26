@@ -355,6 +355,10 @@ pub enum UiCmd {
     UpdateCheck,
     /// «Обновить»: скачать новую версию и перезапуститься.
     UpdateInstall,
+    /// «Что нового»: изменения в доступном обновлении или в этой версии.
+    UpdateNotes {
+        which: crate::update::NotesWhich,
+    },
     /// Кнопка перевода в адресной строке: перевести активную вкладку.
     Translate,
     /// «Показать оригинал» в окошке перевода.
@@ -678,6 +682,16 @@ pub enum ToUi<'a> {
         height: f64,
     },
     Update(crate::update::View),
+    /// Список изменений для «Что нового»; `error` — не удалось скачать.
+    UpdateNotes {
+        which: crate::update::NotesWhich,
+        from: Option<String>,
+        to: String,
+        /// Страница релиза `to` — «На GitHub».
+        page: String,
+        sections: Vec<crate::update::NotesSection>,
+        error: String,
+    },
     Translate(crate::translate::View<'a>),
     /// Снимок страницы под окном (или «убрать снимок»).
     Snapshot(crate::tabs::snapshot::View),
@@ -785,6 +799,13 @@ mod tests {
             parse(r#"{"cmd":"update_install"}"#),
             Ok(UiCmd::UpdateInstall)
         ));
+        assert!(matches!(
+            parse(r#"{"cmd":"update_notes","which":"next"}"#),
+            Ok(UiCmd::UpdateNotes {
+                which: crate::update::NotesWhich::Next
+            })
+        ));
+        assert!(parse(r#"{"cmd":"update_notes","which":"https://example.com"}"#).is_err());
         assert!(
             parse(r#"{"cmd":"layout","content":{"x":0,"y":0,"w":-5,"h":10},"ai":null}"#).is_err()
         );

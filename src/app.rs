@@ -125,10 +125,14 @@ impl App {
         paths: Paths,
         open: &[String],
         just_updated: bool,
+        updated_from: Option<crate::update::Version>,
     ) -> Result<Self> {
         let mut settings = Settings::load(&paths);
         crate::reports::set_auto(settings.crash_reports);
         let mut updater = Updater::new();
+        updater.set_updated_from(updated_from);
+        // Пакет обновили apt или pacman — Axiom узнаёт об этом по записи в профиле.
+        let just_updated = just_updated || updated_from.is_some();
         updater.set_beta(settings.beta_channel(crate::update::Version::current().is_beta()));
         let history = History::load(&paths);
         let bookmarks = Bookmarks::load(&paths);
@@ -545,6 +549,7 @@ impl App {
                     self.push_update(false);
                 }
             }
+            UiCmd::UpdateNotes { which } => self.updater.notes(which, &self.events),
             UiCmd::Translate => self.translate_active(),
             UiCmd::TranslateOriginal => self.translate_original(),
             UiCmd::TranslatePrefs { prefs } => self.translate_prefs(prefs),
@@ -1957,6 +1962,20 @@ impl App {
                     // Новая версия уже запущена и ждёт, пока этот процесс закроется.
                     return Flow::Exit;
                 }
+            }
+            UpdateEvent::Notes(which, range, result) => {
+                let (sections, error) = match result {
+                    Ok(sections) => (sections, String::new()),
+                    Err(error) => (Vec::new(), error),
+                };
+                self.send(&ToUi::UpdateNotes {
+                    which,
+                    from: range.from.map(|v| v.to_string()),
+                    to: range.to.to_string(),
+                    page: crate::update::release_page(range.to),
+                    sections,
+                    error,
+                });
             }
         }
         Flow::Continue

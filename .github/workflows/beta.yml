@@ -221,6 +221,17 @@ jobs:
             git log --no-merges --format='- %s' "${LAST:+$LAST..}$SHA" \
               | grep -vE '^- (AUR|CI|README)' | head -n 60 || true
           } > notes.md
+          # «Что нового» в самом Axiom (src/update/notes.rs): первая строка — эта версия,
+          # дальше по коммиту после выпуска, «N<TAB>заголовок», где N — бета с этим коммитом.
+          # Служебные коммиты Axiom отсеивает сам.
+          {
+            echo "$VERSION"
+            git log --no-merges --format='%H %s' "${LAST:+$LAST..}$SHA" | head -n 300 \
+              | while read -r hash subject; do
+                  printf '%s\t%s\n' "$(git rev-list --count "$hash")" "$subject"
+                done
+          } > dist/NOTES.txt
+          head -n 5 dist/NOTES.txt
           if ! gh release view beta --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create beta --repo "$GITHUB_REPOSITORY" --target "$SHA" --prerelease --latest=false \
               --title "Бета-версия" --notes-file notes.md
@@ -232,7 +243,8 @@ jobs:
           # найдёт и новые файлы. Копия, читавшая VERSION раньше, получит несовпадение
           # суммы и просто проверит позже.
           gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/Axiom-windows-x64.exe dist/axiom-linux-x86_64.tar.gz dist/axiom-browser-bin-x86_64.pkg.tar.zst
+            dist/Axiom-windows-x64.exe dist/axiom-linux-x86_64.tar.gz dist/axiom-browser-bin-x86_64.pkg.tar.zst \
+            dist/NOTES.txt
           gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber dist/SHA256SUMS.txt
           gh release upload beta --repo "$GITHUB_REPOSITORY" --clobber dist/VERSION
           gh release edit beta --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \

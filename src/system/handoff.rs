@@ -137,27 +137,31 @@ fn expected_name(exe: &Path) -> bool {
     NAMES.contains(&copy.unwrap_or(stem))
 }
 
-/// Отмечает в профиле, что его открыла эта версия.
-pub fn record(paths: &Paths) {
+/// Отмечает в профиле, что его открыла эта версия. Возвращает версию,
+/// которая открывала профиль до неё, если та старее: Axiom обновился.
+pub fn record(paths: &Paths) -> Option<Version> {
     // Отладочная сборка на настоящем профиле себя не отмечает: после смены номера
     // версии повседневная сборка иначе отдавала бы ссылки ей.
     if cfg!(debug_assertions) && std::env::var_os("AXIOM_PROFILE").is_none() {
-        return;
+        return None;
     }
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    if let Err(err) = save(&paths.root.join(FILE), exe) {
+    let exe = std::env::current_exe().ok()?;
+    let file = paths.root.join(FILE);
+    let before = read_json::<LastRun>(&file);
+    if let Err(err) = save(&file, before.as_ref(), exe) {
         eprintln!("версия в профиле не отмечена: {err:#}");
     }
+    before
+        .and_then(|last| Version::parse(&last.version))
+        .filter(|&v| v < Version::current())
 }
 
-fn save(file: &Path, exe: PathBuf) -> anyhow::Result<()> {
+fn save(file: &Path, before: Option<&LastRun>, exe: PathBuf) -> anyhow::Result<()> {
     let now = LastRun {
         version: Version::current().to_string(),
         exe,
     };
-    if read_json::<LastRun>(file).as_ref() == Some(&now) {
+    if before == Some(&now) {
         return Ok(());
     }
     write_json(file, &now)
@@ -291,7 +295,7 @@ mod tests {
         let me = dir.join("me.exe");
         let _ = std::fs::write(&me, b"MZ");
         let file = dir.join(FILE);
-        let saved = save(&file, me.clone())
+        let saved = save(&file, None, me.clone())
             .ok()
             .and_then(|()| read_json::<LastRun>(&file));
         let _ = std::fs::remove_dir_all(&dir);

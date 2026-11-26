@@ -302,7 +302,7 @@ function createPanels(ax) {
           ${row('Отрисовка страниц', 'Если страницы мигают, когда двигаете окно, или Axiom закрывается сам (чаще на NVIDIA). «Без DMA-BUF» и «Без ускорения» — крайние меры: страницы рисует процессор, и на видео (например, YouTube) Axiom может вылетать. После трёх вылетов подряд вернётся «Авто». Применится после перезапуска Axiom', '<select data-bkey="gpu"><option value="auto">Авто</option><option value="no_dmabuf">Без DMA-BUF (может вылетать на видео)</option><option value="no_compositing">Без ускорения (может вылетать на видео)</option><option value="off">Ничего не менять</option></select>', 'id="gpuRow" hidden data-kw="nvidia мигание видеокарта wayland hyprland dmabuf видео вылет краш youtube"')}
         </div>
         <div class="card">
-          <div class="srow" id="updRow"><span class="sl"><b>Обновления</b><small id="updNote"></small></span><span class="sc"><button class="btn" data-act="update" id="updSet">Проверить</button></span></div>
+          <div class="srow" id="updRow"><span class="sl"><b>Обновления</b><small id="updNote"></small></span><span class="sc"><button class="btn ghost" data-act="notes" id="notesSet">Что нового</button><button class="btn" data-act="update" id="updSet">Проверить</button></span></div>
           ${row('Проверять автоматически', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии', toggle('data-bkey', 'check_updates'))}
           ${row('Бета-версии', 'Исправления и новинки сразу, не дожидаясь выхода версии. Возможны ошибки. Выключите — со следующей версии вернётесь на обычные', toggle('data-bkey', 'beta'), 'id="betaRow" hidden data-kw="бета тест beta ранние сборки"')}
         </div>
@@ -724,6 +724,7 @@ function createPanels(ax) {
       case 'import': startImport(b.dataset.browser || onbPick); break;
       case 'install': ax.send({ cmd: 'install' }); b.classList.add('busy'); break;
       case 'default': ax.send({ cmd: 'open_default_apps' }); break;
+      case 'notes': ax.openNotes(); break;
       case 'update':
         if (ax.update()?.latest) ax.openUpdate();
         else ax.send({ cmd: 'update_check' });

@@ -479,7 +479,7 @@ fn base_url() -> String {
 #[cfg(windows)]
 const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
-const NULL_DEVICE: &str = "/beta/null";
+const NULL_DEVICE: &str = "/dev/null";
 
 fn curl() -> Command {
     #[cfg(windows)]
@@ -984,6 +984,14 @@ mod tests {
         apt.how = How::Apt;
         apt.set_beta(true);
         assert!(!apt.beta);
+    }
+
+    /// Пустое устройство для `curl --output` есть на самом деле (однажды путь
+    /// сломала автозамена, и проверка обновлений на Linux молча падала).
+    #[cfg(unix)]
+    #[test]
+    fn null_device_exists() {
+        assert!(Path::new(NULL_DEVICE).exists());
     }
 
     #[test]

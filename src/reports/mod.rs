@@ -15,6 +15,8 @@
 
 mod journal;
 mod scrub;
+#[cfg(target_os = "linux")]
+mod terminal;
 mod watch;
 
 use std::{
@@ -111,6 +113,35 @@ struct Marker {
     /// Процесс упал с паникой: отчёт уже записан, второй при запуске не нужен.
     #[serde(default)]
     panic: bool,
+    /// Linux: запуск шёл в тяжёлом режиме отрисовки (см. `system::gpu`).
+    #[serde(default)]
+    heavy: bool,
+    /// Сколько запусков подряд перед этим закрылись аварийно в тяжёлом режиме.
+    #[serde(default)]
+    crashes: u32,
+}
+
+/// Сколько запусков подряд закрылись аварийно (вылет в нативном коде, не паника)
+/// в тяжёлом режиме отрисовки, считая прошлый.
+fn streak(previous: Option<&Marker>) -> u32 {
+    match previous {
+        Some(marker) if marker.heavy && !marker.panic => marker.crashes.saturating_add(1),
+        _ => 0,
+    }
+}
+
+fn read_marker(root: &Path) -> Option<Marker> {
+    fs::read(root.join(MARKER))
+        .ok()
+        .map(|bytes| serde_json::from_slice::<Marker>(&bytes).unwrap_or_default())
+}
+
+/// Сколько запусков подряд Axiom закрылся аварийно в тяжёлом режиме отрисовки.
+/// Читается до GTK, ещё до проверки, не открыт ли Axiom: метку открытой копии примет
+/// за вылет, но такой запуск только передаёт адреса и закрывается.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn heavy_crashes(root: &Path) -> u32 {
+    streak(read_marker(root).as_ref())
 }
 
 struct State {
@@ -126,25 +157,31 @@ static STATE: OnceLock<State> = OnceLock::new();
 static AUTO: AtomicU8 = AtomicU8::new(0);
 static RENDERER_REPORTS: AtomicU32 = AtomicU32::new(0);
 static LAST_FAILURE: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+/// Для метки запуска: тяжёлый ли режим отрисовки и сколько вылетов в нём было подряд.
+static RUN: OnceLock<(bool, u32)> = OnceLock::new();
 
 /// Журнал, перехват паники, метка запуска и фоновая отправка. Вызывать один раз,
-/// у главного экземпляра (он один пишет в журнал профиля).
-pub fn start(root: &Path) {
+/// у главного экземпляра (он один пишет в журнал профиля). `heavy` — этот запуск
+/// идёт в тяжёлом режиме отрисовки (Linux).
+pub fn start(root: &Path, heavy: bool) {
     // Метка осталась — прошлый запуск не закрылся сам. Журнал читаем до того,
     // как его продолжит (или отложит в `axiom.log.1`) этот запуск.
-    let previous = fs::read(root.join(MARKER))
-        .ok()
-        .map(|bytes| serde_json::from_slice::<Marker>(&bytes).unwrap_or_default());
+    let previous = read_marker(root);
     let previous_log = previous
         .as_ref()
         .filter(|m| !m.panic)
         .map(|_| journal::tail(root, READ_LOG));
+    let crashes = if heavy { streak(previous.as_ref()) } else { 0 };
+    let _ = RUN.set((heavy, crashes));
     journal::open(root);
 
+    let system = system();
+    // В журнал и, если Axiom запущен из терминала, на экран.
+    eprintln!("система: {system}");
     let (wake, rx) = mpsc::channel();
     let state = State {
         root: root.to_path_buf(),
-        about: about(),
+        about: format!("Axiom {} · {system}", crate::update::current_string()),
         private: scrub::Private::current(),
         wake,
     };
@@ -195,6 +232,10 @@ pub fn finish() {
     if let Some(state) = STATE.get() {
         let _ = fs::remove_file(state.root.join(MARKER));
     }
+    // Последние строки ещё в трубе к терминалу: поток, который их переписывает,
+    // при выходе не дождутся.
+    #[cfg(target_os = "linux")]
+    terminal::flush();
 }
 
 /// Axiom не смог запуститься: отчёт сразу и попытка отправить его, не дожидаясь
@@ -351,10 +392,13 @@ fn exe_base() -> Option<usize> {
 
 fn write_marker(root: &Path, panic: bool) {
     static STARTED: OnceLock<u64> = OnceLock::new();
+    let (heavy, crashes) = RUN.get().copied().unwrap_or_default();
     let marker = Marker {
         version: crate::update::current_string().into(),
         started: *STARTED.get_or_init(crate::storage::now_secs),
         panic,
+        heavy,
+        crashes,
     };
     if let Ok(bytes) = serde_json::to_vec(&marker) {
         let _ = fs::write(root.join(MARKER), bytes);
@@ -602,8 +646,8 @@ fn os_name() -> &'static str {
     crate::stats::os_name()
 }
 
-/// `Axiom 0.5.4 · Windows 11 (сборка 26200, 25H2) · WebView2 142.0.3595.53`.
-fn about() -> String {
+/// `Windows 11 (сборка 26200, 25H2) · WebView2 142.0.3595.53`.
+fn system() -> String {
     let engine = if cfg!(windows) {
         "WebView2"
     } else {
@@ -613,11 +657,7 @@ fn about() -> String {
         Ok(v) => format!("{engine} {v}"),
         Err(_) => format!("{engine} не найден"),
     };
-    format!(
-        "Axiom {} · {} · {engine}",
-        crate::update::current_string(),
-        os_detail()
-    )
+    format!("{} · {engine}", os_detail())
 }
 
 #[cfg(windows)]
@@ -746,6 +786,38 @@ mod tests {
         // Остались самые новые, битый удалён.
         assert_eq!(left.last().map(|(_, r)| r.text.as_str()), Some("r10"));
         assert!(left.iter().all(|(p, _)| !p.ends_with("0-broken.json")));
+        Ok(())
+    }
+
+    #[test]
+    fn heavy_crashes_count_only_native_crashes_in_a_row() -> serde_json::Result<()> {
+        let marker = |heavy, crashes, panic| Marker {
+            heavy,
+            crashes,
+            panic,
+            ..Marker::default()
+        };
+        // Закрылся сам — метки нет, счёт с нуля.
+        assert_eq!(streak(None), 0);
+        assert_eq!(streak(Some(&marker(true, 0, false))), 1);
+        assert_eq!(streak(Some(&marker(true, 2, false))), 3);
+        // Паника — не вылет отрисовки; лёгкий режим счёт обнуляет.
+        assert_eq!(streak(Some(&marker(true, 2, true))), 0);
+        assert_eq!(streak(Some(&marker(false, 2, false))), 0);
+        // Метка прежней версии, без новых полей.
+        let old: Marker = serde_json::from_str(r#"{"version":"0.6.0","started":1}"#)?;
+        assert_eq!(streak(Some(&old)), 0);
+
+        let root = std::env::temp_dir().join(format!("axiom-streak-{}", std::process::id()));
+        let _ = fs::create_dir_all(&root);
+        let _ = fs::write(
+            root.join(MARKER),
+            serde_json::to_vec(&marker(true, 1, false))?,
+        );
+        let crashes = heavy_crashes(&root);
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(crashes, 2);
+        assert_eq!(heavy_crashes(&root), 0);
         Ok(())
     }
 

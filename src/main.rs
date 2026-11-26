@@ -68,8 +68,12 @@ fn run() -> Result<()> {
 
     let paths = storage::Paths::resolve()?;
     // До GTK и до первых потоков: переменные читают драйвер и процессы WebKit.
+    // Тяжёлый режим, с которым Axiom раз за разом падает, уступает «Авто».
     #[cfg(target_os = "linux")]
-    let gpu = system::gpu::apply(settings::Settings::load(&paths).gpu);
+    let gpu = system::gpu::apply(
+        settings::Settings::load(&paths).gpu,
+        reports::heavy_crashes(&paths.root),
+    );
     // Профиль уже открывала более новая версия: адреса — ей, а профиль не трогаем.
     if !updated && !handed_off && system::handoff::to_newer(&paths, &urls) {
         return Ok(());
@@ -83,10 +87,14 @@ fn run() -> Result<()> {
         return Ok(());
     };
     // Журнал и отчёты об ошибках — первым делом: дальше всё, что пишется в stderr,
-    // попадает в `axiom.log`, а вылет оставит отчёт.
-    reports::start(&paths.root);
+    // попадает в `axiom.log` (и в терминал, если запущен из него), а вылет оставит отчёт.
     #[cfg(target_os = "linux")]
-    eprintln!("{gpu}");
+    let heavy = gpu.mode.heavy();
+    #[cfg(not(target_os = "linux"))]
+    let heavy = false;
+    reports::start(&paths.root, heavy);
+    #[cfg(target_os = "linux")]
+    gpu.announce(&paths);
     update::cleanup();
     stats::start(&paths.root);
     system::started(&paths);

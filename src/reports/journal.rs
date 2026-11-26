@@ -3,8 +3,10 @@
 //! У release-сборки на Windows консоли нет, и `eprintln!` уходил в никуда. Теперь
 //! stderr процесса — файл: на Windows через `SetStdHandle` (Rust берёт дескриптор
 //! заново при каждой записи), на Linux через `dup2` на дескриптор 2, так что туда
-//! же попадают и предупреждения дочерних процессов WebKitGTK. Debug-сборка пишет
-//! в консоль, как раньше (`AXIOM_LOG=1` включает файл и в ней).
+//! же попадают и предупреждения дочерних процессов WebKitGTK. Запущен из терминала
+//! (Linux) — журнал идёт и на экран, а вылет по сигналу оставляет строку с его
+//! именем (см. `reports::terminal`). Debug-сборка пишет в консоль, как раньше
+//! (`AXIOM_LOG=1` включает файл и в ней).
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -28,7 +30,10 @@ const ROTATE_RUNNING_AT: u64 = 4 * ROTATE_AT;
 
 /// Направляет stderr в журнал и пишет строку о запуске.
 pub fn open(root: &Path) {
-    if to_file() && !reopen(root, ROTATE_AT) {
+    let opened = !to_file() || reopen(root, ROTATE_AT);
+    #[cfg(target_os = "linux")]
+    super::terminal::catch_crashes();
+    if !opened {
         return;
     }
     eprintln!(
@@ -37,6 +42,10 @@ pub fn open(root: &Path) {
         std::env::consts::OS,
         utc_now()
     );
+    #[cfg(target_os = "linux")]
+    if super::terminal::mirrored() {
+        eprintln!("журнал: {}", root.join(FILE).display());
+    }
 }
 
 /// Журнал слишком вырос, пока Axiom открыт: начать новый.
@@ -80,7 +89,12 @@ fn redirect(file: File) -> bool {
     unsafe { SetStdHandle(STD_ERROR_HANDLE, handle) != 0 }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+fn redirect(file: File) -> bool {
+    super::terminal::redirect(file)
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
 fn redirect(file: File) -> bool {
     use std::os::fd::AsRawFd;
     unsafe extern "C" {

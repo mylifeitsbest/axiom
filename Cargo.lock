@@ -44,6 +44,7 @@ dependencies = [
  "anyhow",
  "directories",
  "gtk",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

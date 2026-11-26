@@ -21,6 +21,7 @@ pub const PAD: f64 = 8.0;
 /// Скругление острова снизу, логические px.
 pub const RADIUS: f64 = 22.0;
 /// Сколько курсор может быть вне чёлки и острова, прежде чем видео спрячется.
+#[cfg(windows)]
 pub const LEAVE: Duration = Duration::from_millis(350);
 /// Кадров анимации выезда и уезда.
 pub const FRAMES: u8 = 14;
@@ -36,6 +37,8 @@ pub struct Area {
 }
 
 impl Area {
+    // Курсор отслеживается только на Windows (видео в островке есть только там).
+    #[cfg(any(windows, test))]
     pub fn contains(self, x: f64, y: f64, margin: f64) -> bool {
         x >= self.x - margin
             && x < self.x + self.w + margin

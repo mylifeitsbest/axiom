@@ -242,7 +242,8 @@ arch_makepkg() {
     (cd "$build" && env BUILDDIR="$build" PKGDEST="$build" SRCDEST="$build" \
       makepkg --nodeps --noconfirm) || die "makepkg не собрал пакет"
   fi
-  set -- "$build/$AUR_PKG"-*.pkg.tar.*
+  # .pkg.tar* — и без сжатия: PKGEXT='.pkg.tar' в makepkg.conf ускоряет сборку.
+  set -- "$build/$AUR_PKG"-*.pkg.tar*
   say "Устанавливаю (pacman -U, без обновления системы)…"
   pacman_install "$1"
 }

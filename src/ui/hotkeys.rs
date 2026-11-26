@@ -24,6 +24,8 @@ pub enum Hotkey {
     ToggleAi,
     Find,
     Settings,
+    /// Ctrl+H: вкладка истории.
+    History,
     Bookmark,
     Downloads,
     /// F11: страница на весь экран.
@@ -61,6 +63,7 @@ impl Hotkey {
             "toggle_ai" => Self::ToggleAi,
             "find" => Self::Find,
             "settings" => Self::Settings,
+            "history" => Self::History,
             "bookmark" => Self::Bookmark,
             "downloads" => Self::Downloads,
             "fullscreen" => Self::Fullscreen,
@@ -99,6 +102,7 @@ impl Hotkey {
             Self::ToggleAi => "toggle_ai".into(),
             Self::Find => "find".into(),
             Self::Settings => "settings".into(),
+            Self::History => "history".into(),
             Self::Bookmark => "bookmark".into(),
             Self::Downloads => "downloads".into(),
             Self::Fullscreen => "fullscreen".into(),
@@ -118,7 +122,12 @@ impl Hotkey {
     pub fn is_ui(self) -> bool {
         matches!(
             self,
-            Self::FocusOmnibox | Self::ToggleAi | Self::Find | Self::Settings | Self::Downloads
+            Self::FocusOmnibox
+                | Self::ToggleAi
+                | Self::Find
+                | Self::Settings
+                | Self::History
+                | Self::Downloads
         )
     }
 
@@ -202,6 +211,7 @@ impl Hotkey {
             (VK_COMMA, true, false, false) => Self::Settings,
             (v, true, false, false) if v == key(b'D') => Self::Bookmark,
             (v, true, false, false) if v == key(b'J') => Self::Downloads,
+            (v, true, false, false) if v == key(b'H') => Self::History,
             (VK_LEFT, false, false, true) => Self::Back,
             (VK_RIGHT, false, false, true) => Self::Forward,
             (v, true, false, false) if (key(b'1')..=key(b'9')).contains(&v) => {
@@ -360,6 +370,7 @@ mod tests {
             Hotkey::NewTab,
             Hotkey::SelectTab(3),
             Hotkey::Settings,
+            Hotkey::History,
             Hotkey::Back,
             Hotkey::Downloads,
             Hotkey::Fullscreen,
@@ -388,6 +399,14 @@ mod tests {
             Hotkey::from_vk(u32::from(b'J'), true, false, false),
             Some(Hotkey::Downloads)
         );
+        assert_eq!(
+            Hotkey::from_vk(u32::from(b'H'), true, false, false),
+            Some(Hotkey::History)
+        );
+        assert!(Hotkey::History.is_ui());
+        // Ctrl+Shift+H и Ctrl+Alt+H (AltGr) — не история.
+        assert_eq!(Hotkey::from_vk(u32::from(b'H'), true, true, false), None);
+        assert_eq!(Hotkey::from_vk(u32::from(b'H'), true, false, true), None);
         assert_eq!(Hotkey::from_vk(u32::from(b'C'), true, false, false), None);
         assert_eq!(
             Hotkey::from_vk(0x7A, false, false, false),
@@ -460,6 +479,7 @@ mod tests {
         assert_eq!(hk(0xfe20, true, true, false), Some(Hotkey::PrevTab));
         assert_eq!(hk(0xffc2, false, false, false), Some(Hotkey::Reload));
         assert_eq!(hk(0x2c, true, false, false), Some(Hotkey::Settings));
+        assert_eq!(hk(0x68, true, false, false), Some(Hotkey::History));
         assert_eq!(hk(0xffc8, false, false, false), Some(Hotkey::Fullscreen));
         assert_eq!(hk(0xff1b, false, false, false), Some(Hotkey::Escape));
         assert_eq!(hk(0x6c1, true, false, false), None);

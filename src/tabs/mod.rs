@@ -32,6 +32,9 @@ const MAX_CLOSED: usize = 25;
 /// IPC, а у вкладок его нет. Пока она активна, настройки показывает интерфейс.
 pub const SETTINGS: &str = "axiom://settings";
 pub const SETTINGS_TITLE: &str = "Настройки";
+/// Внутренний адрес вкладки истории: так же без webview, страницу рисует интерфейс.
+pub const HISTORY: &str = "axiom://history";
+pub const HISTORY_TITLE: &str = "История";
 
 pub struct Tab {
     pub id: TabId,
@@ -81,9 +84,13 @@ impl Tab {
         self.url == SETTINGS
     }
 
-    /// Служебная вкладка без страницы и webview: новая вкладка или настройки.
+    pub fn is_history(&self) -> bool {
+        self.url == HISTORY
+    }
+
+    /// Служебная вкладка без страницы и webview: новая вкладка, настройки или история.
     pub fn is_internal(&self) -> bool {
-        self.is_newtab() || self.is_settings()
+        self.is_newtab() || self.is_settings() || self.is_history()
     }
 
     pub fn is_sleeping(&self) -> bool {
@@ -170,6 +177,11 @@ impl TabStore {
     /// Вкладка настроек, если она открыта (она всегда одна).
     pub fn settings(&self) -> Option<TabId> {
         self.tabs.iter().find(|t| t.is_settings()).map(|t| t.id)
+    }
+
+    /// Вкладка истории, если она открыта (она тоже всегда одна).
+    pub fn history(&self) -> Option<TabId> {
+        self.tabs.iter().find(|t| t.is_history()).map(|t| t.id)
     }
 
     /// Добавляет вкладку без webview. `at = None` — после активной.
@@ -341,6 +353,25 @@ mod tests {
         assert!(s.remove(id, true).is_some());
         assert!(!s.can_restore());
         assert_eq!(s.settings(), None);
+    }
+
+    #[test]
+    fn history_tab_is_internal() {
+        let mut s = store(1);
+        assert_eq!(s.history(), None);
+        let id = s.add(HISTORY.into(), HISTORY_TITLE.into(), false, None);
+        assert_eq!(s.history(), Some(id));
+        assert_eq!(s.settings(), None);
+        assert!(
+            s.get(id)
+                .is_some_and(|t| t.is_internal() && !t.is_sleeping())
+        );
+        // Открыли страницу из истории в той же вкладке — это уже обычная вкладка.
+        if let Some(t) = s.get_mut(id) {
+            t.url = "https://a.example/".into();
+        }
+        assert_eq!(s.history(), None);
+        assert!(s.get(id).is_some_and(|t| !t.is_internal()));
     }
 
     #[test]

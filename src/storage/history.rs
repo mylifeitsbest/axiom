@@ -174,9 +174,64 @@ impl History {
         }
     }
 
+    /// Сколько адресов в истории.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Страница истории (`axiom://history`): свежие посещения сверху. С запросом —
+    /// только записи, где все его слова есть в адресе или заголовке, по всей истории.
+    pub fn page(&self, query: &str, offset: usize, limit: usize) -> Page<'_> {
+        let words = words(query);
+        let mut found: Vec<&Entry> = self
+            .entries
+            .iter()
+            .filter(|e| words.is_empty() || matches(e, &words))
+            .collect();
+        // При равном времени — по адресу: иначе соседние страницы списка могли бы
+        // повторить или пропустить запись.
+        found.sort_by(|a, b| b.last.cmp(&a.last).then_with(|| a.url.cmp(&b.url)));
+        let total = found.len();
+        let items: Vec<&Entry> = found.into_iter().skip(offset).take(limit).collect();
+        Page {
+            more: offset.saturating_add(items.len()) < total,
+            items,
+            found: total,
+        }
+    }
+
+    /// Крестик в истории: адрес пропадает из истории, подсказок и плиток.
+    pub fn remove(&mut self, url: &str) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|e| e.url != url);
+        let removed = self.entries.len() != before;
+        if removed {
+            self.changed();
+        }
+        removed
+    }
+
+    /// Сколько адресов открывали начиная с `since` (Unix-секунды; 0 — вся история).
+    pub fn count_since(&self, since: u64) -> usize {
+        self.entries.iter().filter(|e| e.last >= since).count()
+    }
+
+    /// «Очистить историю»: убирает адреса, открытые начиная с `since` (0 — всё).
+    /// Время у записи одно — последнее посещение, поэтому адрес, открытый и раньше,
+    /// уходит целиком: после очистки от этого часа не должно остаться следов.
+    pub fn remove_since(&mut self, since: u64) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|e| e.last < since);
+        let removed = before - self.entries.len();
+        if removed > 0 {
+            self.changed();
+        }
+        removed
+    }
+
     /// Подсказки: все слова запроса должны встретиться в адресе или заголовке.
     pub fn search(&self, query: &str, limit: usize) -> Vec<Suggestion> {
-        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let words = words(query);
         if words.is_empty() {
             return Vec::new();
         }
@@ -186,8 +241,7 @@ impl History {
             .iter()
             .filter(|e| !is_search_page(&e.url))
             .filter_map(|e| {
-                let hay = format!("{} {}", e.url.to_lowercase(), e.title.to_lowercase());
-                if !words.iter().all(|w| hay.contains(w.as_str())) {
+                if !matches(e, &words) {
                     return None;
                 }
                 let host_hit = host_of(&e.url)
@@ -256,6 +310,27 @@ impl History {
     }
 }
 
+/// Часть списка для страницы истории.
+#[derive(Debug)]
+pub struct Page<'a> {
+    pub items: Vec<&'a Entry>,
+    /// Сколько всего записей подходит под запрос.
+    pub found: usize,
+    /// Дальше есть ещё.
+    pub more: bool,
+}
+
+/// Слова запроса в нижнем регистре.
+fn words(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// Все слова есть в адресе или заголовке.
+fn matches(e: &Entry, words: &[String]) -> bool {
+    let hay = format!("{} {}", e.url.to_lowercase(), e.title.to_lowercase());
+    words.iter().all(|w| hay.contains(w.as_str()))
+}
+
 fn host_of(url: &str) -> Option<String> {
     Url::parse(url).ok()?.host_str().map(str::to_lowercase)
 }
@@ -290,6 +365,140 @@ mod tests {
 
         let top = h.top_sites(5);
         assert_eq!(top[0].url, "https://github.com");
+    }
+
+    fn with(entries: &[(&str, &str, u64)]) -> History {
+        History {
+            entries: entries
+                .iter()
+                .map(|&(url, title, last)| Entry {
+                    url: url.into(),
+                    title: title.into(),
+                    visits: 1,
+                    last,
+                })
+                .collect(),
+            ..History::default()
+        }
+    }
+
+    fn urls(page: &Page<'_>) -> Vec<String> {
+        page.items.iter().map(|e| e.url.clone()).collect()
+    }
+
+    #[test]
+    fn page_is_newest_first_and_pages() {
+        let h = with(&[
+            ("https://a.example/", "A", 100),
+            ("https://c.example/", "C", 300),
+            ("https://b.example/", "B", 200),
+            ("https://d.example/", "D", 300),
+        ]);
+        let first = h.page("", 0, 3);
+        // Свежие сверху, при равном времени — по адресу.
+        assert_eq!(
+            urls(&first),
+            [
+                "https://c.example/",
+                "https://d.example/",
+                "https://b.example/"
+            ]
+        );
+        assert_eq!(first.found, 4);
+        assert!(first.more);
+        let rest = h.page("", 3, 3);
+        assert_eq!(urls(&rest), ["https://a.example/"]);
+        assert!(!rest.more);
+        // За концом — пусто, без паники.
+        let past = h.page("", 10, 3);
+        assert!(past.items.is_empty() && !past.more && past.found == 4);
+        assert_eq!(h.len(), 4);
+    }
+
+    #[test]
+    fn page_searches_whole_history() {
+        let mut entries: Vec<(String, String, u64)> = (0..300)
+            .map(|i| {
+                (
+                    format!("https://filler.example/{i}"),
+                    format!("Страница {i}"),
+                    1000 + i,
+                )
+            })
+            .collect();
+        // Старая запись далеко за первой страницей списка.
+        entries.push(("https://github.com/tauri-apps/wry".into(), "Wry".into(), 5));
+        entries.push(("https://docs.rs/wry/".into(), "Документация WRY".into(), 50));
+        let refs: Vec<(&str, &str, u64)> = entries
+            .iter()
+            .map(|(u, t, l)| (u.as_str(), t.as_str(), *l))
+            .collect();
+        let h = with(&refs);
+        let hits = h.page("wry", 0, 200);
+        assert_eq!(
+            urls(&hits),
+            ["https://docs.rs/wry/", "https://github.com/tauri-apps/wry"]
+        );
+        assert_eq!(hits.found, 2);
+        // Без учёта регистра, по заголовку и адресу, все слова сразу.
+        assert_eq!(h.page("ДОКУМЕНТАЦИЯ", 0, 10).found, 1);
+        assert_eq!(h.page("wry github", 0, 10).found, 1);
+        assert_eq!(h.page("wry gitlab", 0, 10).found, 0);
+        assert_eq!(h.page("  ", 0, 10).found, 302);
+    }
+
+    #[test]
+    fn remove_url_leaves_others() {
+        let mut h = with(&[
+            ("https://github.com/a", "a", 10),
+            ("https://github.com/b", "b", 20),
+        ]);
+        assert_eq!(h.top_sites(8)[0].url, "https://github.com");
+        assert!(h.remove("https://github.com/a"));
+        assert!(!h.remove("https://github.com/a"));
+        assert_eq!(urls(&h.page("", 0, 10)), ["https://github.com/b"]);
+        // Подсказки и плитки читают ту же историю.
+        assert!(h.search("github.com/a", 10).is_empty());
+        assert!(h.remove("https://github.com/b"));
+        assert!(h.top_sites(8).is_empty());
+        assert!(h.dirty);
+    }
+
+    #[test]
+    fn remove_since_clears_range() {
+        let mut h = with(&[
+            ("https://old.example/", "old", 100),
+            ("https://hour.example/", "hour", 5_000),
+            ("https://now.example/", "now", 9_000),
+        ]);
+        assert_eq!(h.count_since(5_000), 2);
+        assert_eq!(h.count_since(0), 3);
+        assert_eq!(h.count_since(10_000), 0);
+        // Ничего не подошло — история не помечается изменённой.
+        assert_eq!(h.remove_since(10_000), 0);
+        assert!(!h.dirty);
+        assert_eq!(h.remove_since(5_000), 2);
+        assert_eq!(urls(&h.page("", 0, 10)), ["https://old.example/"]);
+        assert!(h.dirty);
+        assert_eq!(h.remove_since(0), 1);
+        assert_eq!(h.len(), 0);
+        assert!(h.top_sites(8).is_empty());
+    }
+
+    #[test]
+    fn removal_is_saved() {
+        let root = std::env::temp_dir().join(format!("axiom-history-rm-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
+        let paths = Paths { root: root.clone() };
+        let mut h = with(&[
+            ("https://a.example/", "a", 1),
+            ("https://b.example/", "b", 2),
+        ]);
+        assert!(h.remove("https://a.example/"));
+        assert!(h.save_all(&paths).is_ok());
+        let loaded = History::load(&paths);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(urls(&loaded.page("", 0, 10)), ["https://b.example/"]);
     }
 
     #[test]

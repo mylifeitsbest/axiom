@@ -137,7 +137,7 @@ function createPanels(ax) {
     ['Ctrl T', 'Новая вкладка'], ['Ctrl W', 'Закрыть вкладку'], ['Ctrl Shift T', 'Вернуть закрытую'],
     ['Ctrl Tab', 'Следующая вкладка'], ['Ctrl 1…9', 'Вкладка по номеру'], ['Ctrl L', 'Адресная строка'],
     ['Ctrl K', 'Панель ИИ'], ['Ctrl Enter', 'Спросить ИИ из адресной строки'], ['Alt Enter', 'Открыть в новой вкладке'],
-    ['Ctrl D', 'Закладка'], ['Ctrl J', 'Загрузки'], ['Ctrl F', 'Найти на странице'], ['F5', 'Обновить'], ['Alt ← →', 'Назад, вперёд'], ['Ctrl ,', 'Настройки'],
+    ['Ctrl D', 'Закладка'], ['Ctrl H', 'История'], ['Ctrl J', 'Загрузки'], ['Ctrl F', 'Найти на странице'], ['F5', 'Обновить'], ['Alt ← →', 'Назад, вперёд'], ['Ctrl ,', 'Настройки'],
     ['Ctrl Shift R', 'Обновить без кэша'], ['Ctrl + −', 'Масштаб'], ['Ctrl 0', 'Обычный масштаб'], ['Ctrl M', 'Выключить звук вкладки'],
     ['Колесо', 'Громкость вкладки — над её значком звука'],
     ['Ctrl P', 'Печать'], ['Ctrl U', 'Исходный код страницы'], ['F12', 'Инструменты разработчика'],
@@ -284,6 +284,7 @@ function createPanels(ax) {
             <div class="hero-t"><b>Перенести из другого браузера</b><small>Закладки и история последнего профиля. Браузер можно не закрывать.</small></div></div>
           <div id="impList"></div></div>
         <div class="card">
+          ${row('История', 'Все страницы, которые вы открывали, с поиском и удалением. Из неё берутся подсказки адресной строки и плитки новой вкладки', '<button class="btn" data-act="history">Открыть историю</button>', 'data-kw="история посещений журнал удалить очистить ctrl+h"')}
           ${row('Убирать метки слежки из ссылок', 'utm_*, fbclid, gclid, yclid и другие: сайт не узнает, откуда вы пришли. Формы и кнопку «Назад» это не трогает.', toggle('data-bkey', 'strip_tracking'), 'data-kw="utm приватность трекинг метки слежка"')}
         </div>
         <h4>Подмена для сайтов</h4><div class="card">
@@ -727,6 +728,7 @@ function createPanels(ax) {
         if (ax.update()?.latest) ax.openUpdate();
         else ax.send({ cmd: 'update_check' });
         break;
+      case 'history': ax.openHistory(); break;
       case 'bug-open': toggleBug(); break;
       case 'bug-cancel': toggleBug(false); break;
       case 'bug-send': sendBug(); break;

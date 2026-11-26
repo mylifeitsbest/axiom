@@ -10,8 +10,11 @@
   // Вкладка настроек: своего webview нет, пока она активна, интерфейс показывает лист настроек.
   const SETTINGS = 'axiom://settings';
   const isSettings = (t) => !!t && t.url === SETTINGS;
+  // Вкладка истории: тоже без webview, страницу рисует ui/history.js.
+  const HISTORY = 'axiom://history';
+  const isHistory = (t) => !!t && t.url === HISTORY;
   // Во вкладке открыта страница сайта, а не служебный экран Axiom.
-  const isPage = (t) => !!t && t.url !== NEWTAB && t.url !== SETTINGS;
+  const isPage = (t) => !!t && t.url !== NEWTAB && t.url !== SETTINGS && t.url !== HISTORY;
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const darkScheme = matchMedia('(prefers-color-scheme: dark)');
 
@@ -129,6 +132,7 @@
   function favHtml(url) {
     const u = parseUrl(url);
     if (url === SETTINGS) return `<span class="fav set">${icon('sliders')}</span>`;
+    if (url === HISTORY) return `<span class="fav set">${icon('clock')}</span>`;
     if (!u || url === NEWTAB) return `<span class="fav" style="--f:var(--s3)">${icon('spark')}</span>`;
     const host = u.hostname.replace(/^www\./, '');
     let h = 0;
@@ -607,7 +611,10 @@
     // Поиск новой вкладки работает через подсказки адресной строки.
     sug: { input: (el) => updateSug(el), key: (e) => onOmniKey(e), hide: () => hideSug() },
     openSettings(section) { dl.close(); upd.close(); panels.open(section); },
+    openHistory: () => openHistory(),
   });
+  // ---------- вкладка истории (ui/history.js) ----------
+  const hist = createHistory({ esc, send, ms, speed, toast: (t) => toast(t), favHtml: (u) => favHtml(u) });
   function renderContent() {
     const t = activeTab();
     const nt = !t || t.url === NEWTAB;
@@ -617,6 +624,10 @@
     c.classList.toggle('zz', zz);
     if (zz) renderWaking(t);
     newtab.render(nt, S.topSites);
+    const hs = isHistory(t);
+    c.classList.toggle('hs', hs);
+    hist.render(hs, t?.id);
+    if (hs && wantHistory) { hist.focus(wantHistory); wantHistory = null; }
     if (S.active !== prevActive) {
       prevActive = S.active;
       if (nt && mode === 'url' && !overlayReasons.has('onb')) requestAnimationFrame(() => newtab.focus());
@@ -1015,6 +1026,7 @@
     if (mod && c === 'KeyF') return 'find';
     if (mod && c === 'KeyD') return 'bookmark';
     if (mod && c === 'KeyJ') return 'downloads';
+    if (mod && !e.shiftKey && c === 'KeyH') return 'history';
     if ((mod && e.shiftKey && c === 'KeyR') || (c === 'F5' && (mod || e.shiftKey))) return 'hard_reload';
     if ((mod && c === 'KeyR') || c === 'F5') return 'reload';
     if ((c === 'F12' && !mod && !e.altKey && !e.shiftKey) || (mod && e.shiftKey && c === 'KeyI')) return 'devtools';
@@ -1051,8 +1063,10 @@
     switch (a) {
       case 'focus_omnibox': if (mode === 'find') exitFind(); inp.focus(); inp.select(); break;
       case 'toggle_ai': toggleAi(); break;
-      case 'find': startFind(); break;
+      // На вкладке истории Ctrl+F ищет в самой истории.
+      case 'find': if (isHistory(activeTab())) hist.focus(); else startFind(); break;
       case 'settings': openSettings(); break;
+      case 'history': if (!overlayReasons.has('onb')) openHistory(); break;
       case 'downloads': if (!overlayReasons.has('onb')) dl.toggle(); break;
       default: send({ cmd: 'hotkey', action: a });
     }
@@ -1072,6 +1086,7 @@
     perms: pm,
     openUpdate() { dl.close(); upd.open(); },
     closeSettings,
+    openHistory: () => openHistory(),
     applyAppearance,
     saveSettings,
     refresh() { renderDs(); panels.sync(); },
@@ -1100,6 +1115,16 @@
     }
   }
 
+  // ---------- вкладка истории ----------
+  // Ctrl+H, ссылка на новой вкладке, кнопка в настройках и #history[:запрос]: вкладка
+  // истории одна, Rust переходит на неё или открывает рядом с активной.
+  let wantHistory = null;
+  function openHistory(q) {
+    if (isHistory(activeTab())) { hist.focus(q); return; }
+    wantHistory = q || null;
+    send({ cmd: 'open_history' });
+  }
+
   // ---------- приём сообщений из Rust ----------
   function render() {
     renderTabs();
@@ -1124,7 +1149,7 @@
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел, #onb:шаг, #downloads, #update[:install], #translate[:menu|:revert]
+        // #settings:раздел, #onb:шаг, #downloads, #update[:install], #translate[:menu|:revert], #history[:запрос]
         // или #import:браузер (сразу начать перенос) — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') openSettings(arg);
@@ -1133,6 +1158,7 @@
         else if (screen === 'downloads') dl.open();
         else if (screen === 'update') upd.openSoon(arg === 'install');
         else if (screen === 'translate') tr.debug(arg);
+        else if (screen === 'history') openHistory(arg);
         else if (!B.onboarded) panels.openOnboarding();
       }
       firstSettings = false;
@@ -1182,6 +1208,8 @@
     zoom(m) { zm.onZoom(m); },
     report_info(m) { panels.onReportInfo(m); },
     reported(m) { panels.onReported(m); },
+    history(m) { hist.onPage(m); },
+    history_count(m) { hist.onCount(m); },
   };
   window.axiom = Object.freeze({
     recv(msg) {

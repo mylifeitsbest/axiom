@@ -192,6 +192,15 @@ function createNewtab(ax) {
     hideUndo();
   });
 
+  // ---------- история ----------
+  // Ссылка в углу: тихая, пока на неё не навели, как подписи под плитками.
+  const histBtn = document.createElement('button');
+  histBtn.className = 'nt-hist';
+  histBtn.title = 'История (Ctrl+H)';
+  histBtn.innerHTML = `${icon('clock')}<span>История</span>`;
+  histBtn.addEventListener('click', () => ax.openHistory());
+  $('#newtab').append(histBtn);
+
   // ---------- пустой профиль ----------
   let importing = '';
   let importNote = '';

@@ -121,6 +121,16 @@ const ASSETS: &[Asset] = &[
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/island.js"),
     },
+    Asset {
+        path: "/history.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/history.js"),
+    },
+    Asset {
+        path: "/history.css",
+        mime: "text/css; charset=utf-8",
+        bytes: include_bytes!("../../ui/history.css"),
+    },
 ];
 
 pub fn serve(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {

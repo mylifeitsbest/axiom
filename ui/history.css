@@ -1,0 +1,90 @@
+/* История посещений (ui/history.js): страница вкладки axiom://history в области контента.
+   Тот же язык, что у настроек: заголовок, карточки, подписи разделов капсом. Карточки
+   стоят на фоне страницы (--pg): в тёмной теме чуть светлее его, в светлой — белые с чертой. */
+
+.hist{
+  --hc:var(--s1);--hc-sh:none;--hr-hover:var(--s2);--hf:var(--s1);--hf-sh:0 0 0 1px var(--line);
+  position:absolute;inset:0;display:none;overflow:hidden auto;scrollbar-gutter:stable;container:hist/inline-size}
+[data-mode=light] .hist{
+  --hc:#fff;--hc-sh:0 0 0 1px var(--line),0 10px 26px -22px rgb(0 0 0/.35);--hr-hover:var(--bg);
+  --hf:#fff;--hf-sh:0 0 0 1px var(--line),0 8px 22px -16px rgb(0 0 0/.22)}
+[data-mode=dark][data-oled=true] .hist{--hc:var(--s1);--hf:var(--s1)}
+.content.hs .hist{display:block;animation:fade var(--d3) var(--e) both}
+.hist::-webkit-scrollbar{width:10px}
+.hist::-webkit-scrollbar-thumb{background:var(--s3);border-radius:5px;border:3px solid transparent;background-clip:padding-box}
+.hist-in{max-width:820px;margin:0 auto;padding:24px 32px 40px}
+
+/* ---------- заголовок ---------- */
+.hist-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;animation:rise var(--d3) var(--e) both}
+.hist-t{min-width:0}
+.hist-head h2{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em}
+.hist-head p{margin:4px 0 0;color:var(--t3);max-width:520px}
+.hist-head .btn{flex:none;height:34px;margin-top:2px}
+.hist-head .btn.on{background:color-mix(in oklab,var(--acc) 16%,transparent);color:var(--acc)}
+
+/* ---------- «Очистить историю»: выбор срока и подтверждение ---------- */
+.hist-clear{display:flex;flex-direction:column;align-items:flex-start;gap:14px;margin-top:16px;padding:16px 18px;border-radius:calc(var(--r) + 2px);background:var(--hc);box-shadow:var(--hc-sh);animation:rise var(--d2) var(--e) both}
+.hc-t{display:flex;flex-direction:column;gap:3px}
+.hc-t b{font-weight:500;font-size:calc(var(--fs) + 1.5px);color:var(--t1)}
+.hc-t small{color:var(--t3);font-size:12px;line-height:1.4;max-width:560px}
+.hist-clear .seg{flex-wrap:wrap}
+.hist-clear .btns{margin-top:0}
+.hist-clear .btn{height:34px}
+.btn.danger{background:#e5484d;color:#fff}
+.btn.danger:hover{background:color-mix(in oklab,#e5484d 86%,#000)}
+.btn.danger:disabled{background:var(--s2);color:var(--t3);opacity:1}
+.hist-clear .seg button:focus-visible,.hist-clear .btn:focus-visible,.hist-head .btn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* ---------- поиск: остаётся наверху при прокрутке ---------- */
+.hist-bar{position:sticky;top:0;z-index:2;padding:16px 0 4px;background:var(--pg);transition:background-color var(--d3)}
+.hist-find{display:flex;align-items:center;gap:10px;height:42px;padding:0 6px 0 14px;border-radius:calc(var(--r) + 4px);background:var(--hf);box-shadow:var(--hf-sh);color:var(--t3);cursor:text;transition:box-shadow var(--d2),background-color var(--d3)}
+.hist-find:focus-within{box-shadow:0 0 0 1.5px color-mix(in oklab,var(--acc) 75%,transparent),0 12px 30px -20px color-mix(in oklab,var(--acc) 60%,transparent)}
+.hist-find>.i{transition:color var(--d2)}
+.hist-find:focus-within>.i{color:var(--acc)}
+#histFind{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:var(--t1);font-size:calc(var(--fs) + 1px);padding:0;user-select:text}
+#histFind::placeholder{color:var(--t3)}
+.hist-n{flex:none;color:var(--t3);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.hist-n:empty{display:none}
+.hist-find .ib{color:var(--t3)}
+.hist-find .ib:hover{background:var(--s2);color:var(--t1)}
+
+/* ---------- дни и записи ---------- */
+.hg{margin-top:18px}
+.hg.out{overflow:hidden;pointer-events:none}
+.hg-t{margin:0 0 8px 6px;font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3)}
+.hg-card{display:flex;flex-direction:column;gap:1px;padding:4px;border-radius:calc(var(--r) + 2px);background:var(--hc);box-shadow:var(--hc-sh)}
+.hist-list>.hg:first-child{animation:rise var(--d3) var(--e) both}
+.hr{display:flex;align-items:center;gap:12px;height:40px;padding:0 4px 0 12px;border-radius:calc(var(--r)*.75);color:var(--t2);outline:0;overflow:hidden;flex:none;transition:background-color var(--d1)}
+.hr:hover{background:var(--hr-hover)}
+.hr:focus-visible{background:var(--hr-hover);box-shadow:inset 0 0 0 1.5px var(--acc)}
+.hr.out{pointer-events:none}
+.hr-time{flex:none;width:38px;color:var(--t3);font-size:12px;font-variant-numeric:tabular-nums}
+.hr .fav{flex:none}
+.hr-main{flex:1;min-width:0;display:flex;align-items:baseline;gap:10px}
+.hr-title{flex:0 1 auto;min-width:0;max-width:72%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1)}
+.hr-host{flex:1 1 0;min-width:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t3);font-size:12px}
+.hr-x{opacity:0;color:var(--t3)}
+.hr:hover .hr-x,.hr:focus-visible .hr-x,.hr-x:focus-visible{opacity:1}
+.hr .hr-x:hover{background:var(--s3);color:var(--t1)}
+.hist mark{background:color-mix(in oklab,var(--acc) 28%,transparent);color:inherit;border-radius:3px;padding:0 1px}
+/* Узко (рядом панель ИИ): адрес под заголовком не помещается — только заголовок. */
+@container hist (max-width:520px){
+  .hist-in{padding:18px 16px 32px}
+  .hr-host{display:none}
+  .hr-title{max-width:none}
+  .hist-head{flex-direction:column}
+}
+
+/* ---------- пусто и подгрузка ---------- */
+.hist-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:64px 20px 40px;color:var(--t3);text-align:center;animation:rise var(--d3) var(--e) both}
+.hist-empty .hero-ic{margin-bottom:8px}
+.hist-empty b{color:var(--t1);font-size:15px;font-weight:600}
+.hist-more{min-height:1px;padding:14px 0 0;color:var(--t3);text-align:center;font-size:12px}
+.hist-more:empty{padding:0}
+.hist-more.busy{animation:pulse calc(1200ms*max(var(--k),.5)) ease-in-out infinite}
+
+/* ---------- новая вкладка: ссылка «История» в углу ---------- */
+.nt-hist{position:absolute;top:12px;right:12px;z-index:1;display:flex;align-items:center;gap:7px;height:30px;padding:0 12px 0 10px;border-radius:999px;color:var(--t3);font-size:12px;transition:background-color var(--d1),color var(--d1);animation:fade var(--d3) var(--e) both}
+.nt-hist:hover{background:var(--nt-field);box-shadow:var(--nt-field-sh);color:var(--t1)}
+.nt-hist:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.nt-hist .i{width:15px;height:15px}

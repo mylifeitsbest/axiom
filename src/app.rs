@@ -2,6 +2,7 @@
 
 mod ai_tabs;
 mod app_links;
+mod history_page;
 mod permissions;
 mod tab_actions;
 mod translation;
@@ -385,6 +386,12 @@ impl App {
             UiCmd::Overlay { open } => self.set_overlay(open),
             UiCmd::OpenSettings => self.open_settings(),
             UiCmd::SettingsLeft => self.settings_left(),
+            UiCmd::OpenHistory => self.open_history(),
+            UiCmd::History { q, offset, limit } => self.send_history(&q, offset, limit),
+            UiCmd::HistoryOpen { url, background } => self.history_open(url, background)?,
+            UiCmd::HistoryDelete { url } => self.history_delete(&url),
+            UiCmd::HistoryClear { since } => self.history_clear(since),
+            UiCmd::HistoryCount { since } => self.history_count(since),
             UiCmd::SnapshotShown { seq } => {
                 if self.snapshot.shown(seq) {
                     self.apply_layout();
@@ -875,10 +882,13 @@ impl App {
         };
         let was_active = self.tabs.active == Some(id);
         self.permissions_tab_gone(id);
-        // Закрытые настройки возвращают туда, откуда их открыли.
-        let settings = self.tabs.get(id).filter(|t| t.is_settings());
-        let prefer = prefer.or(settings.and_then(|t| t.opener));
-        if was_active && settings.is_some() {
+        // Закрытые настройки и история возвращают туда, откуда их открыли.
+        let own = self
+            .tabs
+            .get(id)
+            .filter(|t| t.is_settings() || t.is_history());
+        let prefer = prefer.or(own.and_then(|t| t.opener));
+        if was_active && own.is_some_and(|t| t.is_settings()) {
             self.leave_settings();
         }
         self.park_if_busy(id);

@@ -13,6 +13,8 @@ const MAX_MESSAGE: usize = 256 * 1024;
 pub const MAX_INPUT: usize = 8 * 1024;
 /// Максимальный размер настроек внешнего вида (включая свой CSS).
 const MAX_APPEARANCE: usize = 96 * 1024;
+/// Больше записей истории за один запрос интерфейс не получит.
+pub const MAX_HISTORY_PAGE: usize = 1000;
 
 #[derive(Debug, Error)]
 pub enum IpcError {
@@ -213,6 +215,34 @@ pub enum UiCmd {
     OpenSettings,
     /// Лист закрытых настроек плавно ушёл: можно показывать страницу под ним.
     SettingsLeft,
+    /// Ctrl+H, ссылка «История»: открыть вкладку истории (или перейти на неё).
+    OpenHistory,
+    /// Страница истории: `limit` записей с `offset`, свежие сверху; `q` — поиск по всей истории.
+    History {
+        #[serde(default)]
+        q: String,
+        #[serde(default)]
+        offset: usize,
+        limit: usize,
+    },
+    /// Клик по записи истории: открыть в этой же вкладке, `background` — в новой за ней.
+    HistoryOpen {
+        url: String,
+        #[serde(default)]
+        background: bool,
+    },
+    /// Крестик у записи истории.
+    HistoryDelete {
+        url: String,
+    },
+    /// «Очистить историю»: адреса, открытые с `since` (Unix-секунды; 0 — вся история).
+    HistoryClear {
+        since: u64,
+    },
+    /// Сколько адресов уйдёт при очистке с `since`.
+    HistoryCount {
+        since: u64,
+    },
     Suggest {
         q: String,
     },
@@ -419,6 +449,15 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::Ai { query: Some(q), .. } => short(q, MAX_INPUT, "query")?,
         UiCmd::Suggest { q } | UiCmd::Find { q, .. } => short(q, 2048, "query")?,
         UiCmd::HideSite { url, .. } => short(url, 2048, "site")?,
+        UiCmd::History { q, offset, limit } => {
+            short(q, 2048, "query")?;
+            if !(1..=MAX_HISTORY_PAGE).contains(limit) || *offset > 1_000_000 {
+                return Err(IpcError::Invalid("history"));
+            }
+        }
+        UiCmd::HistoryOpen { url, .. } | UiCmd::HistoryDelete { url } => {
+            short(url, MAX_INPUT, "history_url")?;
+        }
         UiCmd::Hotkey { action } => short(action, 32, "hotkey")?,
         UiCmd::ThemeColors {
             window,
@@ -691,6 +730,22 @@ pub enum ToUi<'a> {
     Reported {
         done: bool,
     },
+    /// Записи для страницы истории: ответ на `history` с теми же `q` и `offset`.
+    History {
+        q: &'a str,
+        offset: usize,
+        items: Vec<&'a crate::storage::history::Entry>,
+        /// Сколько записей подходит под запрос и есть ли они дальше.
+        found: usize,
+        more: bool,
+        /// Сколько адресов во всей истории.
+        total: usize,
+    },
+    /// Ответ на `history_count`.
+    HistoryCount {
+        since: u64,
+        count: usize,
+    },
 }
 
 #[cfg(test)]
@@ -753,6 +808,101 @@ mod tests {
         ));
         let out = serde_json::to_string(&ToUi::SettingsLeave).unwrap_or_default();
         assert_eq!(out, r#"{"type":"settings_leave"}"#);
+    }
+
+    #[test]
+    fn parses_history_page_commands() {
+        assert!(matches!(
+            parse(r#"{"cmd":"open_history"}"#),
+            Ok(UiCmd::OpenHistory)
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"history","q":"wry","offset":200,"limit":200}"#),
+            Ok(UiCmd::History { q, offset: 200, limit: 200 }) if q == "wry"
+        ));
+        // Без запроса и сдвига — первая страница всей истории.
+        assert!(matches!(
+            parse(r#"{"cmd":"history","limit":50}"#),
+            Ok(UiCmd::History {
+                offset: 0,
+                limit: 50,
+                ..
+            })
+        ));
+        // Всю историю разом не отдаём: страница — от 1 до MAX_HISTORY_PAGE записей.
+        assert!(parse(r#"{"cmd":"history","limit":0}"#).is_err());
+        assert!(parse(r#"{"cmd":"history","limit":5000}"#).is_err());
+        assert!(parse(r#"{"cmd":"history","offset":-1,"limit":10}"#).is_err());
+        assert!(parse(r#"{"cmd":"history"}"#).is_err());
+        let long = format!(
+            r#"{{"cmd":"history","q":"{}","limit":10}}"#,
+            "a".repeat(3000)
+        );
+        assert!(parse(&long).is_err());
+
+        assert!(matches!(
+            parse(r#"{"cmd":"history_open","url":"https://a.example/","background":true}"#),
+            Ok(UiCmd::HistoryOpen { url, background: true }) if url == "https://a.example/"
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"history_open","url":"https://a.example/"}"#),
+            Ok(UiCmd::HistoryOpen {
+                background: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"history_delete","url":"https://a.example/"}"#),
+            Ok(UiCmd::HistoryDelete { url }) if url == "https://a.example/"
+        ));
+        assert!(parse(r#"{"cmd":"history_delete"}"#).is_err());
+        let huge = format!(
+            r#"{{"cmd":"history_delete","url":"https://a.example/{}"}}"#,
+            "a".repeat(MAX_INPUT)
+        );
+        assert!(parse(&huge).is_err());
+
+        assert!(matches!(
+            parse(r#"{"cmd":"history_clear","since":0}"#),
+            Ok(UiCmd::HistoryClear { since: 0 })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"history_count","since":1764100000}"#),
+            Ok(UiCmd::HistoryCount {
+                since: 1_764_100_000
+            })
+        ));
+        // Срок — только число секунд: ни строки, ни дроби, ни «всё» без поля.
+        assert!(parse(r#"{"cmd":"history_clear","since":"all"}"#).is_err());
+        assert!(parse(r#"{"cmd":"history_clear","since":1.5}"#).is_err());
+        assert!(parse(r#"{"cmd":"history_clear"}"#).is_err());
+        assert!(matches!(
+            parse(r#"{"cmd":"hotkey","action":"history"}"#),
+            Ok(UiCmd::Hotkey { action }) if crate::ui::hotkeys::Hotkey::parse(&action).is_some()
+        ));
+
+        let entry = crate::storage::history::Entry {
+            url: "https://a.example/".into(),
+            title: "A".into(),
+            visits: 2,
+            last: 100,
+        };
+        let out = serde_json::to_string(&ToUi::History {
+            q: "a",
+            offset: 0,
+            items: vec![&entry],
+            found: 1,
+            more: false,
+            total: 3,
+        })
+        .unwrap_or_default();
+        assert_eq!(
+            out,
+            r#"{"type":"history","q":"a","offset":0,"items":[{"url":"https://a.example/","title":"A","visits":2,"last":100}],"found":1,"more":false,"total":3}"#
+        );
+        let out =
+            serde_json::to_string(&ToUi::HistoryCount { since: 5, count: 2 }).unwrap_or_default();
+        assert_eq!(out, r#"{"type":"history_count","since":5,"count":2}"#);
     }
 
     #[test]

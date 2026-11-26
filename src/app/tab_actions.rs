@@ -83,6 +83,10 @@ impl App {
         let Some(tab) = self.tabs.get(id) else {
             return;
         };
+        // Вкладка истории всегда одна: «Дублировать» просто переходит на неё.
+        if tab.is_history() {
+            return self.activate(id);
+        }
         let (url, title, ai) = (tab.url.clone(), tab.title.clone(), tab.ai);
         let (volume, zoom) = (tab.volume, tab.zoom);
         let at = self.tabs.index_of(id).map(|i| i + 1);

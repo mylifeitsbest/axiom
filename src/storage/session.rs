@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Paths, read_json, write_json};
-use crate::tabs::SETTINGS;
+use crate::tabs::{HISTORY, SETTINGS};
 
 const FILE: &str = "session.json";
 const MAX_TABS: usize = 500;
@@ -40,13 +40,14 @@ impl Session {
     pub fn load(paths: &Paths) -> Option<Self> {
         let mut s: Session = read_json(&paths.root.join(FILE))?;
         s.tabs.truncate(MAX_TABS);
-        // Вкладка настроек восстанавливается ею же, но только одна.
-        let mut settings = false;
+        // Вкладки настроек и истории восстанавливаются ими же, но только по одной.
+        let (mut settings, mut history) = (false, false);
         let keep: Vec<bool> = s
             .tabs
             .iter()
             .map(|t| {
-                let extra = t.url == SETTINGS && std::mem::replace(&mut settings, true);
+                let extra = (t.url == SETTINGS && std::mem::replace(&mut settings, true))
+                    || (t.url == HISTORY && std::mem::replace(&mut history, true));
                 is_restorable(&t.url) && !extra
             })
             .collect();
@@ -73,6 +74,7 @@ impl Session {
 fn is_restorable(url: &str) -> bool {
     url == crate::tabs::omnibox::NEWTAB
         || url == SETTINGS
+        || url == HISTORY
         || url.starts_with("https://")
         || url.starts_with("http://")
         || url.starts_with("file://")
@@ -137,17 +139,27 @@ mod tests {
                 tab(SETTINGS),
                 tab("https://a.example/"),
                 tab(SETTINGS),
+                tab(HISTORY),
                 tab("https://b.example/"),
+                tab(HISTORY),
             ],
-            active: 3,
+            active: 4,
         };
         assert!(saved.save(&paths).is_ok());
         let loaded = Session::load(&paths);
         let _ = std::fs::remove_dir_all(&root);
         let loaded = loaded.unwrap_or_default();
         let urls: Vec<&str> = loaded.tabs.iter().map(|t| t.url.as_str()).collect();
-        assert_eq!(urls, [SETTINGS, "https://a.example/", "https://b.example/"]);
-        assert_eq!(loaded.active, 2);
+        assert_eq!(
+            urls,
+            [
+                SETTINGS,
+                "https://a.example/",
+                HISTORY,
+                "https://b.example/"
+            ]
+        );
+        assert_eq!(loaded.active, 3);
     }
 
     #[test]
@@ -180,6 +192,7 @@ mod tests {
             "file:///C:/page.html",
             crate::tabs::omnibox::NEWTAB,
             SETTINGS,
+            HISTORY,
         ] {
             assert!(is_restorable(url), "{url}");
         }

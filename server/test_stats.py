@@ -153,6 +153,9 @@ class Server(unittest.TestCase):
         status, page, resp = self.request("GET", f"/d/{KEY}")
         self.assertEqual(status, 200)
         self.assertIn("Отчёты", page)
+        # Вкладки и ссылка на админку магазина — без Referer: ключ панели в адресе не утечёт.
+        self.assertIn('href="#reports" data-tab="reports"', page)
+        self.assertIn('rel="noopener noreferrer"', page)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", page)
         self.assertNotIn("<script>alert", page)
         self.assertIn(f"/d/{KEY}/r/{rid}", page)

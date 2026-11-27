@@ -44,6 +44,8 @@ DB = os.environ.get("AXIOM_STATS_DB", "stats.db")
 HOST = os.environ.get("AXIOM_STATS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("AXIOM_STATS_PORT", "8787"))
 KEY = os.environ.get("AXIOM_STATS_KEY", "")
+# Админка магазина плагинов — отдельный сайт со своим входом; сюда — только ссылка на неё.
+STORE_ADMIN_URL = os.environ.get("AXIOM_STATS_STORE_URL", "https://plugins.179-254-172-240.sslip.io/admin")
 
 VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
 OSES = {"windows", "linux", "macos", "other"}
@@ -773,6 +775,7 @@ def dashboard(nonce=""):
                   r.ans, r.ans_got,
                   (SELECT COUNT(*) FROM report_files f WHERE f.report = r.id)
            FROM reports r ORDER BY r.id DESC LIMIT 30""").fetchall()
+    s["waiting"] = q1(con, "SELECT COUNT(*) FROM reports WHERE kind='user' AND (ans IS NULL OR ans='')")
     s["reports_day"] = dict(con.execute(
         "SELECT kind, COUNT(*) FROM reports WHERE at>=? GROUP BY kind",
         ((now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),)).fetchall())
@@ -1158,7 +1161,7 @@ def report_page(id_, nonce="", error=None, form=None):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Axiom — отчёт №{int(id_)}</title>
 <style>{REPORT_CSS}</style></head><body><div class="wrap">
-  <a href="/d/{escape(KEY)}">← Вся статистика</a>
+  <a href="/d/{escape(KEY)}#reports">← Все отчёты</a>
   <h1>Отчёт №{int(id_)}: {escape(what)}</h1>
   <div class="top-sub"><time data-utc="{escape(at)}">{escape(at.replace("T", " "))}</time>
     · версия {escape(v)} · {escape(os_)}</div>
@@ -1216,7 +1219,7 @@ def render(s, nonce=""):
     pt = s["pings_today"]
     return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
+<noscript><meta http-equiv="refresh" content="60"></noscript>
 <title>Axiom — статистика</title>
 <style>
   :root {{ color-scheme: dark;
@@ -1225,9 +1228,26 @@ def render(s, nonce=""):
   * {{ box-sizing:border-box; }}
   body {{ margin:0; background:var(--bg); color:var(--ink);
     font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }}
-  .wrap {{ max-width:920px; margin:0 auto; padding:32px 20px 64px; }}
+  .wrap {{ max-width:960px; margin:0 auto; padding:0 20px 64px; }}
   h1 {{ font-size:20px; margin:0 0 2px; }}
-  .top-sub {{ color:var(--muted); font-size:13px; margin-bottom:22px; }}
+  .top-sub {{ color:var(--muted); font-size:13px; }}
+  [hidden] {{ display:none !important; }}
+  /* Шапка с вкладками: остаётся наверху, пока листаешь вкладку. */
+  .head {{ position:sticky; top:0; z-index:5; margin:0 -20px 22px; padding:22px 20px 0;
+    background:color-mix(in oklab,var(--bg) 90%,transparent); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line); }}
+  .tabs {{ display:flex; gap:2px; margin-top:12px; overflow-x:auto; scrollbar-width:none; }}
+  .tabs a {{ display:flex; align-items:center; gap:7px; padding:9px 12px 11px; color:var(--ink2);
+    text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; font-weight:500; }}
+  .tabs a:hover {{ color:var(--ink); }}
+  .tabs a.on {{ color:var(--ink); border-color:#5b8def; }}
+  .tabs a.ext {{ margin-left:auto; color:#86b6ef; }}
+  .tabs a i {{ font-style:normal; font-size:11.5px; font-weight:700; min-width:20px; text-align:center;
+    padding:1px 7px; border-radius:99px; background:#3d5fd6; color:#fff; }}
+  section.tab > h2:first-child {{ margin-top:4px; }}
+  .how {{ color:var(--ink2); font-size:14px; }}
+  .how ul {{ padding-left:18px; margin:0; }}
+  .how li {{ margin:8px 0; }}
   .tiles {{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }}
   .tiles.small {{ grid-template-columns:repeat(3,1fr); margin-top:12px; }}
   .tile {{ background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }}
@@ -1286,14 +1306,11 @@ def render(s, nonce=""):
   .a-reply {{ background:#16324f; color:#9cc8f5; }}
   .a-wait {{ background:#232735; color:var(--muted); }}
   .clip {{ color:var(--muted); font-size:12px; white-space:nowrap; margin-left:6px; }}
-  details {{ margin-top:30px; color:var(--ink2); font-size:14px; }}
-  summary {{ cursor:pointer; color:var(--muted); font-size:13px; }}
-  details ul {{ padding-left:18px; margin:10px 0 0; }}
-  details li {{ margin:6px 0; }}
   .chart-svg.narrow {{ display:none; }}
   @media (max-width:700px) {{ .tiles {{ grid-template-columns:repeat(2,1fr); }}
     .tiles.small {{ grid-template-columns:1fr; }} .grid {{ grid-template-columns:1fr; }}
-    .wrap {{ padding:22px 12px 48px; }}
+    .wrap {{ padding:0 12px 48px; }}
+    .head {{ margin:0 -12px 18px; padding:18px 12px 0; }}
     .tile {{ padding:12px 14px; }}
     .tile .n {{ font-size:30px; }}
     .panel {{ padding:12px 14px; }}
@@ -1315,10 +1332,20 @@ def render(s, nonce=""):
   }}
   @media (max-width:560px) {{ .chart-svg.wide {{ display:none; }} .chart-svg.narrow {{ display:block; }} }}
 </style></head><body><div class="wrap">
-  <h1>Axiom — сколько людей пользуется</h1>
+  <header class="head"><h1>Axiom — сколько людей пользуется</h1>
   <div class="top-sub">Обновлено в <time data-utc="{utc_iso(now)}" data-fmt="hm">{now:%H:%M} UTC</time>.
     Страница обновляется сама раз в минуту.</div>
+  <nav class="tabs">
+    <a href="#overview" data-tab="overview">Сводка</a>
+    <a href="#reports" data-tab="reports">Отчёты{f"<i>{s['waiting']}</i>" if s["waiting"] else ""}</a>
+    <a href="#charts" data-tab="charts">Графики</a>
+    <a href="#versions" data-tab="versions">Версии и системы</a>
+    <a href="#how" data-tab="how">Как считается</a>
+    <a class="ext" href="{escape(STORE_ADMIN_URL)}" target="_blank" rel="noopener noreferrer"
+      title="Админка магазина плагинов: заявки, проверка, плагины">Плагины ↗</a>
+  </nav></header>
 
+  <section class="tab" id="overview">
   <div class="tiles">{tiles}</div>
   <div class="tiles small">{small}</div>
 
@@ -1326,11 +1353,15 @@ def render(s, nonce=""):
   <p class="hint">Новые установки, обновления и переезды из других браузеров за последние двое суток,
     с точностью до 10 минут.</p>
   <div class="panel">{feed_html(s["feed"])}</div>
+  </section>
 
+  <section class="tab" id="reports">
   <h2>Отчёты</h2>
   <p class="hint">{reports_hint(s["reports_day"])}</p>
   {reports_html(s["reports"])}
+  </section>
 
+  <section class="tab" id="charts">
   <h2>По часам, последние сутки</h2>
   <p class="hint">Сколько браузеров было открыто в каждый час. Открытый браузер отмечается раз в час,
     поэтому столбик ≈ число людей. Последний столбик — текущий час, он ещё растёт.</p>
@@ -1343,15 +1374,20 @@ def render(s, nonce=""):
       <span><i style="background:var(--new)"></i>новые установки</span></div>
     {chart_days(s["days"])}{chart_days(s["days"], NARROW_W)}
   </div>
+  </section>
 
+  <section class="tab" id="versions">
   <div class="grid">
     <div><h2>Версии</h2><table><thead><tr><th>версия</th><th>людей сегодня</th>
       <th>обновились на неё</th></tr></thead><tbody>{vrows}</tbody></table></div>
     <div><h2>Системы</h2><table><thead><tr><th>система</th><th>людей сегодня</th></tr></thead>
       <tbody>{orows}</tbody></table></div>
   </div>
+  </section>
 
-  <details><summary>Как это считается</summary><ul>
+  <section class="tab how" id="how">
+  <h2>Как это считается</h2>
+  <div class="panel"><ul>
     <li>Пока браузер открыт, он раз в час шлёт короткую отметку: версию, систему и пару флажков
       («первый раз сегодня», «новая установка», «только что обновился»). Ни имён, ни адресов, ни IP.</li>
     <li>«Сейчас» — у скольких браузер был открыт за последние 60 минут. Открытый браузер
@@ -1378,7 +1414,8 @@ def render(s, nonce=""):
       до {MAX_FILES} файлов и {MAX_FILES_BYTES // 1024 // 1024} МБ на отчёт. У фото и видео браузер
       убирает место съёмки и данные камеры. Всем файлам вместе отведено {FILES_KEEP_BYTES // 1024 // 1024} МБ:
       больше — самые старые файлы удаляются, сами отчёты остаются.</li>
-  </ul></details>
+  </ul></div>
+  </section>
 </div>
 <script nonce="{escape(nonce)}">
 (() => {{
@@ -1399,6 +1436,19 @@ def render(s, nonce=""):
     const d = new Date(el.dataset.utc), f = fmt[el.dataset.fmt];
     if (!isNaN(d) && f) el.textContent = f(d, el);
   }}
+  const tabs = [...document.querySelectorAll("[data-tab]")];
+  const secs = [...document.querySelectorAll("section.tab")];
+  const pick = () => {{
+    const want = location.hash.slice(1);
+    const id = secs.some(s => s.id === want) ? want : "overview";
+    for (const s of secs) s.hidden = s.id !== id;
+    for (const t of tabs) t.classList.toggle("on", t.dataset.tab === id);
+    scrollTo(0, 0);
+  }};
+  pick();
+  addEventListener("hashchange", pick);
+  // Раз в минуту — свежие цифры на той же вкладке.
+  setTimeout(() => location.reload(), 60000);
 }})();
 </script>
 </body></html>"""

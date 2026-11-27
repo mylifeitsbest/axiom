@@ -364,6 +364,33 @@ class Store(unittest.TestCase):
         admin.go("POST", "/admin/plugins/hello", form={"do": "show", "csrf": csrf})
         self.assertIn("hello", self.catalog())
 
+    def test_tabs_and_pages(self):
+        admin = self.admin()
+        admin.upload(plugin())
+        guest = self.client()
+        page = guest.go("GET", "/")[1]
+        self.assertIn('<a href="/" class="on">Каталог</a>', page)
+        self.assertIn('href="/p/hello"', page)
+        status, page, _ = guest.go("GET", "/p/hello")
+        self.assertEqual(status, 200)
+        self.assertIn("Как поставить", page)
+        self.assertIn("Показывать сообщения внизу окна", page)
+        self.assertEqual(guest.go("GET", "/p/nothing-here")[0], 404)
+        self.assertIn('class="on">Разработчикам', guest.go("GET", "/developers")[1])
+        self.assertEqual(guest.go("GET", "/dev/upload")[2].getheader("Location"), "/login")
+        self.assertEqual(guest.go("GET", "/admin/upload")[0], 303)
+        # У администратора — свои вкладки и число новых заявок на «Заявках».
+        guest.go("POST", "/apply", form={"name": "x", "contact": "y", "about": "a" * 20})
+        page = admin.go("GET", "/admin")[1]
+        self.assertIn('href="/admin/apps">Заявки<i>1</i>', page)
+        self.assertIn("Администратор", page)
+        self.assertIn('class="on">Новые', admin.go("GET", "/admin/apps")[1])
+        self.assertIn("Здесь пусто", admin.go("GET", "/admin/apps?s=rejected")[1])
+        self.assertIn('data-done="/admin/plugins"', admin.go("GET", "/admin/upload")[1])
+        dev, _ = self.developer()
+        self.assertIn('data-done="/dev"', dev.go("GET", "/dev/upload")[1])
+        self.assertIn("Аня", dev.go("GET", "/dev")[1])
+
     def test_logins_are_rate_limited(self):
         store.LIMITERS["login"] = store.Limiter(3, 3600)
         c = self.client()

@@ -606,97 +606,174 @@ LIMITERS = {k: Limiter(*v) for k, v in LIMITS.items()}
 # ---------- страницы ----------
 
 CSS = """
-:root { color-scheme: dark; --bg:#0d0f15; --surface:#161922; --surface2:#1d2130; --line:#252a3a;
-  --ink:#e9ebf2; --ink2:#b9bdcb; --muted:#8a8fa3; --acc:#8b9cff; --acc2:#6f80ff; --ok:#5fd39a;
-  --bad:#ff8a80; }
+:root { color-scheme: dark; --bg:#0b0d12; --surface:#141821; --surface2:#1b2030; --line:#232838;
+  --ink:#eceef4; --ink2:#bcc0cd; --muted:#8a8fa3; --acc:#8b9cff; --acc2:#6f80ff; --ok:#5fd39a;
+  --bad:#ff8a80; --r:16px; }
 * { box-sizing:border-box; }
+html { scrollbar-gutter:stable; }
 body { margin:0; background:var(--bg); color:var(--ink);
   font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
 a { color:var(--acc); text-decoration:none; } a:hover { text-decoration:underline; }
-.top { display:flex; align-items:center; gap:18px; max-width:1040px; margin:0 auto; padding:18px 20px; }
-.logo { font-weight:700; font-size:17px; color:var(--ink); display:flex; gap:9px; align-items:center; }
-.logo i { width:26px; height:26px; border-radius:8px; background:linear-gradient(135deg,var(--acc),#b07cff);
-  display:inline-block; }
-.top nav { display:flex; gap:14px; margin-left:auto; flex-wrap:wrap; align-items:center; }
-.top nav a { color:var(--ink2); } .top nav form { display:inline; }
-.top nav button { background:none; border:0; color:var(--ink2); font:inherit; cursor:pointer; padding:0; }
-main { max-width:1040px; margin:0 auto; padding:8px 20px 70px; }
-h1 { font-size:28px; margin:18px 0 6px; letter-spacing:-.01em; }
+[hidden] { display:none !important; }
+/* шапка и вкладки */
+.head { position:sticky; top:0; z-index:5; background:color-mix(in oklab,var(--bg) 88%,transparent);
+  backdrop-filter:blur(12px); border-bottom:1px solid var(--line); }
+.bar { display:flex; align-items:center; gap:16px; max-width:1080px; margin:0 auto; padding:14px 20px 0; }
+.logo { font-weight:700; font-size:16px; color:var(--ink); display:flex; gap:10px; align-items:center; }
+.logo:hover { text-decoration:none; }
+.logo i { width:28px; height:28px; border-radius:9px; display:inline-block;
+  background:linear-gradient(135deg,var(--acc),#b07cff); box-shadow:0 4px 14px #6f80ff40; }
+.me { margin-left:auto; display:flex; gap:10px; align-items:center; color:var(--muted); font-size:13.5px; }
+.me form { display:inline; }
+.tabs { display:flex; gap:2px; max-width:1080px; margin:0 auto; padding:8px 14px 0; overflow-x:auto;
+  scrollbar-width:none; }
+.tabs a { display:flex; align-items:center; gap:7px; padding:9px 12px 11px; color:var(--ink2);
+  border-bottom:2px solid transparent; white-space:nowrap; font-weight:500; }
+.tabs a:hover { color:var(--ink); text-decoration:none; }
+.tabs a.on { color:var(--ink); border-color:var(--acc); }
+.tabs a i, .seg a i { font-style:normal; font-size:11.5px; font-weight:700; min-width:20px; text-align:center;
+  padding:1px 7px; border-radius:99px; background:var(--acc2); color:#fff; }
+main { max-width:1080px; margin:0 auto; padding:22px 20px 80px; }
+h1 { font-size:28px; margin:6px 0 6px; letter-spacing:-.015em; line-height:1.2; }
 h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted);
-  margin:30px 0 10px; font-weight:600; }
-.lead { color:var(--ink2); max-width:720px; margin:0 0 18px; }
-.box { background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:16px 18px;
-  margin:10px 0; }
-.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+  margin:30px 0 12px; font-weight:600; }
+h3 { margin:0; font-size:17px; }
+.lead { color:var(--ink2); max-width:720px; margin:0 0 20px; }
+.card { display:block; background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+  padding:16px 18px; margin:0 0 12px; color:var(--ink); }
+a.card:hover { text-decoration:none; border-color:#343b52; background:#171c27; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:12px; }
+.grid .card { margin:0; }
 .pl { display:flex; gap:14px; align-items:flex-start; }
-.pl img, .pl .ic { width:42px; height:42px; border-radius:11px; flex:none; background:var(--surface2);
-  object-fit:contain; padding:6px; }
-.pl .ic { display:grid; place-items:center; font-weight:700; color:var(--acc); padding:0; }
-.pl b { display:block; } .pl p { margin:3px 0 0; color:var(--ink2); font-size:13.5px; }
+.ico { width:44px; height:44px; border-radius:12px; flex:none; background:var(--surface2); display:grid;
+  place-items:center; overflow:hidden; font-weight:700; color:var(--acc); font-size:18px; }
+.ico img { width:28px; height:28px; object-fit:contain; }
+.ico.big { width:72px; height:72px; border-radius:18px; font-size:28px; }
+.ico.big img { width:46px; height:46px; }
+.pl b { display:block; font-size:15.5px; } .pl p { margin:4px 0 0; color:var(--ink2); font-size:13.5px; }
 .muted { color:var(--muted); font-size:13px; }
-.tag { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; background:var(--surface2);
-  color:var(--ink2); margin:2px 4px 2px 0; }
+.tag { display:inline-block; padding:1px 9px; border-radius:99px; font-size:12px; background:var(--surface2);
+  color:var(--ink2); margin:2px 4px 2px 0; white-space:nowrap; }
 .tag.ok { background:#163d2a; color:var(--ok); } .tag.bad { background:#4a1f1a; color:var(--bad); }
 .tag.wait { background:#1f2a4d; color:#a9b6ff; }
-form.f { display:grid; gap:12px; max-width:620px; }
-label { display:grid; gap:5px; color:var(--ink2); font-size:13.5px; }
-input[type=text], input[type=password], textarea { width:100%; background:var(--bg); color:var(--ink);
-  border:1px solid var(--line); border-radius:11px; padding:10px 12px; font:inherit; }
+.tools { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 16px; }
+.search { flex:1; min-width:220px; }
+.seg { display:inline-flex; gap:2px; padding:3px; background:var(--surface); border:1px solid var(--line);
+  border-radius:12px; }
+.seg a, .seg button { display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:9px; border:0;
+  background:none; color:var(--ink2); font:inherit; font-weight:500; cursor:pointer; }
+.seg a:hover, .seg button:hover { color:var(--ink); text-decoration:none; }
+.seg .on { background:var(--surface2); color:var(--ink); }
+form.f { display:grid; gap:14px; }
+label { display:grid; gap:6px; color:var(--ink2); font-size:13.5px; }
+input[type=text], input[type=password], input[type=search], textarea { width:100%; background:var(--bg);
+  color:var(--ink); border:1px solid var(--line); border-radius:11px; padding:10px 12px; font:inherit; }
 input:focus, textarea:focus { outline:2px solid var(--acc); outline-offset:0; border-color:transparent; }
-textarea { min-height:120px; resize:vertical; }
-button, .btn { font:inherit; font-weight:600; padding:9px 16px; border-radius:11px; border:0; cursor:pointer;
-  background:var(--acc2); color:#fff; }
-button.ghost { background:transparent; color:var(--ink2); border:1px solid var(--line); font-weight:500; }
+input[type=file] { color:var(--ink2); font:inherit; font-size:13.5px; }
+input[type=file]::file-selector-button { font:inherit; font-weight:600; margin-right:12px; padding:8px 14px;
+  border-radius:10px; border:1px solid var(--line); background:var(--surface2); color:var(--ink); cursor:pointer; }
+.desc { display:-webkit-box; -webkit-line-clamp:3; line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+textarea { min-height:130px; resize:vertical; }
+button, .btn { display:inline-flex; align-items:center; gap:8px; font:inherit; font-weight:600; padding:9px 16px;
+  border-radius:11px; border:0; cursor:pointer; background:var(--acc2); color:#fff; }
+.btn:hover { text-decoration:none; filter:brightness(1.08); }
+button.ghost, .btn.ghost { background:transparent; color:var(--ink2); border:1px solid var(--line); font-weight:500; }
 button.danger { background:#5a2320; color:#ffb4a8; }
+.sm { padding:6px 12px; font-size:13.5px; }
 .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.err { color:#ffb4a3; background:#4a1f1a; padding:10px 14px; border-radius:11px; }
-.okmsg { color:#bff0d5; background:#163d2a; padding:10px 14px; border-radius:11px; }
+.err { color:#ffb4a3; background:#4a1f1a; padding:10px 14px; border-radius:11px; margin:0 0 14px; }
+.okmsg { color:#bff0d5; background:#163d2a; padding:10px 14px; border-radius:11px; margin:0 0 14px; }
 .key { font:600 15px ui-monospace,Consolas,monospace; background:var(--bg); border:1px dashed var(--acc);
-  padding:12px 14px; border-radius:11px; word-break:break-all; user-select:all; }
+  padding:12px 14px; border-radius:11px; word-break:break-all; user-select:all; margin:10px 0; }
 pre { margin:8px 0 0; background:var(--bg); border:1px solid var(--line); border-radius:12px;
   padding:12px 14px; font:12.5px/1.55 ui-monospace,"Cascadia Code",Consolas,monospace; white-space:pre-wrap;
   word-break:break-word; color:var(--ink2); max-height:520px; overflow:auto; }
 details { border:1px solid var(--line); border-radius:12px; padding:8px 12px; margin:8px 0; }
 summary { cursor:pointer; }
 table { width:100%; border-collapse:collapse; }
-td, th { text-align:left; padding:9px 6px; border-top:1px solid var(--line); vertical-align:top; }
-th { color:var(--muted); font-weight:600; font-size:13px; }
+td, th { text-align:left; padding:10px 8px; border-top:1px solid var(--line); vertical-align:middle; }
+th { color:var(--muted); font-weight:600; font-size:13px; border-top:0; }
+tr:first-child > td { border-top:0; }
 td form { display:inline; }
-.drop { border:1.5px dashed var(--line); border-radius:14px; padding:18px; display:grid; gap:10px; }
-@media (max-width:640px) { h1 { font-size:23px; } .top { flex-wrap:wrap; } }
+.narrow { max-width:560px; }
+.center { margin:30px auto; }
+.two { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:16px; align-items:start; }
+.steps { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px; counter-reset:st; }
+.steps .card { margin:0; }
+.steps .card::before { counter-increment:st; content:counter(st); display:grid; place-items:center; width:30px;
+  height:30px; border-radius:9px; background:var(--surface2); color:var(--acc); font-weight:700; margin-bottom:10px; }
+.facts { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+.facts .card { margin:0; }
+.facts b { display:block; color:var(--muted); font-size:12.5px; font-weight:600; text-transform:uppercase;
+  letter-spacing:.06em; margin-bottom:6px; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; }
+.tiles .card { margin:0; }
+.tiles strong { display:block; font-size:30px; line-height:1.1; }
+.empty { text-align:center; padding:34px 20px; color:var(--muted); }
+.hero { display:flex; gap:18px; align-items:center; margin:4px 0 18px; }
+@media (max-width:760px) { h1 { font-size:23px; } .two { grid-template-columns:1fr; } .me span { display:none; } }
 """
 
+PUBLIC_TABS = [("catalog", "/", "Каталог"), ("developers", "/developers", "Разработчикам"),
+               ("apply", "/apply", "Подать заявку")]
+DEV_TABS = [("catalog", "/", "Каталог"), ("mine", "/dev", "Мои плагины"),
+            ("upload", "/dev/upload", "Загрузить"), ("developers", "/developers", "Разработчикам")]
+ADMIN_TABS = [("overview", "/admin", "Обзор"), ("apps", "/admin/apps", "Заявки"),
+              ("review", "/admin/review", "Проверка"), ("plugins", "/admin/plugins", "Плагины"),
+              ("devs", "/admin/devs", "Разработчики"), ("upload", "/admin/upload", "Загрузить"),
+              ("catalog", "/", "Каталог")]
+PERM_NAMES = {"notify": "Показывать сообщения внизу окна", "tabs": "Открывать вкладки"}
+DOCS = "https://github.com/mylifeitsbest/axiom/blob/main/docs/plugins.md"
 
-def page(title, body, nonce, who=None, csrf=""):
+
+def header_info(con, who):
+    """Имя в шапке и числа на вкладках администратора."""
     if who == "admin":
-        nav = ('<a href="/admin">Админка</a><a href="/admin/apps">Заявки</a>'
-               '<a href="/admin/review">Проверка</a><a href="/admin/plugins">Плагины</a>'
-               '<a href="/admin/devs">Разработчики</a>')
-    elif who:
-        nav = '<a href="/dev">Мои плагины</a>'
-    else:
-        nav = '<a href="/apply">Стать разработчиком</a><a href="/login">Войти</a>'
+        count = lambda sql: con.execute(sql).fetchone()[0]  # noqa: E731
+        return "Администратор", {
+            "apps": count("SELECT COUNT(*) FROM applications WHERE status='pending'"),
+            "review": count("SELECT COUNT(*) FROM versions WHERE status='pending'"),
+        }
     if who:
-        nav += (f'<form method="post" action="/logout"><input type="hidden" name="csrf" '
-                f'value="{escape(csrf)}"><button>Выйти</button></form>')
+        row = con.execute("SELECT name FROM developers WHERE id=?", (int(who[4:]),)).fetchone()
+        return (row[0] if row else "Разработчик"), {}
+    return "", {}
+
+
+def page(title, body, nonce, who=None, csrf="", tab="", name="", counts=None):
+    tabs = ADMIN_TABS if who == "admin" else DEV_TABS if who else PUBLIC_TABS
+    counts = counts or {}
+    on = lambda key: ' class="on"' if key == tab else ""  # noqa: E731
+    items = "".join(
+        f'<a href="{href}"{on(key)}>{label}'
+        f'{f"<i>{counts[key]}</i>" if counts.get(key) else ""}</a>'
+        for key, href, label in tabs)
+    if who:
+        right = (f'<span>{escape(name)}</span><form method="post" action="/logout">'
+                 f'<input type="hidden" name="csrf" value="{escape(csrf)}">'
+                 '<button class="ghost sm">Выйти</button></form>')
+    else:
+        right = '<a class="btn sm ghost" href="/login">Войти</a>'
     return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)} — плагины Axiom</title><style>{CSS}</style></head><body>
-<header class="top"><a class="logo" href="/"><i></i>Плагины Axiom</a><nav>{nav}</nav></header>
+<header class="head"><div class="bar"><a class="logo" href="/"><i></i>Плагины Axiom</a>
+<div class="me">{right}</div></div><nav class="tabs">{items}</nav></header>
 <main>{body}</main>
 <script nonce="{escape(nonce)}">
 for (const el of document.querySelectorAll("[data-utc]")) {{
   const d = new Date(el.dataset.utc);
-  if (!isNaN(d)) el.textContent = d.toLocaleString("ru-RU");
+  if (!isNaN(d)) el.textContent = el.dataset.utc.length > 10 ? d.toLocaleString("ru-RU", {{ dateStyle: "medium", timeStyle: "short" }}) : d.toLocaleDateString("ru-RU");
 }}
 </script></body></html>"""
 
 
-def icon_html(meta):
+def icon_html(meta, big=False):
+    cls = "ico big" if big else "ico"
     icon = meta.get("icon")
     if isinstance(icon, str) and icon.startswith("data:image/"):
-        return f'<img src="{escape(icon)}" alt="">'
-    return f'<span class="ic">{escape((meta.get("name") or "?")[:1].upper())}</span>'
+        return f'<span class="{cls}"><img src="{escape(icon)}" alt=""></span>'
+    return f'<span class="{cls}">{escape((meta.get("name") or "?")[:1].upper())}</span>'
 
 
 def plural(n, one, few, many):
@@ -704,40 +781,146 @@ def plural(n, one, few, many):
     return many if 10 < a < 20 else one if b == 1 else few if 2 <= b <= 4 else many
 
 
-def home_body(con):
+def installs_text(n):
+    return f"{n} {plural(n, 'установка', 'установки', 'установок')}"
+
+
+def site_name(m):
+    return "все сайты" if m in ("<all_urls>", "*") else re.sub(r"^(\*|https?)://|/\*$", "", m)
+
+
+CATALOG_JS = """
+const q = document.getElementById("q"), none = document.getElementById("none");
+const cards = [...document.querySelectorAll("[data-pl]")];
+let kind = "all";
+const apply = () => {
+  const t = q.value.trim().toLowerCase();
+  let shown = 0;
+  for (const c of cards) {
+    const ok = (kind === "all" || c.dataset.kind === kind) && (!t || c.dataset.text.includes(t));
+    c.hidden = !ok;
+    if (ok) shown++;
+  }
+  none.hidden = shown > 0;
+};
+q.addEventListener("input", apply);
+for (const b of document.querySelectorAll("[data-pick]")) {
+  b.addEventListener("click", () => {
+    kind = b.dataset.pick;
+    for (const x of document.querySelectorAll("[data-pick]")) x.classList.toggle("on", x === b);
+    apply();
+  });
+}
+"""
+
+
+def catalog_body(con):
+    items = catalog(con)
     cards = []
-    for item in catalog(con):
-        n = item["installs"]
-        badge = '<span class="tag ok">Axiom</span>' if item["official"] else ""
-        cards.append(f"""<div class="box pl">{icon_html(item)}<div><b>{escape(item["name"])} {badge}</b>
-  <p>{escape(item["description"])}</p>
-  <p class="muted">{escape(item["author"])} · версия {escape(item["version"])} ·
-    {n} {plural(n, "установка", "установки", "установок")}</p></div></div>""")
-    return f"""<h1>Плагины для Axiom</h1>
+    for it in items:
+        badge = ' <span class="tag ok">Axiom</span>' if it["official"] else ""
+        text_ = f'{it["name"]} {it["description"]} {it["author"]} {it["id"]}'.lower()
+        cards.append(f"""<a class="card pl" href="/p/{escape(it["id"])}" data-pl
+  data-kind="{"axiom" if it["official"] else "community"}" data-text="{escape(text_)}">{icon_html(it)}<div>
+  <b>{escape(it["name"])}{badge}</b><p class="desc">{escape(it["description"])}</p>
+  <p class="muted">{escape(it["author"])} · {installs_text(it["installs"])}</p></div></a>""")
+    official = sum(1 for it in items if it["official"])
+    return f"""<h1>Каталог плагинов</h1>
 <p class="lead">Плагины ставятся прямо в браузере: <b>Axiom → Настройки → Плагины → Магазин</b>.
-Здесь — сайт для тех, кто их пишет: подайте заявку, получите личный ключ разработчика и
-загружайте свои плагины. Каждый плагин перед публикацией проверяет команда Axiom.</p>
-<div class="row"><a class="btn" href="/apply">Стать разработчиком</a>
-  <a href="https://github.com/mylifeitsbest/axiom/blob/main/docs/plugins.md">Как написать плагин</a></div>
-<h2>Уже в магазине</h2>
-<div class="grid">{"".join(cards) or '<p class="muted">Пока пусто.</p>'}</div>"""
+Каждый плагин перед публикацией проверяет команда Axiom.</p>
+<div class="tools"><input type="search" class="search" id="q" placeholder="Найти плагин" autocomplete="off">
+  <span class="seg"><button class="on" data-pick="all">Все <i>{len(items)}</i></button>
+  <button data-pick="axiom">От Axiom</button><button data-pick="community">От разработчиков
+  {f"<i>{len(items) - official}</i>" if len(items) - official else ""}</button></span></div>
+<div class="grid">{"".join(cards)}</div>
+<div class="card empty" id="none"{" hidden" if items else ""}>Ничего не нашлось.</div>
+<script nonce="__NONCE__">{CATALOG_JS}</script>"""
+
+
+def plugin_body(con, pid):
+    it = next((x for x in catalog(con) if x["id"] == pid), None)
+    if not it:
+        return None
+    history = con.execute(
+        """SELECT version, reviewed_at, note FROM versions WHERE id=? AND status='approved'
+           ORDER BY n DESC LIMIT 10""", (pid,)).fetchall()
+    badge = ' <span class="tag ok">Axiom</span>' if it["official"] else ""
+    sites = "".join(f'<span class="tag">{escape(site_name(s))}</span>' for s in it["sites"]) or "—"
+    perms = "".join(f'<div>{escape(PERM_NAMES.get(p, p))}</div>' for p in it["permissions"]) \
+        or "Только сама страница: сообщений и вкладок не открывает"
+    home = (f'<a class="btn ghost sm" href="{escape(it["homepage"])}" rel="noopener">Страница плагина</a>'
+            if it["homepage"] else "")
+    rows = "".join(
+        f'<tr><td><b>{escape(v)}</b></td><td class="muted"><time data-utc="{escape(at or "")}">'
+        f'{escape(at or "")}</time></td><td class="muted">{escape(note or "")}</td></tr>'
+        for v, at, note in history)
+    return f"""<p><a href="/">← Каталог</a></p>
+<div class="hero">{icon_html(it, big=True)}<div><h1>{escape(it["name"])}{badge}</h1>
+  <div class="muted">{escape(it["author"])} · версия {escape(it["version"])} · {installs_text(it["installs"])}</div>
+</div></div>
+<div class="two"><div>
+  <div class="card"><p style="margin:0">{escape(it["description"]) or "Без описания."}</p></div>
+  <div class="facts">
+    <div class="card"><b>Где работает</b>{sites}</div>
+    <div class="card"><b>Что ему можно</b>{perms}</div>
+    <div class="card"><b>Кнопка на панели</b>{"Есть" if it["action"] else "Нет"}</div>
+    <div class="card"><b>Настройки</b>{it["settings"] or "Нет"}</div>
+  </div>
+  <h2>Версии</h2>
+  <div class="card"><table>{rows}</table></div>
+</div><div>
+  <div class="card"><h3>Как поставить</h3>
+    <ol style="margin:10px 0 0;padding-left:20px;color:var(--ink2)">
+      <li>Откройте Axiom → <b>Настройки</b> → <b>Плагины</b>.</li>
+      <li>Вкладка <b>Магазин</b>, найдите «{escape(it["name"])}».</li>
+      <li><b>Установить</b> — плагин сразу включится.</li></ol></div>
+  <div class="row">{home}</div>
+</div></div>"""
+
+
+def developers_body(who):
+    action = ('<a class="btn" href="/dev/upload">Загрузить плагин</a>' if who and who != "admin" else
+              '<a class="btn" href="/apply">Подать заявку</a><a class="btn ghost" href="/login">Войти по ключу</a>')
+    return f"""<h1>Разработчикам</h1>
+<p class="lead">Плагин для Axiom — папка с <code>plugin.json</code> и скриптами. Чтобы он появился в
+магазине у всех, станьте разработчиком: это бесплатно.</p>
+<div class="row" style="margin-bottom:22px">{action}<a class="btn ghost" href="{DOCS}">Документация</a></div>
+<div class="steps">
+  <div class="card"><h3>Заявка</h3><p class="muted">Имя, как с вами связаться и пара слов о плагинах.
+    Сайт даст секретную ссылку на статус — сохраните её.</p></div>
+  <div class="card"><h3>Ключ</h3><p class="muted">Когда заявку одобрят, по ссылке появится ваш личный
+    ключ разработчика. Храните его в менеджере паролей.</p></div>
+  <div class="card"><h3>Загрузка</h3><p class="muted">Войдите по ключу и загрузите папку плагина или
+    .zip — до 5 МБ, plugin.json в корне.</p></div>
+  <div class="card"><h3>Проверка</h3><p class="muted">Мы читаем код и публикуем плагин или объясняем,
+    что поправить. Статус видно в «Моих плагинах».</p></div>
+</div>
+<h2>Что не пройдёт проверку</h2>
+<div class="card"><ul style="margin:0;padding-left:20px;color:var(--ink2)">
+  <li>Код, который куда-то отправляет данные со страниц без ведома человека.</li>
+  <li>Сжатый или запутанный код, который нельзя прочитать.</li>
+  <li>Работа на всех сайтах без нужды и то, что ломает сайты.</li>
+  <li>Плагин делает не то, что написано в описании.</li></ul></div>"""
 
 
 def apply_body(error=None, form=None):
     form = form or {}
     v = lambda k: escape(str(form.get(k, "")))  # noqa: E731
     err = f'<p class="err">{escape(error)}</p>' if error else ""
-    return f"""<h1>Стать разработчиком</h1>
+    return f"""<h1>Подать заявку</h1>
 <p class="lead">Расскажите о себе и о плагинах, которые хотите сделать. Мы посмотрим заявку и
 выдадим личный ключ: с ним вы входите на этот сайт и загружаете плагины.</p>
-{err}<form class="f" method="post" action="/apply">
+<div class="two"><div class="card">{err}<form class="f" method="post" action="/apply">
   <label>Имя или ник<input type="text" name="name" maxlength="80" required value="{v("name")}"></label>
   <label>Как с вами связаться (Telegram, почта)<input type="text" name="contact" maxlength="200" required value="{v("contact")}"></label>
   <label>О себе и о плагинах: что хотите сделать, ссылки на свой код, если есть
     <textarea name="about" maxlength="2000" required>{v("about")}</textarea></label>
   <label hidden>Сайт<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
   <div class="row"><button>Отправить заявку</button></div>
-</form>"""
+</form></div>
+<div class="card"><h3>Что дальше</h3><p class="muted">После отправки откроется страница заявки с
+секретной ссылкой — сохраните её в закладках. Когда заявку одобрят, там появится ваш ключ
+разработчика. Контакт видит только администратор.</p></div></div>"""
 
 
 def status_body(con, token):
@@ -756,7 +939,7 @@ def status_body(con, token):
     elif key_once and active:
         what = f"""<p class="okmsg">Заявку одобрили. Вот ваш личный ключ разработчика:</p>
 <p class="key">{escape(key_once)}</p>
-<p class="lead">Сохраните его в надёжном месте (менеджер паролей): после первого входа этот ключ
+<p class="muted">Сохраните его в надёжном месте (менеджер паролей): после первого входа этот ключ
 здесь больше не покажется. Никому его не давайте — с ним загружают плагины от вашего имени.</p>
 <div class="row"><a class="btn" href="/login">Войти</a></div>"""
     elif active:
@@ -764,17 +947,18 @@ def status_body(con, token):
   выпустим новый.</p><div class="row"><a class="btn" href="/login">Войти</a></div>"""
     else:
         what = '<p class="err">Ключ разработчика отозван.</p>'
-    return f"""<h1>Заявка от <time data-utc="{escape(at)}">{escape(at)}</time></h1>{what}"""
+    return f"""<div class="card narrow center"><h1>Заявка от <time data-utc="{escape(at)}">{escape(at)}</time></h1>
+{what}</div>"""
 
 
 def login_body(error=None):
     err = f'<p class="err">{escape(error)}</p>' if error else ""
-    return f"""<h1>Вход</h1>
-<p class="lead">Войдите по ключу разработчика. Ключа нет — <a href="/apply">подайте заявку</a>.</p>
+    return f"""<div class="card narrow center"><h1>Вход</h1>
+<p class="muted">По ключу разработчика или администратора. Ключа нет — <a href="/apply">подайте заявку</a>.</p>
 {err}<form class="f" method="post" action="/login">
-  <label>Ключ<input type="password" name="key" autocomplete="current-password" required></label>
+  <label>Ключ<input type="password" name="key" autocomplete="current-password" required autofocus></label>
   <div class="row"><button>Войти</button></div>
-</form>"""
+</form></div>"""
 
 
 UPLOAD_JS = """
@@ -803,26 +987,32 @@ up.addEventListener("submit", async (e) => {
       body: JSON.stringify(body) });
     const out = await r.json().catch(() => ({ ok: false, message: "сервер ответил ошибкой " + r.status }));
     say(out.message, out.ok);
-    if (out.ok) setTimeout(() => location.reload(), 1500);
+    if (out.ok) setTimeout(() => { location.href = up.dataset.done; }, 1500);
   } catch (err) { say("Не загрузилось: " + err.message, false); }
 });
 """
 
 
-def upload_form(csrf, admin):
-    hint = ("Ваши плагины публикуются сразу, без проверки." if admin else
-            "Плагин уйдёт на проверку и появится в магазине после неё. Новая версия — та же "
-            "папка с увеличенной version в plugin.json.")
-    return f"""<form class="drop" id="up" data-csrf="{escape(csrf)}">
-  <b>Загрузить плагин</b>
-  <span class="muted">{hint} Папка плагина целиком (plugin.json в её корне) или она же в .zip,
-    до 5 МБ.</span>
+def upload_body(csrf, admin):
+    hint = ("Ваши плагины публикуются сразу, без проверки, с пометкой «Axiom»." if admin else
+            "Плагин уйдёт на проверку и появится в магазине после неё.")
+    done = "/admin/plugins" if admin else "/dev"
+    return f"""<h1>Загрузить плагин</h1>
+<p class="lead">{hint} Новая версия — та же папка с увеличенной <code>version</code> в plugin.json.</p>
+<div class="two"><div class="card"><form class="f" id="up" data-csrf="{escape(csrf)}" data-done="{done}">
+  <p id="upmsg" hidden></p>
   <label>Архив .zip<input type="file" id="zip" accept=".zip,application/zip"></label>
-  <label>…или папка<input type="file" id="dir" webkitdirectory multiple></label>
+  <label>…или папка плагина<input type="file" id="dir" webkitdirectory multiple></label>
   <label>Что нового в этой версии (необязательно)<input type="text" name="note" maxlength="1000"></label>
   <div class="row"><button>Загрузить</button></div>
-  <p id="upmsg" hidden></p>
-</form>"""
+</form></div>
+<div class="card"><h3>Что примет магазин</h3><ul style="margin:10px 0 0;padding-left:20px;color:var(--ink2)">
+  <li>plugin.json в корне папки, <code>"api": 1</code>.</li>
+  <li>Файлы js, mjs, css, json, картинки, md, txt — до 100 файлов, 5 МБ.</li>
+  <li>Скрытые файлы (с точки в начале) не уходят.</li>
+  <li>Один номер версии — один раз.</li></ul>
+  <p class="muted" style="margin-bottom:0"><a href="{DOCS}">Как написать плагин</a></p></div></div>
+<script nonce="__NONCE__">{UPLOAD_JS}</script>"""
 
 
 def version_tag(status, reason):
@@ -834,7 +1024,6 @@ def version_tag(status, reason):
 
 
 def dev_body(con, dev, csrf):
-    name, = con.execute("SELECT name FROM developers WHERE id=?", (dev,)).fetchone()
     rows = []
     for pid, installs, hidden in con.execute(
             "SELECT id, installs, hidden FROM plugins WHERE dev=? ORDER BY created", (dev,)):
@@ -844,26 +1033,26 @@ def dev_body(con, dev, csrf):
         if not vers:
             continue
         meta = json.loads(vers[0][4])
-        vlist = "".join(f"<tr><td>{escape(v)}</td><td>{version_tag(s, r)}</td>"
+        vlist = "".join(f"<tr><td><b>{escape(v)}</b></td><td>{version_tag(s, r)}</td>"
                         f'<td class="muted"><time data-utc="{escape(at)}">{escape(at)}</time></td></tr>'
                         for v, s, r, at, _ in vers)
         hid = ' <span class="tag bad">снят из магазина</span>' if hidden else ""
-        rows.append(f"""<div class="box"><div class="pl">{icon_html(meta)}<div>
-  <b>{escape(meta.get("name", pid))}{hid}</b><p class="muted">{escape(pid)} · {installs}
-  {plural(installs, "установка", "установки", "установок")}</p></div></div>
-  <table>{vlist}</table></div>""")
+        live = any(s == "approved" for _, s, _, _, _ in vers)
+        link = f' · <a href="/p/{escape(pid)}">в каталоге</a>' if live and not hidden else ""
+        rows.append(f"""<div class="card"><div class="pl">{icon_html(meta)}<div>
+  <b>{escape(meta.get("name", pid))}{hid}</b><p class="muted">{escape(pid)} · {installs_text(installs)}{link}</p>
+  </div></div><table style="margin-top:10px">{vlist}</table></div>""")
+    empty = """<div class="card empty">Вы ещё ничего не загрузили.<div class="row" style="justify-content:center;
+  margin-top:12px"><a class="btn" href="/dev/upload">Загрузить плагин</a></div></div>"""
     return f"""<h1>Мои плагины</h1>
-<p class="lead">Здравствуйте, {escape(name)}. Как написать плагин —
-<a href="https://github.com/mylifeitsbest/axiom/blob/main/docs/plugins.md">документация</a>.</p>
-{upload_form(csrf, False)}
-<h2>Загруженные</h2>{"".join(rows) or '<p class="muted">Вы ещё ничего не загрузили.</p>'}
-<script nonce="__NONCE__">{UPLOAD_JS}</script>"""
+<p class="lead">Статус каждой версии: на проверке, опубликована или отклонена — с причиной.</p>
+{"".join(rows) or empty}"""
 
 
 def form_btn(action, csrf, do, label, cls="", reason=False):
     extra = ('<input type="text" name="reason" placeholder="Причина — её увидит разработчик" '
-             'maxlength="1000">' if reason else "")
-    return (f'<form method="post" action="{escape(action)}" class="row">'
+             'maxlength="1000" style="min-width:260px;flex:1">' if reason else "")
+    return (f'<form method="post" action="{escape(action)}" class="row" style="flex:1">'
             f'<input type="hidden" name="csrf" value="{escape(csrf)}">{extra}'
             f'<button class="{cls}" name="do" value="{do}">{label}</button></form>')
 
@@ -873,28 +1062,48 @@ def admin_body(con, csrf):
     apps = count("SELECT COUNT(*) FROM applications WHERE status='pending'")
     pend = count("SELECT COUNT(*) FROM versions WHERE status='pending'")
     devs = count("SELECT COUNT(*) FROM developers WHERE active=1")
+    installs = count("SELECT COALESCE(SUM(installs), 0) FROM plugins")
     live = len(published(con))
-    tile = lambda n, label, href: (f'<a class="box" href="{href}"><b style="font-size:26px">{n}</b>'  # noqa: E731
-                                   f'<div class="muted">{label}</div></a>')
-    return f"""<h1>Админка магазина</h1>
+    tile = lambda n, label, href: (f'<a class="card" href="{href}"><strong>{n}</strong>'  # noqa: E731
+                                   f'<span class="muted">{label}</span></a>')
+    recent = []
+    for kind, at, what in con.execute(
+            """SELECT 'app', at, name FROM applications
+               UNION ALL SELECT 'ver', at, id || ' ' || version FROM versions
+               ORDER BY 2 DESC LIMIT 8"""):
+        label = "Заявка" if kind == "app" else "Версия"
+        recent.append(f'<tr><td>{label}</td><td>{escape(what)}</td><td class="muted">'
+                      f'<time data-utc="{escape(at)}">{escape(at)}</time></td></tr>')
+    return f"""<h1>Обзор</h1>
 <p class="lead">Ключ администратора открывает всё: ваши плагины публикуются без проверки.</p>
-<div class="grid">{tile(apps, "заявок ждут решения", "/admin/apps")}
-{tile(pend, "плагинов ждут проверки", "/admin/review")}
-{tile(live, "плагинов в магазине", "/admin/plugins")}{tile(devs, "разработчиков", "/admin/devs")}</div>"""
+<div class="tiles">{tile(apps, "заявок ждут решения", "/admin/apps")}
+{tile(pend, "версий ждут проверки", "/admin/review")}
+{tile(live, "плагинов в магазине", "/admin/plugins")}
+{tile(devs, "разработчиков", "/admin/devs")}{tile(installs, "установок всего", "/admin/plugins")}</div>
+<h2>Последнее</h2><div class="card"><table>{"".join(recent) or '<tr><td class="muted">Пока тихо.</td></tr>'}</table></div>"""
 
 
-def apps_body(con, csrf, flash=None):
+APP_FILTERS = [("pending", "Новые"), ("approved", "Одобренные"), ("rejected", "Отклонённые")]
+
+
+def apps_body(con, csrf, flash=None, which="pending"):
+    which = which if which in dict(APP_FILTERS) else "pending"
+    counts = dict(con.execute("SELECT status, COUNT(*) FROM applications GROUP BY status").fetchall())
+    on = lambda k: ' class="on"' if k == which else ""  # noqa: E731
+    seg = "".join(f'<a href="/admin/apps?s={k}"{on(k)}>{label}'
+                  f'{f"<i>{counts[k]}</i>" if counts.get(k) else ""}</a>' for k, label in APP_FILTERS)
     rows = []
     for aid, at, name, contact, about, status, reason in con.execute(
             """SELECT id, at, name, contact, about, status, reason FROM applications
-               ORDER BY status='pending' DESC, id DESC LIMIT 200"""):
+               WHERE status=? ORDER BY id DESC LIMIT 200""", (which,)):
         act = (form_btn(f"/admin/apps/{aid}", csrf, "approve", "Одобрить и выдать ключ")
                + form_btn(f"/admin/apps/{aid}", csrf, "reject", "Отклонить", "ghost", reason=True)
                if status == "pending" else version_tag(status, reason))
-        rows.append(f"""<div class="box"><b>{escape(name)}</b> <span class="muted">· {escape(contact)} ·
-  <time data-utc="{escape(at)}">{escape(at)}</time></span><pre>{escape(about)}</pre>
-  <div class="row" style="margin-top:10px">{act}</div></div>""")
-    return f"<h1>Заявки</h1>{flash or ''}{''.join(rows) or '<p class=muted>Заявок нет.</p>'}"
+        rows.append(f"""<div class="card"><h3>{escape(name)}</h3><p class="muted" style="margin:4px 0 0">
+  {escape(contact)} · <time data-utc="{escape(at)}">{escape(at)}</time></p><pre>{escape(about)}</pre>
+  <div class="row" style="margin-top:12px">{act}</div></div>""")
+    return f"""<h1>Заявки</h1>{flash or ""}<div class="tools"><span class="seg">{seg}</span></div>
+{"".join(rows) or '<div class="card empty">Здесь пусто.</div>'}"""
 
 
 def devs_body(con, csrf, flash=None):
@@ -902,16 +1111,20 @@ def devs_body(con, csrf, flash=None):
     for did, name, contact, key_once, active, created in con.execute(
             "SELECT id, name, contact, key_once, active, created FROM developers ORDER BY id DESC"):
         plugins = con.execute("SELECT COUNT(*) FROM plugins WHERE dev=?", (did,)).fetchone()[0]
-        key = (f'<div class="muted">Ключ ещё не забран — передайте его, если нужно:</div>'
-               f'<p class="key">{escape(key_once)}</p>' if key_once else "")
-        acts = (form_btn(f"/admin/devs/{did}", csrf, "rekey", "Новый ключ", "ghost")
-                + (form_btn(f"/admin/devs/{did}", csrf, "revoke", "Отозвать ключ", "danger") if active
-                   else form_btn(f"/admin/devs/{did}", csrf, "restore", "Вернуть доступ")))
-        state = "" if active else ' <span class="tag bad">ключ отозван</span>'
-        rows.append(f"""<div class="box"><b>{escape(name)}</b>{state} <span class="muted">· {escape(contact)} ·
-  {plugins} {plural(plugins, "плагин", "плагина", "плагинов")}</span>{key}
-  <div class="row" style="margin-top:10px">{acts}</div></div>""")
-    return f"<h1>Разработчики</h1>{flash or ''}{''.join(rows) or '<p class=muted>Пока никого.</p>'}"
+        key = (f'<p class="muted" style="margin:10px 0 0">Ключ ещё не забран — его видно и по ссылке '
+               f'на заявку; при необходимости передайте сами:</p><p class="key">{escape(key_once)}</p>'
+               if key_once else "")
+        acts = (form_btn(f"/admin/devs/{did}", csrf, "rekey", "Новый ключ", "ghost sm")
+                + (form_btn(f"/admin/devs/{did}", csrf, "revoke", "Отозвать ключ", "danger sm") if active
+                   else form_btn(f"/admin/devs/{did}", csrf, "restore", "Вернуть доступ", "sm")))
+        state = ' <span class="tag bad">ключ отозван</span>' if not active else ""
+        rows.append(f"""<div class="card"><div class="row" style="justify-content:space-between">
+  <div><h3>{escape(name)}{state}</h3><p class="muted" style="margin:4px 0 0">{escape(contact)} ·
+  {plugins} {plural(plugins, "плагин", "плагина", "плагинов")} · с
+  <time data-utc="{escape(created[:10])}">{escape(created[:10])}</time></p></div>
+  <div class="row">{acts}</div></div>{key}</div>""")
+    return f"""<h1>Разработчики</h1>{flash or ""}
+{"".join(rows) or '<div class="card empty">Пока никого. Одобренные заявки появятся здесь.</div>'}"""
 
 
 def code_html(bundle):
@@ -945,39 +1158,40 @@ def review_body(con, csrf, flash=None):
         who = con.execute("SELECT name, contact FROM developers WHERE id=?", (dev,)).fetchone() \
             if dev is not None else ("Axiom", "")
         was = f"сейчас в магазине {escape(live[0])}" if live else "новый плагин"
-        items.append(f"""<div class="box"><div class="pl">{icon_html(m)}<div>
-  <b>{escape(m.get("name", pid))}</b><p class="muted">{escape(pid)} {escape(ver)} · {was} ·
-  {escape(who[0] if who else "?")} ({escape(who[1] if who else "")}) · {size} байт ·
-  <time data-utc="{escape(at)}">{escape(at)}</time></p>
+        sites = ", ".join(site_name(s) for s in m.get("sites") or [])
+        items.append(f"""<div class="card"><div class="pl">{icon_html(m)}<div style="flex:1">
+  <b>{escape(m.get("name", pid))} <span class="muted">{escape(pid)} {escape(ver)} · {was}</span></b>
   <p>{escape(m.get("description", ""))}</p>
-  <p class="muted">Сайты: {escape(", ".join(m.get("sites") or []))} · разрешения:
+  <p class="muted">{escape(who[0] if who else "?")} ({escape(who[1] if who else "")}) · {size} байт ·
+  <time data-utc="{escape(at)}">{escape(at)}</time><br>Сайты: {escape(sites)} · разрешения:
     {escape(", ".join(m.get("permissions") or []) or "нет")}</p></div></div>
   {f"<pre>{escape(note)}</pre>" if note else ""}{code_html(bundle)}
-  <div class="row" style="margin-top:10px">{form_btn(f"/admin/review/{n}", csrf, "approve", "Опубликовать")}
+  <div class="row" style="margin-top:12px">{form_btn(f"/admin/review/{n}", csrf, "approve", "Опубликовать")}
   {form_btn(f"/admin/review/{n}", csrf, "reject", "Отклонить", "ghost", reason=True)}</div></div>""")
-    return f"""<h1>Проверка плагинов</h1>
+    return f"""<h1>Проверка</h1>
 <p class="lead">Код плагина работает на страницах сайтов у тех, кто его поставит: смотрите, что он
 делает, куда отправляет данные, нет ли сжатого или запутанного кода.</p>
-{flash or ""}{"".join(items) or '<p class="muted">Ничего не ждёт проверки.</p>'}"""
+{flash or ""}{"".join(items) or '<div class="card empty">Ничего не ждёт проверки.</div>'}"""
 
 
 def plugins_body(con, csrf, flash=None):
     rows = []
-    for pid, ver, _, _, meta, _, installs, official in published(con):
+    for pid, ver, _, _, meta, at, installs, official in published(con):
         m = json.loads(meta)
         badge = '<span class="tag ok">Axiom</span>' if official else ""
-        rows.append(f"<tr><td><b>{escape(m.get('name', pid))}</b> {badge}<div class='muted'>{escape(pid)} · "
-                    f"{escape(m.get('author', ''))}</div></td><td>{escape(ver)}</td><td>{installs}</td>"
-                    f"<td>{form_btn(f'/admin/plugins/{pid}', csrf, 'hide', 'Снять', 'ghost')}</td></tr>")
-    for (pid,) in con.execute("SELECT id FROM plugins WHERE hidden=1 ORDER BY id"):
-        rows.append(f"<tr><td>{escape(pid)} <span class='tag bad'>снят</span></td><td></td><td></td>"
-                    f"<td>{form_btn(f'/admin/plugins/{pid}', csrf, 'show', 'Вернуть')}</td></tr>")
+        rows.append(f"<tr><td><div class='pl'>{icon_html(m)}<div><b><a href='/p/{escape(pid)}'>"
+                    f"{escape(m.get('name', pid))}</a> {badge}</b><p class='muted'>{escape(pid)} · "
+                    f"{escape(m.get('author', ''))}</p></div></div></td><td>{escape(ver)}</td>"
+                    f"<td>{installs}</td><td>{form_btn(f'/admin/plugins/{pid}', csrf, 'hide', 'Снять', 'ghost sm')}"
+                    "</td></tr>")
+    hidden = [f"<tr><td>{escape(pid)} <span class='tag bad'>снят</span></td><td></td><td></td>"
+              f"<td>{form_btn(f'/admin/plugins/{pid}', csrf, 'show', 'Вернуть', 'sm')}</td></tr>"
+              for (pid,) in con.execute("SELECT id FROM plugins WHERE hidden=1 ORDER BY id")]
     return f"""<h1>Плагины</h1>{flash or ""}
-{upload_form(csrf, True)}
-<h2>В магазине</h2>
-<div class="box"><table><tr><th>Плагин</th><th>Версия</th><th>Установок</th><th></th></tr>
-{"".join(rows)}</table></div>
-<script nonce="__NONCE__">{UPLOAD_JS}</script>"""
+<div class="tools"><a class="btn" href="/admin/upload">Загрузить плагин</a></div>
+<div class="card"><table><tr><th>Плагин</th><th>Версия</th><th>Установок</th><th></th></tr>
+{"".join(rows) or '<tr><td class="muted">В магазине пусто.</td></tr>'}</table></div>
+{f'<h2>Сняты из магазина</h2><div class="card"><table>{"".join(hidden)}</table></div>' if hidden else ""}"""
 
 
 # ---------- HTTP ----------
@@ -1019,9 +1233,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def html(self, code, title, body, who=None, csrf="", headers=()):
+    def html(self, code, title, body, who=None, csrf="", tab="", con=None, headers=()):
         nonce = secrets.token_urlsafe(16)
-        doc = page(title, body.replace("__NONCE__", nonce), nonce, who, csrf).encode("utf-8")
+        name, counts = header_info(con, who) if con is not None else ("", {})
+        doc = page(title, body.replace("__NONCE__", nonce), nonce, who, csrf, tab, name,
+                   counts).encode("utf-8")
         csp = (f"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; "
                "img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; "
                "frame-ancestors 'none'")
@@ -1112,38 +1328,57 @@ class Handler(BaseHTTPRequestHandler):
             return
         con = db()
         try:
-            self.get_page(con, path)
+            self.get_page(con, path, parse_qs(url.query))
         finally:
             con.close()
 
-    def get_page(self, con, path):
+    def get_page(self, con, path, query):
         who, csrf = self.who(con)
         admin = who == "admin"
+        show = lambda title, body, tab="", code=200: self.html(  # noqa: E731
+            code, title, body, who, csrf, tab, con)
         if path == "/":
-            return self.html(200, "Плагины", home_body(con), who, csrf)
+            return show("Каталог", catalog_body(con), "catalog")
+        m = re.fullmatch(r"/p/([a-z0-9-]{2,40})", path)
+        if m:
+            body = plugin_body(con, m[1])
+            if body is None:
+                return show("Нет такого плагина",
+                            '<div class="card empty">Такого плагина в магазине нет.</div>', "catalog", 404)
+            return show("Плагин", body, "catalog")
+        if path == "/developers":
+            return show("Разработчикам", developers_body(who), "developers")
         if path == "/apply":
-            return self.html(200, "Стать разработчиком", apply_body(), who, csrf)
+            return show("Подать заявку", apply_body(), "apply")
         if path == "/login":
             if who:
                 return self.redirect("/admin" if admin else "/dev")
-            return self.html(200, "Вход", login_body(), who, csrf)
+            return show("Вход", login_body())
         m = re.fullmatch(r"/status/([A-Za-z0-9_-]{20,64})", path)
         if m:
             body = status_body(con, m[1])
             if body is None:
-                return self.html(404, "Нет такой заявки", "<h1>Нет такой заявки</h1>", who, csrf)
-            return self.html(200, "Заявка", body, who, csrf)
-        if path == "/dev":
+                return show("Нет такой заявки", '<div class="card empty">Нет такой заявки.</div>', "", 404)
+            return show("Заявка", body)
+        if path in ("/dev", "/dev/upload"):
             if not who or admin:
                 return self.redirect("/admin" if admin else "/login")
-            return self.html(200, "Мои плагины", dev_body(con, int(who[4:]), csrf), who, csrf)
-        pages = {"/admin": admin_body, "/admin/apps": apps_body, "/admin/devs": devs_body,
-                 "/admin/review": review_body, "/admin/plugins": plugins_body}
+            if path == "/dev":
+                return show("Мои плагины", dev_body(con, int(who[4:]), csrf), "mine")
+            return show("Загрузить плагин", upload_body(csrf, False), "upload")
+        pages = {"/admin": ("Обзор", "overview", lambda: admin_body(con, csrf)),
+                 "/admin/apps": ("Заявки", "apps",
+                                 lambda: apps_body(con, csrf, which=(query.get("s") or ["pending"])[0])),
+                 "/admin/review": ("Проверка", "review", lambda: review_body(con, csrf)),
+                 "/admin/plugins": ("Плагины", "plugins", lambda: plugins_body(con, csrf)),
+                 "/admin/devs": ("Разработчики", "devs", lambda: devs_body(con, csrf)),
+                 "/admin/upload": ("Загрузить плагин", "upload", lambda: upload_body(csrf, True))}
         if path in pages:
             if not admin:
                 return self.redirect("/login")
-            return self.html(200, "Админка", pages[path](con, csrf), who, csrf)
-        self.html(404, "Не найдено", "<h1>Такой страницы нет</h1>", who, csrf)
+            title, tab, render = pages[path]
+            return show(title, render(), tab)
+        show("Не найдено", '<div class="card empty">Такой страницы нет.</div>', "", 404)
 
     do_HEAD = do_GET
 
@@ -1169,7 +1404,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         token, error = apply(con, form)
         if error:
-            return self.html(400, "Стать разработчиком", apply_body(error, form))
+            return self.html(400, "Подать заявку", apply_body(error, form), tab="apply", con=con)
         self.redirect(f"/status/{token}")
 
     def post_login(self, con):
@@ -1180,7 +1415,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         who = login(con, form.get("key", ""))
         if not who:
-            return self.html(403, "Вход", login_body("Неверный ключ или он отозван"))
+            return self.html(403, "Вход", login_body("Неверный ключ или он отозван"), con=con)
         token = new_session(con, who)
         flags = "HttpOnly; SameSite=Strict; Path=/" + ("" if INSECURE else "; Secure")
         self.redirect("/admin" if who == "admin" else "/dev",
@@ -1235,7 +1470,7 @@ class Handler(BaseHTTPRequestHandler):
             if error:
                 body = {"apps": apps_body, "devs": devs_body, "review": review_body}[kind](
                     con, csrf, f'<p class="err">{escape(error)}</p>')
-                return self.html(400, "Админка", body, who, csrf)
+                return self.html(400, "Админка", body, who, csrf, kind, con)
             # Одобрили заявку — ключ на странице разработчиков, чтобы его можно было передать.
             return self.redirect("/admin/devs" if kind == "apps" and form.get("do") == "approve" else back)
         if p and form.get("do") in ("hide", "show"):

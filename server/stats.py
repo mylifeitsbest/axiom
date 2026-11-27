@@ -47,7 +47,9 @@ KEY = os.environ.get("AXIOM_STATS_KEY", "")
 # Админка магазина плагинов — отдельный сайт со своим входом; сюда — только ссылка на неё.
 STORE_ADMIN_URL = os.environ.get("AXIOM_STATS_STORE_URL", "https://plugins.179-254-172-240.sslip.io/admin")
 
-VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
+# Версия: выпуск 0.6.3 или бета 0.6.3-beta.190 (беты шлют свой номер с 0.6.3-beta.N,
+# до того отмечались номером выпуска).
+VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}(-beta\.[1-9]\d{0,8})?")
 OSES = {"windows", "linux", "macos", "other"}
 MAX_BODY = 512
 
@@ -674,7 +676,13 @@ def client_ip(peer, forwarded):
 # ---------- панель ----------
 
 def ver_key(v):
-    return tuple(int(x) for x in v.split("."))
+    """Порядок версий: 0.6.3 < 0.6.3-beta.5 < 0.6.3-beta.9 < 0.6.4."""
+    main, _, beta = v.partition("-beta.")
+    return (*(int(x) for x in main.split(".")), 1 if beta else 0, int(beta or 0))
+
+
+def is_beta(v):
+    return "-beta." in v
 
 
 # 0.7.0 вышла по ошибке и через час была отозвана, те же изменения вышли как 0.6.2.
@@ -764,7 +772,8 @@ def dashboard(nonce=""):
         was_today, was_upd = vers.get(shown_version(v), (0, 0))
         vers[shown_version(v)] = (was_today + (today or 0), was_upd + (upd or 0))
     # Старые версии, на которых сегодня никого, только загромождали бы таблицу.
-    vers = {v: n for v, n in vers.items() if n[0] or n[1]}
+    # Беты выходят по нескольку в день — их показываем, только пока на них кто-то есть.
+    vers = {v: n for v, n in vers.items() if n[0] or (n[1] and not is_beta(v))}
     s["versions"] = sorted(vers.items(), key=lambda kv: ver_key(kv[0]), reverse=True)
     s["oses"] = con.execute(
         """SELECT os, SUM(dau) a FROM hits WHERE day=? GROUP BY os
@@ -1400,6 +1409,9 @@ def render(s, nonce=""):
       старой версии, тоже попадёт в счёт.</li>
     <li>«Людей сегодня» по версиям в сумме может быть больше, чем «Сегодня»: тот, кто обновился
       днём, был сегодня на двух версиях.</li>
+    <li>Бета-версии отмечаются своим номером (0.6.3-beta.190), переход на следующую бету —
+      обновление. В таблице бета видна, пока на ней сегодня кто-то есть. Беты до этого
+      отмечались номером выпуска, на котором стоят (0.6.3), и считались вместе с ним.</li>
     <li>«Переехали» — сколько людей перенесли в Axiom закладки или историю из другого браузера.
       Каждый считается один раз, повторный импорт не добавляет. Какой это был браузер и что именно
       перенесли, не отправляется.</li>

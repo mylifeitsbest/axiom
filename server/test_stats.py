@@ -678,6 +678,29 @@ class Online(unittest.TestCase):
         self.assertNotIn("0.7.0", page)
         self.assertIn("<tr><td>0.6.2</td><td>3</td><td>2</td></tr>", page)
 
+    def test_beta_pings_carry_their_number(self):
+        stats.utcnow = lambda: self.NOW
+        for v in ("0.6.3-beta.190", "0.6.3-beta.0", "0.6.3-rc.1", "0.6.3-beta.", "0.6.3-beta.1\n",
+                  "0.6.3-beta.1234567890"):
+            self.assertEqual(stats.record({"v": v, "os": "windows", "d": True}),
+                             v == "0.6.3-beta.190", v)
+        self.assertEqual(sorted(["0.6.4", "0.6.3-beta.9", "0.6.3", "0.6.3-beta.10"], key=stats.ver_key),
+                         ["0.6.3", "0.6.3-beta.9", "0.6.3-beta.10", "0.6.4"])
+
+    def test_old_betas_leave_the_version_table(self):
+        yesterday = self.NOW - stats.timedelta(days=1)
+        stats.utcnow = lambda: yesterday
+        for v in ("0.6.3-beta.180", "0.6.3"):
+            self.assertTrue(stats.record({"v": v, "os": "windows", "d": True, "vd": True, "up": True}))
+        stats.utcnow = lambda: self.NOW
+        self.assertTrue(stats.record({"v": "0.6.3-beta.181", "os": "linux", "d": True, "vd": True,
+                                      "up": True}))
+        page = stats.dashboard()
+        self.assertNotIn("<tr><td>0.6.3-beta.180</td>", page, "вчерашняя бета, сегодня на ней никого")
+        self.assertIn("<tr><td>0.6.3</td><td>0</td><td>1</td></tr>", page, "выпуск остаётся")
+        self.assertIn("<tr><td>0.6.3-beta.181</td><td>1</td><td>1</td></tr>", page)
+        self.assertLess(page.index("0.6.3-beta.181</td>"), page.index("<td>0.6.3</td>"))
+
     def test_migration_copies_pings_to_online(self):
         con = stats.db()
         with con:

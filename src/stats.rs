@@ -103,7 +103,11 @@ static ENABLED: AtomicU8 = AtomicU8::new(0);
 /// это тоже обновление, хотя прошлой отметки нет.
 const VER_BEFORE_STATS: &str = "old";
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Версия, которой отмечаемся: `0.6.3` или у беты `0.6.3-beta.190`. Бета со своим
+/// номером видна на панели отдельно, а переход на следующую бету — обновление.
+fn version() -> &'static str {
+    crate::update::current_string()
+}
 
 /// Что сообщить серверу при этой отметке.
 #[derive(Debug, PartialEq)]
@@ -135,13 +139,19 @@ fn online(at: u64, now: u64) -> bool {
     at == 0 || now < at || now - at >= EVERY.as_secs()
 }
 
-fn flags(prev: &State, now: u64, day: &str, week: &str, month: &str) -> Flags {
-    let up = match prev.ver.as_str() {
+/// Первая ли это отметка после обновления до `current`. Бета на бету (и бета,
+/// отмечавшаяся до 0.6.3-beta.N номером выпуска, на свой номер) — тоже обновление.
+fn is_update(prev: &State, current: &str) -> bool {
+    match prev.ver.as_str() {
         // Старый формат файла: если в нём уже есть отметка — его писала
         // предыдущая версия, то есть сейчас первая отметка после обновления.
         "" => !prev.day.is_empty(),
-        v => v != VERSION,
-    };
+        v => v != current,
+    }
+}
+
+fn flags(prev: &State, now: u64, day: &str, week: &str, month: &str) -> Flags {
+    let up = is_update(prev, version());
     let d = prev.day != day;
     Flags {
         new: prev.new,
@@ -296,7 +306,7 @@ fn tick(file: &Path, now: u64, send: impl FnOnce(&str) -> Result<(), ()>) -> u64
 
     let body = format!(
         "{{\"v\":\"{}\",\"os\":\"{}\",\"new\":{},\"d\":{},\"w\":{},\"m\":{},\"up\":{},\"vd\":{},\"im\":{},\"imo\":{},\"o\":{}}}",
-        VERSION,
+        version(),
         os_name(),
         f.new,
         f.d,
@@ -320,7 +330,7 @@ fn tick(file: &Path, now: u64, send: impl FnOnce(&str) -> Result<(), ()>) -> u64
             week,
             month,
             new: false,
-            ver: VERSION.into(),
+            ver: version().into(),
             import: if f.im || f.imo {
                 Import::Sent
             } else {
@@ -518,7 +528,7 @@ mod tests {
             "[]",
         );
         let file = dir.join("stats.json");
-        let mut s = state("2026-11-25", VERSION);
+        let mut s = state("2026-11-25", version());
         s.scanned = false;
         crate::storage::write_json(&file, &s).unwrap();
         scan(&file);
@@ -553,7 +563,7 @@ mod tests {
     #[test]
     fn same_version_later_today_sends_nothing_new() {
         let f = flags(
-            &state("2026-11-24", VERSION),
+            &state("2026-11-24", version()),
             T,
             "2026-11-24",
             "w1",
@@ -577,7 +587,7 @@ mod tests {
 
     #[test]
     fn import_is_sent_once() {
-        let mut prev = state("2026-11-24", VERSION);
+        let mut prev = state("2026-11-24", version());
         prev.import = Import::Pending;
         assert!(flags(&prev, T, "2026-11-24", "w1", "2026-11").im);
         prev.import = Import::Sent;
@@ -607,6 +617,18 @@ mod tests {
         );
         assert!(f.up && f.vd);
         assert!(!f.d, "человек уже отметился сегодня на старой версии");
+    }
+
+    #[test]
+    fn beta_number_is_its_own_version() {
+        let on = |ver: &str| state("2026-11-27", ver);
+        assert!(
+            is_update(&on("0.6.3"), "0.6.3-beta.190"),
+            "бета шла номером выпуска"
+        );
+        assert!(is_update(&on("0.6.3-beta.190"), "0.6.3-beta.191"));
+        assert!(is_update(&on("0.6.3-beta.191"), "0.6.4"));
+        assert!(!is_update(&on("0.6.3-beta.191"), "0.6.3-beta.191"));
     }
 
     #[test]
@@ -660,6 +682,9 @@ mod tests {
 
         let sent = sent.into_inner();
         assert_eq!(sent.len(), 3);
+        // Бета-сборка (AXIOM_BETA_BUILD=N) отмечается своим номером.
+        let v = format!(r#"{{"v":"{}","#, crate::update::current_string());
+        assert!(sent[0].starts_with(&v), "{}", sent[0]);
         assert!(sent[0].ends_with(r#""o":true}"#), "{}", sent[0]);
         assert!(sent[1].ends_with(r#""o":false}"#), "{}", sent[1]);
         assert!(sent[2].ends_with(r#""o":true}"#), "{}", sent[2]);

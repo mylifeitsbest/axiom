@@ -15,6 +15,11 @@ Environment=AXIOM_STORE_PORT=8788
 Environment=AXIOM_STORE_OFFICIAL=/opt/axiom-store/official
 ExecStart=/usr/bin/python3 /opt/axiom-store/store.py
 Restart=on-failure
+# Сервер делят другие службы: магазин не берёт больше 96 МБ, а если памяти не хватит
+# всем, ядро первым убьёт его (systemd поднимет снова), а не чужие службы.
+MemoryHigh=80M
+MemoryMax=96M
+OOMScoreAdjust=800
 RestartSec=3
 NoNewPrivileges=yes
 ProtectSystem=strict

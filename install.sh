@@ -285,6 +285,7 @@ fi
 
 say "Готово. Axiom есть в меню приложений, запуск из терминала: axiom-browser"
 say "$UPDATES"
+note "Что Axiom отправляет сам и как это выключить: https://github.com/mylifeitsbest/axiom/blob/main/PRIVACY.md"
 }
 
 main "$@"

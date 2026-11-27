@@ -51,6 +51,7 @@ try {
         throw 'Не удалось заменить axiom.exe. Закройте Axiom и запустите установку ещё раз.'
     }
     Write-Host "Готово: $exe"
+    Write-Host 'Что Axiom отправляет сам и как это выключить: https://github.com/mylifeitsbest/axiom/blob/main/PRIVACY.md'
     Start-Process $exe
 }
 finally {

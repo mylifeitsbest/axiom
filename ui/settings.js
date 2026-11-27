@@ -48,6 +48,8 @@ const BUG_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/avif,video/*
 
 // ---------- сайты, которые не усыпляем (как в src/tabs/sleep.rs) ----------
 const MAX_SLEEP_SITES = 200;
+// Что браузер отправляет сам и как это выключить (её же показывает приветствие).
+const PRIVACY_URL = 'https://github.com/mylifeitsbest/axiom/blob/main/PRIVACY.md';
 // Сайт для списка «не усыплять» (как sleep::site в Rust): https://www.YouTube.com/watch → youtube.com.
 // Без схемы — тоже адрес, «*.» в начале — то же, что без него; одно слово (кроме localhost) — не сайт.
 function sleepSite(v) {
@@ -314,6 +316,8 @@ function createPanels(ax) {
           ${row('Бета-версии', 'Исправления и новинки сразу, не дожидаясь выхода версии. Возможны ошибки. Выключите — со следующей версии вернётесь на обычные', toggle('data-bkey', 'beta'), 'id="betaRow" hidden data-kw="бета тест beta ранние сборки"')}
         </div>
         <div class="card">
+          ${row('Статистика использования', 'Раз в час Axiom сообщает разработчику номер версии, систему и запускали ли его сегодня, на этой неделе, в этом месяце. Без адресов, истории и номера браузера — по этим данным не узнать, кто вы', toggle('data-bkey', 'usage_stats'), 'data-kw="статистика телеметрия пинг счётчик приватность конфиденциальность данные"')}
+          ${row('Что отправляет Axiom', 'Всё, что браузер отправляет сам, куда и как это выключить', '<button class="btn" data-act="privacy">Политика конфиденциальности</button>', 'data-kw="приватность конфиденциальность политика данные privacy телеметрия"')}
           ${row('Отправлять отчёты об ошибках', 'Автоматически отправлять разработчику отчёт, если Axiom вылетит. Без адресов страниц и личных данных.', toggle('data-bkey', 'crash_reports'), 'data-kw="отчёт ошибка вылет краш crash баг падение"')}
           <div class="srow" data-kw="баг ошибка отчёт проблема жалоба не работает ответ разработчика сообщения скриншот снимок экрана фото видео файл"><span class="sl"><b>Сообщить о проблеме</b><small>Что-то сломалось или ведёт себя странно — расскажите, это уйдёт разработчику</small></span><span class="sc"><button class="btn" data-act="bug-open" id="bugOpen">Сообщить о проблеме</button></span></div>
           <div class="bug-box" id="bugBox" hidden>
@@ -738,6 +742,7 @@ function createPanels(ax) {
         else ax.send({ cmd: 'update_check' });
         break;
       case 'history': ax.openHistory(); break;
+      case 'privacy': ax.send({ cmd: 'new_tab', input: PRIVACY_URL }); close(); break;
       case 'bug-open': toggleBug(); break;
       case 'bug-cancel': toggleBug(false); break;
       case 'bug-send': sendBug(); break;
@@ -1185,7 +1190,7 @@ function createPanels(ax) {
   const isOpen = () => sheet.classList.contains('on') && !leaving;
 
   // ---------- первый запуск ----------
-  const STEPS = ['hello', 'look', 'data', 'ai', 'system', 'done'];
+  const STEPS = ['hello', 'look', 'data', 'ai', 'system', 'privacy', 'done'];
   let step = 0;
   let onbBuilt = false;
 
@@ -1233,6 +1238,17 @@ function createPanels(ax) {
             <div class="srow" id="onbInstRow"><span class="sl"><b>Установить в систему</b><small id="onbInst"></small></span><span class="sc"><button class="btn primary" data-act="install" id="onbInstBtn">Установить</button></span></div>
             <div class="srow"><span class="sl"><b>Браузер по умолчанию</b><small id="onbDef"></small></span><span class="sc"><button class="btn" data-act="default" id="onbDefBtn">Выбрать</button></span></div>
           </div>
+        </section>
+        <section class="step" data-step="privacy">
+          <div class="step-ic">${icon('shield')}</div>
+          <h2>Что Axiom отправляет</h2>
+          <p class="lead">Ваши страницы, история и закладки остаются на компьютере. Сам Axiom отправляет только это — и всё можно выключить.</p>
+          <div class="card onb-cardw">
+            ${row('Статистика использования', 'Раз в час: версия, система и запускали ли Axiom сегодня. Без адресов и номера браузера', toggle('data-bkey', 'usage_stats'))}
+            ${row('Отчёты об ошибках', 'Если Axiom вылетит: что сломалось и конец журнала, без адресов страниц', toggle('data-bkey', 'crash_reports'))}
+            ${row('Проверять обновления', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии', toggle('data-bkey', 'check_updates'))}
+          </div>
+          <p class="onb-small">Подробно — в Настройки → Система → «Политика конфиденциальности»</p>
         </section>
         <section class="step" data-step="done">
           <div class="done-mark">${icon('check')}</div>

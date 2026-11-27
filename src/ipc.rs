@@ -142,6 +142,9 @@ pub struct SettingsIn {
     /// Отправлять отчёты об ошибках. Нет поля — не менять.
     #[serde(default)]
     pub crash_reports: Option<bool>,
+    /// Статистика использования. Нет поля — не менять.
+    #[serde(default)]
+    pub usage_stats: Option<bool>,
     /// Новый разговор в панели ИИ при каждом открытии. Нет поля или null — не менять.
     #[serde(default)]
     pub ai_new_chat: Option<bool>,
@@ -1395,6 +1398,31 @@ mod tests {
             s.apply(settings);
         }
         assert!(!s.crash_reports);
+    }
+
+    #[test]
+    fn usage_stats_setting_is_optional() {
+        let parse_in = |extra: &str| match parse(&format!(
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+        )) {
+            Ok(UiCmd::SaveSettings { settings }) => Some(settings),
+            _ => None,
+        };
+        let mut s = crate::settings::Settings::default();
+        assert!(s.usage_stats, "по умолчанию включено");
+        if let Some(settings) = parse_in(r#","usage_stats":false"#) {
+            s.apply(settings);
+        }
+        assert!(!s.usage_stats);
+        // Интерфейс без переключателя поле не шлёт — выключенное так и остаётся.
+        if let Some(settings) = parse_in("") {
+            s.apply(settings);
+        }
+        assert!(!s.usage_stats);
+        if let Some(settings) = parse_in(r#","usage_stats":true"#) {
+            s.apply(settings);
+        }
+        assert!(s.usage_stats);
     }
 
     #[test]

@@ -129,6 +129,7 @@ impl App {
     ) -> Result<Self> {
         let mut settings = Settings::load(&paths);
         crate::reports::set_auto(settings.crash_reports);
+        crate::stats::set_enabled(settings.usage_stats);
         let events = event_loop.create_proxy();
         crate::reports::answers::listen(&paths.root, events.clone());
         let mut updater = Updater::new();
@@ -1364,6 +1365,7 @@ impl App {
         let old_sites = self.settings.no_sleep_sites.clone();
         self.settings.apply(incoming);
         crate::reports::set_auto(self.settings.crash_reports);
+        crate::stats::set_enabled(self.settings.usage_stats);
         let beta = self
             .settings
             .beta_channel(crate::update::Version::current().is_beta());

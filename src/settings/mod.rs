@@ -96,6 +96,8 @@ pub struct Settings {
     pub strip_tracking: bool,
     /// Отправлять разработчику отчёт, если Axiom вылетит (см. `reports`).
     pub crash_reports: bool,
+    /// Раз в час отмечаться на сервере статистики (см. `stats`, PRIVACY.md).
+    pub usage_stats: bool,
     /// Каким браузером вкладки представляются сайтам.
     #[serde(deserialize_with = "identity::lenient")]
     pub user_agent: Agent,
@@ -129,6 +131,7 @@ impl Default for Settings {
             translate: crate::translate::Prefs::default(),
             strip_tracking: true,
             crash_reports: true,
+            usage_stats: true,
             user_agent: Agent::Default,
             user_agent_custom: String::new(),
             referer: Referer::Default,
@@ -171,6 +174,9 @@ impl Settings {
         }
         if let Some(on) = incoming.crash_reports {
             self.crash_reports = on;
+        }
+        if let Some(on) = incoming.usage_stats {
+            self.usage_stats = on;
         }
         if let Some(on) = incoming.ai_new_chat {
             self.ai_new_chat = on;

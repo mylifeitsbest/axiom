@@ -152,6 +152,7 @@ function createPanels(ax) {
     ['Ctrl Shift R', 'Обновить без кэша'], ['Ctrl + −', 'Масштаб'], ['Ctrl 0', 'Обычный масштаб'], ['Ctrl M', 'Выключить звук вкладки'],
     ['Колесо', 'Громкость вкладки — над её значком звука'],
     ['Ctrl P', 'Печать'], ['Ctrl U', 'Исходный код страницы'], ['F12', 'Инструменты разработчика'],
+    ['Shift Esc', 'Диспетчер задач: сколько памяти у каждой вкладки'],
   ];
 
   const sheet = $('#sheet');
@@ -286,6 +287,9 @@ function createPanels(ax) {
         <div class="note">${icon('globe')}<span>WARP без клиента Cloudflare: запустите <code>usque socks -b 127.0.0.1 -p 18080</code> и впишите сюда <code>socks5://127.0.0.1:18080</code>. Подойдёт и любой свой SOCKS5 или HTTP-прокси без логина и пароля.</span></div>`,
       plugins: ax.plugins.sectionHtml(),
       memory: `
+        <div class="card">
+          ${row('Диспетчер задач', 'Сколько оперативной памяти и процессора занимает каждая вкладка и сам браузер. Там же — усыпить тяжёлую вкладку. Сколько занимает вкладка, видно и при наведении на неё', '<button class="btn" data-act="tasks">Открыть · Shift+Esc</button>', 'data-kw="диспетчер задач память оперативка процессор нагрузка мегабайты тормозит жрёт shift esc"')}
+        </div>
         <div class="card">
           ${row('Фоновых вкладок в памяти', '<span id="liveOut"></span>', range(`min="1" max="${LIVE_MAX + 1}" step="1" data-bkey="live_tabs"`), 'data-kw="живые вкладки лимит без ограничения сколько"')}
           ${row('Усыплять вкладки', '<span id="sleepOut"></span>', range('min="0" max="120" step="5" data-bkey="sleep_minutes"'), 'data-kw="сон спящие таймер минуты"')}
@@ -754,6 +758,7 @@ function createPanels(ax) {
         else ax.send({ cmd: 'update_check' });
         break;
       case 'history': ax.openHistory(); break;
+      case 'tasks': ax.openTasks(); break;
       case 'privacy': ax.send({ cmd: 'new_tab', input: PRIVACY_URL }); close(); break;
       case 'bug-open': toggleBug(); break;
       case 'bug-cancel': toggleBug(false); break;

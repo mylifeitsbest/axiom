@@ -273,6 +273,17 @@ pub enum UiCmd {
     HistoryCount {
         since: u64,
     },
+    /// Shift+Esc, пункт меню: открыть диспетчер задач (или перейти на него).
+    OpenTasks,
+    /// Свежий замер памяти и процессора: диспетчер задач на экране (раз в секунду)
+    /// или карточка вкладки под курсором.
+    Tasks,
+    /// «Усыпить» у вкладки в диспетчере: выгрузить её страницу из памяти.
+    TasksSleep {
+        id: u64,
+    },
+    /// «Усыпить фоновые»: все вкладки, которые можно усыпить.
+    TasksSleepAll,
     Suggest {
         q: String,
     },
@@ -935,6 +946,8 @@ pub enum ToUi<'a> {
         since: u64,
         count: usize,
     },
+    /// Замер для диспетчера задач: ответ на `tasks`.
+    Tasks(crate::taskman::View),
     /// Плагины для «Настройки → Плагины» и их кнопки на панели.
     Plugins(crate::plugins::List<'a>),
     /// Магазин плагинов.
@@ -1040,6 +1053,55 @@ mod tests {
         ));
         let out = serde_json::to_string(&ToUi::SettingsLeave).unwrap_or_default();
         assert_eq!(out, r#"{"type":"settings_leave"}"#);
+    }
+
+    #[test]
+    fn parses_task_manager_commands() {
+        assert!(matches!(
+            parse(r#"{"cmd":"open_tasks"}"#),
+            Ok(UiCmd::OpenTasks)
+        ));
+        assert!(matches!(parse(r#"{"cmd":"tasks"}"#), Ok(UiCmd::Tasks)));
+        assert!(matches!(
+            parse(r#"{"cmd":"tasks_sleep","id":4}"#),
+            Ok(UiCmd::TasksSleep { id: 4 })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"tasks_sleep_all"}"#),
+            Ok(UiCmd::TasksSleepAll)
+        ));
+        assert!(parse(r#"{"cmd":"tasks_sleep"}"#).is_err());
+        assert!(parse(r#"{"cmd":"tasks_sleep","id":-1}"#).is_err());
+    }
+
+    #[test]
+    fn task_manager_view_serializes() {
+        use crate::taskman::{Part, PartUse, TabUse, Usage, View};
+        let usage = Usage {
+            memory: 5 << 20,
+            cpu: 1.5,
+            procs: 2,
+        };
+        let view = View {
+            per_tab: true,
+            tabs: vec![TabUse {
+                id: 3,
+                usage,
+                shared: false,
+            }],
+            parts: vec![PartUse {
+                part: Part::Gpu,
+                usage,
+            }],
+            total: usage,
+            cpu_ready: true,
+            ram_total: 16 << 30,
+            ram_free: 8 << 30,
+            cpus: 8,
+        };
+        let json = serde_json::to_string(&ToUi::Tasks(view)).unwrap_or_default();
+        assert!(json.starts_with(r#"{"type":"tasks","per_tab":true,"tabs":[{"id":3,"memory":5242880,"cpu":1.5,"procs":2,"shared":false}],"parts":[{"part":"gpu","memory""#), "{json}");
+        assert!(json.contains(r#""cpus":8"#));
     }
 
     #[test]

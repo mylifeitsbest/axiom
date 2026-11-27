@@ -40,6 +40,7 @@ function createTabMenu(ax) {
     return [
       { a: 'bar-move', ic: down ? 'up' : 'down', t: down ? 'Перенести панель наверх' : 'Перенести панель вниз' },
       { a: 'bar-layout', ic: 'layout', t: 'Раскладка…' },
+      { a: 'bar-tasks', ic: 'cpu', t: 'Диспетчер задач', k: 'Shift+Esc' },
       null,
       { a: 'restore', ic: 'undo', t: 'Открыть закрытую вкладку', k: 'Ctrl+Shift+T', off: !ax.canRestore() },
     ];

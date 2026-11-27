@@ -36,6 +36,9 @@ pub const SETTINGS_TITLE: &str = "Настройки";
 /// Внутренний адрес вкладки истории: так же без webview, страницу рисует интерфейс.
 pub const HISTORY: &str = "axiom://history";
 pub const HISTORY_TITLE: &str = "История";
+/// Диспетчер задач (Shift+Esc): так же без webview, страницу рисует интерфейс.
+pub const TASKS: &str = "axiom://tasks";
+pub const TASKS_TITLE: &str = "Диспетчер задач";
 
 pub struct Tab {
     pub id: TabId,
@@ -89,9 +92,14 @@ impl Tab {
         self.url == HISTORY
     }
 
-    /// Служебная вкладка без страницы и webview: новая вкладка, настройки или история.
+    pub fn is_tasks(&self) -> bool {
+        self.url == TASKS
+    }
+
+    /// Служебная вкладка без страницы и webview: новая вкладка, настройки, история
+    /// или диспетчер задач.
     pub fn is_internal(&self) -> bool {
-        self.is_newtab() || self.is_settings() || self.is_history()
+        self.is_newtab() || self.is_settings() || self.is_history() || self.is_tasks()
     }
 
     pub fn is_sleeping(&self) -> bool {
@@ -183,6 +191,11 @@ impl TabStore {
     /// Вкладка истории, если она открыта (она тоже всегда одна).
     pub fn history(&self) -> Option<TabId> {
         self.tabs.iter().find(|t| t.is_history()).map(|t| t.id)
+    }
+
+    /// Диспетчер задач, если он открыт (он тоже всегда один).
+    pub fn tasks(&self) -> Option<TabId> {
+        self.tabs.iter().find(|t| t.is_tasks()).map(|t| t.id)
     }
 
     /// Добавляет вкладку без webview. `at = None` — после активной.
@@ -373,6 +386,19 @@ mod tests {
         }
         assert_eq!(s.history(), None);
         assert!(s.get(id).is_some_and(|t| !t.is_internal()));
+    }
+
+    #[test]
+    fn tasks_tab_is_internal() {
+        let mut s = store(1);
+        assert_eq!(s.tasks(), None);
+        let id = s.add(TASKS.into(), TASKS_TITLE.into(), false, None);
+        assert_eq!(s.tasks(), Some(id));
+        assert_eq!(s.history(), None);
+        assert!(
+            s.get(id)
+                .is_some_and(|t| t.is_internal() && !t.is_sleeping())
+        );
     }
 
     #[test]

@@ -11,6 +11,11 @@ pub fn is_low() -> bool {
     physical().is_some_and(|(available, total)| available < threshold(total))
 }
 
+/// Оперативная память компьютера: (доступно, всего) в байтах.
+pub fn ram() -> Option<(u64, u64)> {
+    physical()
+}
+
 fn threshold(total: u64) -> u64 {
     (total * 15 / 100).clamp(GB, 3 * GB)
 }

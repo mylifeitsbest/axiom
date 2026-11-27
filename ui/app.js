@@ -13,8 +13,11 @@
   // Вкладка истории: тоже без webview, страницу рисует ui/history.js.
   const HISTORY = 'axiom://history';
   const isHistory = (t) => !!t && t.url === HISTORY;
+  // Диспетчер задач (Shift+Esc): тоже без webview, страницу рисует ui/tasks.js.
+  const TASKS = 'axiom://tasks';
+  const isTasks = (t) => !!t && t.url === TASKS;
   // Во вкладке открыта страница сайта, а не служебный экран Axiom.
-  const isPage = (t) => !!t && t.url !== NEWTAB && t.url !== SETTINGS && t.url !== HISTORY;
+  const isPage = (t) => !!t && t.url !== NEWTAB && t.url !== SETTINGS && t.url !== HISTORY && t.url !== TASKS;
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const darkScheme = matchMedia('(prefers-color-scheme: dark)');
 
@@ -127,6 +130,7 @@
     bar(what) {
       if (what === 'move') setA('barPos', barDown() ? 'top' : 'bottom');
       else if (what === 'layout') openSettings('layout');
+      else if (what === 'tasks') send({ cmd: 'open_tasks' });
     },
   });
   // ---------- ссылки на приложения (ui/applink.js) ----------
@@ -146,6 +150,7 @@
     const u = parseUrl(url);
     if (url === SETTINGS) return `<span class="fav set">${icon('sliders')}</span>`;
     if (url === HISTORY) return `<span class="fav set">${icon('clock')}</span>`;
+    if (url === TASKS) return `<span class="fav set">${icon('cpu')}</span>`;
     if (!u || url === NEWTAB) return `<span class="fav" style="--f:var(--s3)">${icon('spark')}</span>`;
     const host = u.hostname.replace(/^www\./, '');
     let h = 0;
@@ -445,7 +450,7 @@
         el.className = 'tab in';
         el.dataset.id = t.id;
         el.setAttribute('role', 'tab');
-        el.innerHTML = `<span class="favslot"></span><span class="tt"></span><button class="ta" hidden></button><button class="tx" title="Закрыть (Ctrl+W)">${icon('x')}</button>`;
+        el.innerHTML = `<span class="favslot"></span><span class="tt"></span><span class="tmem" aria-hidden="true"></span><button class="ta" hidden></button><button class="tx" title="Закрыть (Ctrl+W)">${icon('x')}</button>`;
         el.addEventListener('animationend', () => el.classList.remove('in'), { once: true });
         tabEls.set(t.id, el);
       }
@@ -635,6 +640,9 @@
   });
   // ---------- вкладка истории (ui/history.js) ----------
   const hist = createHistory({ esc, send, ms, speed, toast: (t) => toast(t), favHtml: (u) => favHtml(u) });
+  // ---------- диспетчер задач (ui/tasks.js) и память вкладки под курсором ----------
+  const tk = createTasks({ esc, send, ms, speed, favHtml: (u) => favHtml(u), tabs: () => S.tabs, openSettings: (s) => openSettings(s) });
+  const tmem = createTabMem({ send, tabs: () => S.tabs, last: () => tk.last() });
   function renderContent() {
     const t = activeTab();
     const nt = !t || t.url === NEWTAB;
@@ -648,6 +656,9 @@
     c.classList.toggle('hs', hs);
     hist.render(hs, t?.id);
     if (hs && wantHistory) { hist.focus(wantHistory); wantHistory = null; }
+    const ks = isTasks(t);
+    c.classList.toggle('tk', ks);
+    tk.render(ks);
     if (S.active !== prevActive) {
       prevActive = S.active;
       if (nt && mode === 'url' && !overlayReasons.has('onb')) requestAnimationFrame(() => newtab.focus());
@@ -1172,6 +1183,7 @@
     // AltGr на Windows приходит как Ctrl+Alt: это ввод символа (# { [ @ ł), а не сочетание.
     const mod = (e.ctrlKey || e.metaKey) && !e.altKey && !e.getModifierState('AltGraph');
     const c = e.code;
+    if (c === 'Escape' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) return 'task_manager';
     if (mod && e.shiftKey && c === 'KeyT') return 'restore_tab';
     if (mod && !e.shiftKey && c === 'KeyT') return 'new_tab';
     if (mod && c === 'KeyW') return 'close_tab';
@@ -1246,6 +1258,7 @@
     openNotes() { dl.close(); upd.openNotes(); },
     closeSettings,
     openHistory: () => openHistory(),
+    openTasks: () => send({ cmd: 'open_tasks' }),
     applyAppearance,
     saveSettings,
     refresh() { renderDs(); panels.sync(); },
@@ -1296,6 +1309,7 @@
     snap.sync();
     tm.sync();
     isl.sync();
+    tmem.sync();
   }
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
   const sitesIn = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
@@ -1308,7 +1322,7 @@
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
-        // #settings:раздел, #onb:шаг, #downloads, #update[:install|:notes|:current], #answers, #translate[:menu|:revert], #history[:запрос]
+        // #settings:раздел, #onb:шаг, #downloads, #update[:install|:notes|:current], #answers, #translate[:menu|:revert], #history[:запрос], #tasks
         // или #import:браузер (сразу начать перенос) — только для разработки (debug-сборка).
         const [screen, arg] = location.hash.slice(1).split(':');
         if (screen === 'settings') openSettings(arg);
@@ -1319,6 +1333,7 @@
         else if (screen === 'answers') ans.openSoon();
         else if (screen === 'translate') tr.debug(arg);
         else if (screen === 'history') openHistory(arg);
+        else if (screen === 'tasks') send({ cmd: 'open_tasks' });
         else if (!B.onboarded) panels.openOnboarding();
       }
       firstSettings = false;
@@ -1390,6 +1405,7 @@
     answers(m) { ans.onList(m); },
     report_file(m) { panels.onReportFile(m); },
     history(m) { hist.onPage(m); },
+    tasks(m) { tk.onData(m); tmem.onData(m); },
     history_count(m) { hist.onCount(m); },
   };
   window.axiom = Object.freeze({

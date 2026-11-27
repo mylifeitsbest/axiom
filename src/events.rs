@@ -133,6 +133,14 @@ pub enum UserEvent {
     },
     /// «Сообщить о проблеме»: отчёт отправлен, отложен или не принят (фоновый поток).
     Reported(crate::reports::Outcome),
+    /// Движок ответил, какие у него процессы (диспетчер задач). `browser` — главный
+    /// процесс окружения, `serial` — номер замера; `None` — ответа нет.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    TaskProcs {
+        serial: u64,
+        browser: u32,
+        procs: Option<Vec<crate::taskman::engine::EngineProc>>,
+    },
     /// Поисковая система ответила подсказками на набранный текст (`suggest`).
     Completions(crate::suggest::Answer),
     /// Свои сообщения разработчику изменились: новое, пришёл ответ, ответ прочитан.

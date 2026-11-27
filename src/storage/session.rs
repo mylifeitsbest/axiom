@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Paths, read_json, write_json};
-use crate::tabs::{HISTORY, SETTINGS};
+use crate::tabs::{HISTORY, SETTINGS, TASKS};
 
 const FILE: &str = "session.json";
 const MAX_TABS: usize = 500;
@@ -40,14 +40,16 @@ impl Session {
     pub fn load(paths: &Paths) -> Option<Self> {
         let mut s: Session = read_json(&paths.root.join(FILE))?;
         s.tabs.truncate(MAX_TABS);
-        // Вкладки настроек и истории восстанавливаются ими же, но только по одной.
-        let (mut settings, mut history) = (false, false);
+        // Вкладки настроек, истории и диспетчера задач восстанавливаются ими же,
+        // но только по одной.
+        let (mut settings, mut history, mut tasks) = (false, false, false);
         let keep: Vec<bool> = s
             .tabs
             .iter()
             .map(|t| {
                 let extra = (t.url == SETTINGS && std::mem::replace(&mut settings, true))
-                    || (t.url == HISTORY && std::mem::replace(&mut history, true));
+                    || (t.url == HISTORY && std::mem::replace(&mut history, true))
+                    || (t.url == TASKS && std::mem::replace(&mut tasks, true));
                 is_restorable(&t.url) && !extra
             })
             .collect();
@@ -75,6 +77,7 @@ fn is_restorable(url: &str) -> bool {
     url == crate::tabs::omnibox::NEWTAB
         || url == SETTINGS
         || url == HISTORY
+        || url == TASKS
         || url.starts_with("https://")
         || url.starts_with("http://")
         || url.starts_with("file://")
@@ -142,6 +145,8 @@ mod tests {
                 tab(HISTORY),
                 tab("https://b.example/"),
                 tab(HISTORY),
+                tab(TASKS),
+                tab(TASKS),
             ],
             active: 4,
         };
@@ -156,7 +161,8 @@ mod tests {
                 SETTINGS,
                 "https://a.example/",
                 HISTORY,
-                "https://b.example/"
+                "https://b.example/",
+                TASKS
             ]
         );
         assert_eq!(loaded.active, 3);
@@ -193,6 +199,7 @@ mod tests {
             crate::tabs::omnibox::NEWTAB,
             SETTINGS,
             HISTORY,
+            TASKS,
         ] {
             assert!(is_restorable(url), "{url}");
         }

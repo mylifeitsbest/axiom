@@ -7,6 +7,7 @@ mod history_page;
 mod permissions;
 mod plugins;
 mod tab_actions;
+mod task_manager;
 mod translation;
 mod waking;
 mod zoom;
@@ -132,6 +133,8 @@ pub struct App {
     adblock: crate::adblock::Manager,
     /// Прокси для вкладок и панели ИИ (кнопка на панели).
     net: crate::net::TabProxy,
+    /// Диспетчер задач: замеры процессов и вкладки, усыплённые из него.
+    tasks: task_manager::State,
 }
 
 impl App {
@@ -239,6 +242,7 @@ impl App {
             market: crate::plugins::market::State::default(),
             adblock,
             net,
+            tasks: task_manager::State::default(),
         };
         app.sync_tracking();
         app.sync_identity();
@@ -346,6 +350,11 @@ impl App {
             UserEvent::Reported(outcome) => self.on_reported(outcome),
             UserEvent::Answers => self.push_answers(true),
             UserEvent::Quit => return Ok(Flow::Exit),
+            UserEvent::TaskProcs {
+                serial,
+                browser,
+                procs,
+            } => self.on_task_procs(serial, browser, procs),
             UserEvent::Completions(answer) => {
                 self.suggest.remember(&answer);
                 // Пока шёл запрос, систему могли сменить или подсказки выключить.
@@ -460,6 +469,10 @@ impl App {
             UiCmd::HistoryDelete { url } => self.history_delete(&url),
             UiCmd::HistoryClear { since } => self.history_clear(since),
             UiCmd::HistoryCount { since } => self.history_count(since),
+            UiCmd::OpenTasks => self.open_tasks(),
+            UiCmd::Tasks => self.tasks_request(),
+            UiCmd::TasksSleep { id } => self.tasks_sleep(id),
+            UiCmd::TasksSleepAll => self.tasks_sleep_all(),
             UiCmd::SnapshotShown { seq } => {
                 if self.snapshot.shown(seq) {
                     self.apply_layout();
@@ -709,6 +722,7 @@ impl App {
             }
             Hotkey::Bookmark => self.toggle_bookmark(),
             Hotkey::Fullscreen => self.toggle_fullscreen(),
+            Hotkey::TaskManager => self.toggle_tasks(),
             Hotkey::Escape => {
                 if self.fullscreen.leaves_on_escape() {
                     self.leave_fullscreen();
@@ -970,11 +984,11 @@ impl App {
         let was_active = self.tabs.active == Some(id);
         self.permissions_tab_gone(id);
         crate::adblock::forget(id);
-        // Закрытые настройки и история возвращают туда, откуда их открыли.
+        // Закрытые настройки, история и диспетчер задач возвращают туда, откуда их открыли.
         let own = self
             .tabs
             .get(id)
-            .filter(|t| t.is_settings() || t.is_history());
+            .filter(|t| t.is_settings() || t.is_history() || t.is_tasks());
         let prefer = prefer.or(own.and_then(|t| t.opener));
         if was_active && own.is_some_and(|t| t.is_settings()) {
             self.leave_settings();
@@ -1957,6 +1971,8 @@ impl App {
     }
 
     fn finish_sleep(&mut self, id: TabId, page: PageState) {
+        // Усыпил человек (диспетчер задач): «не усыплять» его не держит.
+        let manual = self.tasks.manual_sleep.remove(&id);
         let active = self.tabs.active;
         let Some(tab) = self.tabs.get_mut(id) else {
             return;
@@ -1967,12 +1983,21 @@ impl App {
         tab.sleep_requested = None;
         // Пока страница отвечала, в ней началась загрузка или открылся сайт
         // из списка «не усыплять».
-        if self.downloads.is_busy(id) || tab.kept_awake(&self.settings.no_sleep_sites) {
+        if self.downloads.is_busy(id) || (!manual && tab.kept_awake(&self.settings.no_sleep_sites))
+        {
             return;
         }
         if page.keep {
-            // Недописанный текст: вкладка остаётся, вместо неё усыпим следующую по давности.
             tab.keep_alive = true;
+            if manual {
+                let text = format!(
+                    "Во вкладке «{}» недописанный текст — она не уснёт, чтобы он не пропал",
+                    tab.title.chars().take(60).collect::<String>()
+                );
+                self.send(&ToUi::Toast { text: &text });
+                return;
+            }
+            // Недописанный текст: вкладка остаётся, вместо неё усыпим следующую по давности.
             self.limit_live_tabs();
             return;
         }

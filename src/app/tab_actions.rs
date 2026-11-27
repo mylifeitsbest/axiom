@@ -85,8 +85,9 @@ impl App {
         let Some(tab) = self.tabs.get(id) else {
             return;
         };
-        // Вкладка истории всегда одна: «Дублировать» просто переходит на неё.
-        if tab.is_history() {
+        // Вкладки истории и диспетчера задач всегда одни: «Дублировать» просто
+        // переходит на них.
+        if tab.is_history() || tab.is_tasks() {
             return self.activate(id);
         }
         let (url, title, ai) = (tab.url.clone(), tab.title.clone(), tab.ai);

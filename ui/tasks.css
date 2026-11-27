@@ -1,0 +1,140 @@
+/* Диспетчер задач (ui/tasks.js): страница вкладки axiom://tasks в области контента.
+   Тот же язык, что у истории и настроек: заголовок, карточки на фоне страницы,
+   подписи разделов капсом. Все цифры — оперативная память в МБ/ГБ и процент
+   процессора; полосы — одного цвета (акцент), длина от самой тяжёлой строки. */
+
+.tasks{
+  --tc:var(--s1);--tc-sh:none;--tr-hover:var(--s2);--tk-track:color-mix(in oklab,var(--acc) 14%,transparent);
+  --tk-oth:color-mix(in oklab,var(--t3) 70%,transparent);
+  position:absolute;inset:0;display:none;overflow:hidden auto;scrollbar-gutter:stable;container:tasks/inline-size}
+[data-mode=light] .tasks{--tc:#fff;--tc-sh:0 0 0 1px var(--line),0 10px 26px -22px rgb(0 0 0/.35);--tr-hover:var(--bg)}
+.content.tk .tasks{display:block;animation:fade var(--d3) var(--e) both}
+.tasks::-webkit-scrollbar{width:10px}
+.tasks::-webkit-scrollbar-thumb{background:var(--s3);border-radius:5px;border:3px solid transparent;background-clip:padding-box}
+.tk-in{max-width:880px;margin:0 auto;padding:24px 32px 40px}
+
+/* ---------- заголовок ---------- */
+.tk-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;animation:rise var(--d3) var(--e) both}
+.tk-t{min-width:0}
+.tk-head h2{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em}
+.tk-head p{margin:4px 0 0;color:var(--t3);max-width:540px}
+.tk-head .btn{flex:none;height:34px;margin-top:2px}
+.tk-head .btn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* ---------- сводка ---------- */
+.tk-sum{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:10px;margin-top:18px;animation:rise var(--d3) var(--e) 40ms both}
+.tk-hero,.tk-tile{position:relative;display:flex;flex-direction:column;border-radius:calc(var(--r) + 4px);background:var(--tc);box-shadow:var(--tc-sh);overflow:hidden}
+.tk-hero{padding:16px 18px 14px}
+/* Мягкое свечение акцента за главной цифрой, как на новой вкладке. */
+.tk-hero::before{content:"";position:absolute;left:-60px;top:-80px;width:320px;height:240px;border-radius:50%;background:radial-gradient(closest-side,color-mix(in oklab,var(--acc) 16%,transparent),transparent);pointer-events:none}
+.tk-hero-top{position:relative;flex:1;display:flex;align-items:stretch;gap:20px;margin-bottom:16px}
+.tk-hero-n{display:flex;flex-direction:column;min-width:0;flex:none}
+.tk-lbl{font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3)}
+.tk-big{display:flex;align-items:baseline;gap:6px;margin:6px 0 2px;line-height:1}
+.tk-big b{font-size:48px;font-weight:600;letter-spacing:-.02em;color:var(--t1)}
+.tk-big small{font-size:18px;font-weight:500;color:var(--t2)}
+.tk-sub{color:var(--t3);font-size:12px;line-height:1.4}
+.tk-spark{position:relative;flex:1;min-width:80px;min-height:56px;margin-top:4px;cursor:crosshair}
+.tk-spark.sm{position:absolute;right:14px;bottom:12px;width:44%;height:40px;flex:none}
+.tk-spark svg{display:block;overflow:visible}
+.sp-a{fill:color-mix(in oklab,var(--acc) 12%,transparent);stroke:none}
+.sp-l{fill:none;stroke:var(--acc);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.sp-d{fill:var(--acc);stroke:var(--tc);stroke-width:2}
+.sp-x{stroke:var(--t3);stroke-width:1;stroke-dasharray:2 3}
+.sp-h{fill:var(--tc);stroke:var(--acc);stroke-width:2}
+.tk-tip{position:absolute;z-index:5;display:flex;gap:8px;align-items:baseline;padding:5px 9px;border-radius:8px;background:var(--s2);box-shadow:var(--shadow);color:var(--t2);font-size:11.5px;white-space:nowrap;pointer-events:none;transform:translate(-50%,-100%);opacity:0;transition:opacity var(--d1)}
+.tk-tip.on{opacity:1}
+.tk-tip b{color:var(--t1);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* Оперативная память компьютера: Axiom, другие программы и свободное — одна полоса. */
+.tk-meter{position:relative;display:flex;gap:2px;height:8px;margin-top:auto;border-radius:999px;background:var(--tk-track);overflow:hidden}
+.tk-meter i{height:100%;border-radius:999px;transition:width calc(600ms*var(--k)) var(--e)}
+.tk-meter .m-ax{width:var(--ax,0%);min-width:6px;background:var(--acc)}
+.tk-meter .m-oth{width:var(--oth,0%);background:var(--tk-oth)}
+.tk-legend{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:9px;color:var(--t3);font-size:12px}
+.tk-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.tk-legend b{color:var(--t1);font-weight:500;font-variant-numeric:tabular-nums}
+.tk-legend i{width:8px;height:8px;border-radius:50%}
+.k-ax{background:var(--acc)}
+.k-oth{background:var(--tk-oth)}
+.k-free{background:var(--tk-track);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--acc) 30%,transparent)}
+
+.tk-tiles{display:grid;grid-template-rows:1fr 1fr;gap:10px}
+.tk-tile{padding:13px 16px 12px;min-height:92px}
+.tk-val{margin:6px 0 2px;font-size:24px;font-weight:600;letter-spacing:-.01em;color:var(--t1)}
+.tk-tile .tk-sub{max-width:52%}
+.tasks:not(.ready) .tk-big b,.tasks:not(.ready) .tk-val{animation:pulse calc(1200ms*max(var(--k),.5)) ease-in-out infinite}
+
+/* ---------- разделы и строки ---------- */
+.tk-sec{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 8px 6px;animation:rise var(--d3) var(--e) 80ms both}
+.tk-sec h4{margin:0;font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3)}
+.tk-sort{display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:var(--tc);box-shadow:var(--tc-sh)}
+.tk-sort button{height:24px;padding:0 10px;border-radius:999px;color:var(--t3);font-size:12px;transition:background-color var(--d1),color var(--d1)}
+.tk-sort button:hover{color:var(--t1)}
+.tk-sort button.on{background:var(--s2);color:var(--t1)}
+[data-mode=light] .tk-sort button.on{background:var(--bg)}
+.tk-sort button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.tk-card{display:flex;flex-direction:column;gap:1px;padding:4px;border-radius:calc(var(--r) + 2px);background:var(--tc);box-shadow:var(--tc-sh);animation:rise var(--d3) var(--e) 80ms both}
+.tk-card.empty::before{content:attr(data-empty);padding:14px 12px;color:var(--t3)}
+.tk-row{display:grid;grid-template-columns:28px minmax(0,1fr) 150px 64px 64px;align-items:center;gap:12px;min-height:46px;padding:4px 8px 4px 12px;border-radius:calc(var(--r)*.75);color:var(--t2);outline:0;overflow:hidden;transition:background-color var(--d1),opacity var(--d2)}
+.tk-row:not(.part){cursor:pointer}
+.tk-row:not(.part):hover{background:var(--tr-hover)}
+.tk-row:focus-visible{background:var(--tr-hover);box-shadow:inset 0 0 0 1.5px var(--acc)}
+.tk-row.in{animation:rise var(--d2) var(--e) both}
+.tk-row.out{pointer-events:none}
+.tk-fav{display:grid;place-items:center}
+.tk-ic{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:color-mix(in oklab,var(--acc) 12%,transparent);color:var(--acc)}
+.tk-ic .i{width:15px;height:15px}
+.tk-name{display:flex;align-items:baseline;gap:10px;min-width:0}
+.tk-title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1)}
+.tk-host{flex:1 1 0;min-width:30px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t3);font-size:12px}
+.part .tk-name{flex-direction:column;align-items:flex-start;gap:1px}
+.part .tk-host{flex:none;max-width:100%}
+.tk-tags{display:inline-flex;gap:4px;flex:none;align-self:center}
+.tk-tags:empty{display:none}
+.tk-tag{display:inline-grid;place-items:center;height:18px;min-width:18px;border-radius:6px;background:var(--s2);color:var(--t2)}
+.tk-tag .i{width:12px;height:12px}
+.tk-tag.txt{padding:0 6px;font-size:10.5px;font-weight:600;letter-spacing:.02em}
+.tk-mem{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0}
+.tk-mem b{font-weight:500;color:var(--t1);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tk-bar{display:block;height:4px;border-radius:999px;background:var(--tk-track);overflow:hidden}
+.tk-bar>i{display:block;height:100%;width:0;border-radius:999px;background:var(--acc);transition:width calc(600ms*var(--k)) var(--e)}
+.tk-cpu{text-align:right;color:var(--t2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tk-act{display:flex;justify-content:flex-end;gap:2px}
+.tk-act .ib{color:var(--t3);opacity:0;transition:opacity var(--d1),background-color var(--d1),color var(--d1)}
+.tk-row:hover .tk-act .ib,.tk-row:focus-within .tk-act .ib{opacity:1}
+.tk-act .ib:hover{background:var(--s3);color:var(--t1)}
+.tk-act .ib:focus-visible{opacity:1;outline:2px solid var(--acc);outline-offset:1px}
+/* Спящая вкладка: памяти не занимает — строка тише. */
+.tk-row.zz{opacity:.62}
+.tk-row.zz .tk-bar{visibility:hidden}
+.tk-row.zz .tk-fav{filter:grayscale(1)}
+.tk-row.zz .tk-mem b,.tk-row.going .tk-mem b{color:var(--t3);font-weight:400}
+.tk-row.going .tk-mem b{animation:pulse calc(1200ms*max(var(--k),.5)) ease-in-out infinite}
+.tk-linux{display:flex;gap:10px;align-items:flex-start;margin:8px 4px 0;color:var(--t3);font-size:12px;line-height:1.45}
+.tk-linux .i{flex:none;width:15px;height:15px;margin-top:1px}
+.tk-note{margin-top:22px}
+.tk-note .i{flex:none;margin-top:2px}
+.tk-link{color:var(--acc);text-decoration:underline;text-underline-offset:2px;text-decoration-color:color-mix(in oklab,var(--acc) 45%,transparent)}
+.tk-link:hover{text-decoration-color:var(--acc)}
+
+/* Узко (рядом панель ИИ): процессор и описания — короче, сводка в столбик. */
+@container tasks (max-width:640px){
+  .tk-in{padding:18px 16px 32px}
+  .tk-sum{grid-template-columns:minmax(0,1fr)}
+  .tk-tiles{grid-template-columns:1fr 1fr;grid-template-rows:none}
+  .tk-row{grid-template-columns:24px minmax(0,1fr) 92px 48px 52px;gap:8px}
+  .tk-host{display:none}
+  .part .tk-host{display:block}
+  .tk-head{flex-direction:column}
+  .tk-big b{font-size:40px}
+}
+
+/* ---------- плашка памяти во вкладке под курсором (createTabMem) ---------- */
+.tab .tmem{display:none}
+.tab.mem .tmem{display:inline-flex;align-items:center;flex:none;height:18px;padding:0 7px;margin-left:2px;border-radius:999px;background:color-mix(in oklab,var(--acc) 20%,transparent);color:var(--t1);font-size:11px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;animation:tmemIn var(--d2) var(--e) both}
+.tab.mem .tmem.wait{color:var(--t3);animation:tmemIn var(--d2) var(--e) both,pulse calc(1200ms*max(var(--k),.5)) ease-in-out infinite}
+/* Узкой вкладке плашка нужнее названия: та раздаётся, пока на ней курсор
+   (в раскладке «в одну строку» неактивные вкладки — только значок). */
+.tab.mem{min-width:144px}
+@keyframes tmemIn{from{opacity:0;transform:translateX(6px) scale(.9)}}

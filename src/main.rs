@@ -22,6 +22,7 @@ mod storage;
 mod suggest;
 mod system;
 mod tabs;
+mod taskman;
 mod translate;
 mod ui;
 mod update;

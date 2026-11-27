@@ -42,6 +42,8 @@ pub enum Hotkey {
     Print,
     /// Ctrl+M: выключить или включить звук вкладки.
     Mute,
+    /// Shift+Esc: диспетчер задач Axiom (вместо окошка WebView2).
+    TaskManager,
     /// Ctrl+= (Ctrl++), Ctrl+− и Ctrl+0: масштаб страницы.
     ZoomIn,
     ZoomOut,
@@ -73,6 +75,7 @@ impl Hotkey {
             "view_source" => Self::ViewSource,
             "print" => Self::Print,
             "mute" => Self::Mute,
+            "task_manager" => Self::TaskManager,
             "zoom_in" => Self::ZoomIn,
             "zoom_out" => Self::ZoomOut,
             "zoom_reset" => Self::ZoomReset,
@@ -112,6 +115,7 @@ impl Hotkey {
             Self::ViewSource => "view_source".into(),
             Self::Print => "print".into(),
             Self::Mute => "mute".into(),
+            Self::TaskManager => "task_manager".into(),
             Self::ZoomIn => "zoom_in".into(),
             Self::ZoomOut => "zoom_out".into(),
             Self::ZoomReset => "zoom_reset".into(),
@@ -208,6 +212,8 @@ impl Hotkey {
             (VK_F5, false, false, false) => Self::Reload,
             (VK_F11, false, false, false) => Self::Fullscreen,
             (VK_ESCAPE, false, false, false) => Self::Escape,
+            // Свой диспетчер: окошко WebView2 по этому сочетанию не откроется.
+            (VK_ESCAPE, false, true, false) => Self::TaskManager,
             (VK_COMMA, true, false, false) => Self::Settings,
             (v, true, false, false) if v == key(b'D') => Self::Bookmark,
             (v, true, false, false) if v == key(b'J') => Self::Downloads,
@@ -419,6 +425,14 @@ mod tests {
         );
         assert!(!Hotkey::Escape.consumes());
         assert!(Hotkey::Fullscreen.consumes());
+        // Shift+Esc — наш диспетчер задач, и странице (WebView2) он не достаётся.
+        assert_eq!(
+            Hotkey::from_vk(0x1B, false, true, false),
+            Some(Hotkey::TaskManager)
+        );
+        assert!(Hotkey::TaskManager.consumes() && !Hotkey::TaskManager.is_page_tool());
+        assert_eq!(Hotkey::parse("task_manager"), Some(Hotkey::TaskManager));
+        assert_eq!(Hotkey::from_vk(0x1B, true, true, false), None);
     }
 
     #[test]
@@ -482,6 +496,7 @@ mod tests {
         assert_eq!(hk(0x68, true, false, false), Some(Hotkey::History));
         assert_eq!(hk(0xffc8, false, false, false), Some(Hotkey::Fullscreen));
         assert_eq!(hk(0xff1b, false, false, false), Some(Hotkey::Escape));
+        assert_eq!(hk(0xff1b, false, true, false), Some(Hotkey::TaskManager));
         assert_eq!(hk(0x6c1, true, false, false), None);
         assert_eq!(hk(0x52, true, true, false), Some(Hotkey::HardReload));
         assert_eq!(hk(0xffc2, false, true, false), Some(Hotkey::HardReload));

@@ -423,10 +423,19 @@ impl App {
 
     /// Остров на месте: под чёлкой, высотой `k` от полной (анимация), скруглён снизу.
     ///
-    /// Вкладка остаётся своего размера (иначе сайт перестроил бы страницу и унёс видео),
-    /// только встаёт левым верхним углом в угол острова (в боковой панели он левее
-    /// страницы); видно лишь вырез острова. Видео страница ставит ровно в остров, с рамкой
-    /// [`mini::PAD`].
+    /// Windows: вкладка остаётся своего размера (сайт не перестраивает страницу), только
+    /// встаёт левым верхним углом в угол острова (в боковой панели он левее страницы);
+    /// видно лишь вырез острова — `SetWindowRgn` режет и картинку, и мышь.
+    ///
+    /// Linux: вырез держится на обработчике `draw` и форме окна GDK, а на Wayland
+    /// с NVIDIA (WebKitGTK рисует через GL) он не режет: поверх окна и открытых настроек
+    /// выезжала вся страница. Поэтому вкладка размером с сам остров — за его край она
+    /// не нарисуется никак, а вырез только скругляет низ и ведёт выезд. Сайт при этом
+    /// перестраивается под узкое окно, но видео уже вынесено поверх страницы
+    /// (`popover`, `position: fixed`) и остаётся в острове.
+    ///
+    /// Видео страница ставит ровно в остров, с рамкой [`mini::PAD`] — раньше, чем вкладка
+    /// сожмётся: иначе плеер успел бы стать меньше, чем «видео для островка».
     fn place_mini(&mut self, k: f64) {
         let scale = self.window.scale_factor();
         let (Some(show), Some(dock), Some(content)) = (&self.mini, self.mini_dock(), self.content)
@@ -439,13 +448,31 @@ impl App {
         let Some(webview) = self.tabs.get(show.id).and_then(|t| t.webview.as_ref()) else {
             return;
         };
-        let size = content.size.to_logical::<f64>(scale);
         let island = dock.island(vw, vh);
+        let size = if cfg!(target_os = "linux") {
+            LogicalSize::new(island.w, island.h)
+        } else {
+            content.size.to_logical::<f64>(scale)
+        };
+        let video = (
+            mini::PAD,
+            mini::PAD,
+            island.w - 2.0 * mini::PAD,
+            island.h - 2.0 * mini::PAD,
+            scale,
+        );
+        let send_video = show.sent != Some(video);
+        if send_video {
+            script::run(
+                webview,
+                &media::mini_script(video.0, video.1, video.2, video.3, scale),
+            );
+        }
         tab_webview::set_bounds_hanging(
             webview,
             Rect {
                 position: LogicalPosition::new(island.x, island.y).into(),
-                size: LogicalSize::new(size.width, size.height).into(),
+                size: size.into(),
             },
         );
         mini::round_bottom(
@@ -454,21 +481,8 @@ impl App {
             mini::RADIUS,
             scale,
         );
-        let video = (
-            mini::PAD,
-            mini::PAD,
-            island.w - 2.0 * mini::PAD,
-            island.h - 2.0 * mini::PAD,
-            scale,
-        );
-        if show.sent != Some(video) {
-            script::run(
-                webview,
-                &media::mini_script(video.0, video.1, video.2, video.3, scale),
-            );
-            if let Some(show) = self.mini.as_mut() {
-                show.sent = Some(video);
-            }
+        if send_video && let Some(show) = self.mini.as_mut() {
+            show.sent = Some(video);
         }
     }
 

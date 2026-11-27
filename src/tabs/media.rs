@@ -88,7 +88,9 @@ pub const SCRIPT: &str = r#"(() => {
     if (x == null || y == null || !(w > 0) || !(h > 0)) return false;
     const shown = shownEl ? shownEl.deref() : null;
     const v = shown && shown.isConnected ? shown : pick();
-    if (!big(v)) return false;
+    // Уже показанное видео стоит размером с остров (и вкладка на Linux тоже) — оно
+    // меньше «видео для островка», но переставлять его можно.
+    if (v !== shown && !big(v)) return false;
     if (!sheet) sheet = new CSSStyleSheet();
     sheet.replaceSync(`video[${MARK}]{position:fixed!important;left:${x}px!important;top:${y}px!important;right:auto!important;bottom:auto!important;width:${w}px!important;height:${h}px!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;border-radius:14px!important;object-fit:contain!important;background:#000!important;transform:none!important;opacity:1!important;visibility:visible!important;clip-path:none!important;filter:none!important;z-index:2147483647!important;overflow:hidden!important}video[${MARK}]::backdrop{background:#000!important}`);
     quiet(() => { if (!D.adoptedStyleSheets.includes(sheet)) D.adoptedStyleSheets = [...D.adoptedStyleSheets, sheet]; });

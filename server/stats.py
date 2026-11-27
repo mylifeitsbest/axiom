@@ -794,17 +794,29 @@ def utc_iso(t):
     return t.strftime("%Y-%m-%dT%H:%M:00Z")
 
 
-def chart_days(days):
+# Графики рисуются дважды: широкий и узкий для телефона (CSS показывает один).
+# Подписи в SVG масштабируются вместе с ним: широкий на экране телефона ужат
+# втрое, и 11-пиксельные подписи становились 4-пиксельными.
+NARROW_W = 360
+
+
+def chart_svg(W, H, out):
+    cls = "narrow" if W == NARROW_W else "wide"
+    return f'<svg viewBox="0 0 {W} {H}" class="chart-svg {cls}" role="img">{"".join(out)}</svg>'
+
+
+def chart_days(days, W=840):
     """30 столбиков: вернувшиеся (синий) и новые (оранжевый) сверху."""
-    W, H, top, bottom = 840, 150, 18, 22
+    H, top, bottom = 150, 18, 22
     n = len(days)
     step = W / n
-    bw = step - 6
+    gap = 6 if W > NARROW_W else 3
+    bw = step - gap
     peak = max((a for _, a, _ in days), default=0) or 1
     plot = H - top - bottom
     out = [f'<line x1="0" x2="{W}" y1="{H - bottom}" y2="{H - bottom}" class="axis"/>']
     for i, (day, active, new) in enumerate(days):
-        x = i * step + 3
+        x = i * step + gap / 2
         new = min(new, active)
         old = active - new
         h_all = plot * active / peak
@@ -834,20 +846,21 @@ def chart_days(days):
             lx = x + bw if i == n - 1 else x
             out.append(f'<text x="{lx:.1f}" y="{H - 5}" class="tick" '
                        f'text-anchor="{anchor}">{label}</text>')
-    return f'<svg viewBox="0 0 {W} {H}" class="chart-svg" role="img">{"".join(out)}</svg>'
+    return chart_svg(W, H, out)
 
 
-def chart_hours(hours):
-    W, H, top, bottom = 840, 120, 18, 22
+def chart_hours(hours, W=840):
+    H, top, bottom = 120, 18, 22
     n = len(hours)
     step = W / n
-    bw = step - 8
+    gap = 8 if W > NARROW_W else 4
+    bw = step - gap
     peak = max((c for _, c in hours), default=0) or 1
     plot = H - top - bottom
     base = H - bottom
     out = [f'<line x1="0" x2="{W}" y1="{base}" y2="{base}" class="axis"/>']
     for i, (h, c) in enumerate(hours):
-        x = i * step + 4
+        x = i * step + gap / 2
         bh = plot * c / peak
         cls = "s-old now" if i == n - 1 else "s-old"
         out.append(f'<path d="{bar_path(x, base - bh, bw, bh)}" class="{cls}"/>')
@@ -857,11 +870,12 @@ def chart_hours(hours):
         out.append(f'<rect x="{i * step:.1f}" y="0" width="{step:.1f}" height="{H}" class="hit">'
                    f'<title data-utc="{utc_iso(h)}" data-fmt="hour-tip" data-n="{c}">'
                    f'{c}</title></rect>')
-        if i % 3 == 0 or i == n - 1:
+        # На узком графике подпись за два часа до «сейчас» налезала бы на него.
+        if i == n - 1 or i % 3 == 0 and (W > NARROW_W or i < n - 3):
             out.append(f'<text x="{x + bw / 2:.1f}" y="{H - 5}" class="tick" text-anchor="middle"'
                        f' data-utc="{utc_iso(h)}" data-fmt="{"now" if i == n - 1 else "h"}">'
                        f'{h:%H}</text>')
-    return f'<svg viewBox="0 0 {W} {H}" class="chart-svg" role="img">{"".join(out)}</svg>'
+    return chart_svg(W, H, out)
 
 
 def feed_html(feed):
@@ -920,13 +934,14 @@ def reports_html(rows):
         href = report_href(id_)
         clip = (f' <span class="clip" title="{nfiles} {plural(nfiles, "файл", "файла", "файлов")}">'
                 f'📎{nfiles}</span>') if nfiles else ""
+        # Классы ячеек нужны телефонной раскладке: там строка — карточка, ячейки переставлены.
         trs.append(
-            f'<tr><td><a href="{href}"><time data-utc="{escape(at)}" data-fmt="feed">'
+            f'<tr><td class="c-at"><a href="{href}"><time data-utc="{escape(at)}" data-fmt="feed">'
             f'{escape(at[:16].replace("T", " "))}</time></a></td>'
-            f'<td><span class="kind k-{escape(kind)}">{escape(REPORT_KINDS.get(kind, kind))}</span></td>'
-            f'<td>{escape(v)}</td><td>{escape(os_)}</td>'
+            f'<td class="c-kind"><span class="kind k-{escape(kind)}">{escape(REPORT_KINDS.get(kind, kind))}</span></td>'
+            f'<td class="c-v">{escape(v)}</td><td class="c-os">{escape(os_)}</td>'
             f'<td class="line"><a href="{href}">{escape(line) or "—"}</a>{clip}</td>'
-            f'<td>{answer_badge(kind, can, ans, got)}</td></tr>')
+            f'<td class="c-ans">{answer_badge(kind, can, ans, got)}</td></tr>')
     return ('<table class="reps"><thead><tr><th>когда</th><th>что</th><th>версия</th>'
             f'<th>система</th><th>о чём</th><th>ответ</th></tr></thead><tbody>{"".join(trs)}</tbody></table>')
 
@@ -1005,6 +1020,11 @@ REPORT_CSS = """
     flex-wrap:wrap; border-top:1px solid var(--line); }
   .file figcaption b { font-weight:600; color:var(--ink); word-break:break-all; }
   .file.gone { padding:12px 14px; color:var(--muted); font-size:13px; }
+  @media (max-width:700px) {
+    .wrap { padding:20px 12px 48px; }
+    pre { padding:12px; font-size:12px; }
+    .files { grid-template-columns:1fr; }
+  }
 """
 
 
@@ -1258,8 +1278,30 @@ def render(s, nonce=""):
   summary {{ cursor:pointer; color:var(--muted); font-size:13px; }}
   details ul {{ padding-left:18px; margin:10px 0 0; }}
   details li {{ margin:6px 0; }}
+  .chart-svg.narrow {{ display:none; }}
   @media (max-width:700px) {{ .tiles {{ grid-template-columns:repeat(2,1fr); }}
-    .tiles.small {{ grid-template-columns:1fr; }} .grid {{ grid-template-columns:1fr; }} }}
+    .tiles.small {{ grid-template-columns:1fr; }} .grid {{ grid-template-columns:1fr; }}
+    .wrap {{ padding:22px 12px 48px; }}
+    .tile {{ padding:12px 14px; }}
+    .tile .n {{ font-size:30px; }}
+    .panel {{ padding:12px 14px; }}
+    th,td {{ padding:9px 12px; }}
+    /* Отчёты на телефоне: строка таблицы — карточка. Сверху что и когда, справа ответ,
+       ниже — о чём во всю ширину, под ним мелко версия и система. */
+    .reps thead {{ display:none; }}
+    .reps, .reps tbody {{ display:block; }}
+    .reps tr {{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:12px 14px; }}
+    .reps tr+tr {{ border-top:1px solid #1d212c; }}
+    .reps td, .reps tr+tr td {{ display:block; padding:0; border:0; }}
+    .reps .c-kind {{ order:0; }}
+    .reps .c-at {{ order:1; }}
+    .reps .c-ans {{ order:2; margin-left:auto; }}
+    .reps .c-ans:empty {{ display:none; }}
+    .reps .line {{ order:3; flex-basis:100%; width:auto; font-size:15px; line-height:1.4; }}
+    .reps .c-v, .reps .c-os {{ order:4; font-size:12px; color:var(--muted); }}
+    .reps .c-os {{ order:5; }}
+  }}
+  @media (max-width:560px) {{ .chart-svg.wide {{ display:none; }} .chart-svg.narrow {{ display:block; }} }}
 </style></head><body><div class="wrap">
   <h1>Axiom — сколько людей пользуется</h1>
   <div class="top-sub">Обновлено в <time data-utc="{utc_iso(now)}" data-fmt="hm">{now:%H:%M} UTC</time>.
@@ -1280,14 +1322,14 @@ def render(s, nonce=""):
   <h2>По часам, последние сутки</h2>
   <p class="hint">Сколько браузеров было открыто в каждый час. Открытый браузер отмечается раз в час,
     поэтому столбик ≈ число людей. Последний столбик — текущий час, он ещё растёт.</p>
-  <div class="panel">{chart_hours(s["hours"])}</div>
+  <div class="panel">{chart_hours(s["hours"])}{chart_hours(s["hours"], NARROW_W)}</div>
 
   <h2>По дням, 30 дней</h2>
   <p class="hint">Сколько разных людей открывали браузер в каждый день.</p>
   <div class="panel">
     <div class="legend"><span><i style="background:var(--old)"></i>уже пользовались</span>
       <span><i style="background:var(--new)"></i>новые установки</span></div>
-    {chart_days(s["days"])}
+    {chart_days(s["days"])}{chart_days(s["days"], NARROW_W)}
   </div>
 
   <div class="grid">

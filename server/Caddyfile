@@ -24,6 +24,20 @@ __DOMAIN__ {
 		}
 		reverse_proxy 127.0.0.1:8787
 	}
+	# Плагин в магазин: до 5 МБ файлов в base64 (stats.py сам не примет больше 7,1 МБ).
+	handle /store/submit {
+		request_body {
+			max_size 8MiB
+		}
+		reverse_proxy 127.0.0.1:8787
+	}
+	# Что с присланными плагинами: до 100 пар «id + ключ».
+	handle /store/status {
+		request_body {
+			max_size 16KB
+		}
+		reverse_proxy 127.0.0.1:8787
+	}
 	# Пинг — меньше 200 байт; большие тела не пропускаем дальше Caddy.
 	handle {
 		request_body {

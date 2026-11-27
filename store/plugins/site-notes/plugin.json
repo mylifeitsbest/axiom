@@ -1,0 +1,18 @@
+{
+  "api": 1,
+  "id": "site-notes",
+  "name": "Заметки к сайтам",
+  "version": "1.0.0",
+  "description": "Своя заметка к каждому сайту: пароль от Wi-Fi на странице роутера, номер заказа на сайте магазина, мысли к статье. Кнопка на панели открывает заметку этого сайта, сохраняется она сама. Если заметка есть, в левом нижнем углу страницы виден маленький значок.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/site-notes",
+  "icon": "icon.svg",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["notes.js"] }
+  ],
+  "action": { "title": "Заметка к этому сайту" },
+  "settings": [
+    { "key": "badge", "type": "toggle", "label": "Значок, если есть заметка", "note": "Маленький значок в левом нижнем углу; клик открывает заметку", "default": true },
+    { "key": "width", "type": "number", "label": "Ширина окошка", "note": "В пикселях", "min": 260, "max": 520, "step": 20, "default": 320 }
+  ]
+}

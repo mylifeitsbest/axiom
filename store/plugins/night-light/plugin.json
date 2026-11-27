@@ -1,0 +1,20 @@
+{
+  "api": 1,
+  "id": "night-light",
+  "name": "Тёплый свет",
+  "version": "1.0.0",
+  "description": "Тёплый фильтр поверх страниц, чтобы вечером меньше уставали глаза: экран становится желтее и мягче. Кнопка на панели включает и выключает его на всех сайтах сразу, а можно включать только вечером по расписанию.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/night-light",
+  "icon": "icon.svg",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["night.js"], "css": ["night.css"], "run_at": "start" }
+  ],
+  "action": { "title": "Тёплый свет: вкл/выкл" },
+  "settings": [
+    { "key": "intensity", "type": "number", "label": "Сила фильтра", "note": "В процентах", "min": 10, "max": 70, "step": 5, "default": 30 },
+    { "key": "evening", "type": "toggle", "label": "Только вечером", "note": "Включаться по расписанию ниже, днём — без фильтра", "default": false },
+    { "key": "from", "type": "number", "label": "С какого часа", "min": 0, "max": 23, "step": 1, "default": 20 },
+    { "key": "to", "type": "number", "label": "До какого часа", "min": 0, "max": 23, "step": 1, "default": 7 }
+  ]
+}

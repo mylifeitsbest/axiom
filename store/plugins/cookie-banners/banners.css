@@ -1,0 +1,51 @@
+/* Окна согласия на cookie известных сервисов и затемнение под ними. */
+#onetrust-consent-sdk,
+#onetrust-banner-sdk,
+.onetrust-pc-dark-filter,
+#CybotCookiebotDialog,
+#CybotCookiebotDialogBodyUnderlay,
+#qc-cmp2-container,
+.qc-cmp2-container,
+#didomi-host,
+.didomi-popup-backdrop,
+#usercentrics-root,
+#usercentrics-cmp-ui,
+.cky-consent-container,
+.cky-overlay,
+.cky-modal-backdrop,
+#cmplz-cookiebanner-container,
+.cmplz-cookiebanner,
+#truste-consent-track,
+.truste_overlay,
+.truste_box_overlay,
+#consent_blackbar,
+.osano-cm-window,
+.osano-cm-dialog,
+#termly-code-snippet-support,
+#BorlabsCookieBox,
+#cookie-law-info-bar,
+.cli-modal-backdrop,
+#cmpbox,
+#cmpbox2,
+.cmpboxBG,
+.fc-consent-root,
+div[id^="sp_message_container"],
+.cc-window.cc-banner,
+.cc-window.cc-floating {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Баннеры с общими именами (cookie-banner, cookie-consent…) прячет banners.js —
+   только если они приклеены к экрану: такое же имя бывает у обычных блоков страницы. */
+
+/* Сервисы, запрещающие прокрутку страницы, пока баннер открыт. */
+html.didomi-popup-open,
+body.didomi-popup-open,
+html.sp-message-open,
+body.sp-message-open,
+body.cmp-overflow-hidden,
+html[data-axiom-unlock],
+body[data-axiom-unlock] {
+  overflow: auto !important;
+}

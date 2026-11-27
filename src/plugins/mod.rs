@@ -10,12 +10,14 @@
 //! Найденный плагин выключен, пока его не включат в «Настройки → Плагины»:
 //! подложенная в папку программа сама ничего не запустит.
 //!
-//! Документация для авторов — `docs/plugins.md`, примеры — `examples/plugins/`.
+//! Документация для авторов — `docs/plugins.md`, примеры — `examples/plugins/` и
+//! плагины Axiom из магазина (`store/plugins/`, магазин — `market` и `server/store.py`).
 
 pub mod api;
 mod bootstrap;
 pub mod bridge;
 pub mod manifest;
+pub mod market;
 pub mod pattern;
 mod store;
 
@@ -91,6 +93,8 @@ pub struct Plugin {
     scripts: Vec<Loaded>,
     icon: Option<String>,
     action_icon: Option<String>,
+    /// Поставлен из магазина: версия по его отметке (`market::MARKER`).
+    pub from_store: Option<String>,
 }
 
 #[derive(Debug)]
@@ -399,7 +403,8 @@ impl Registry {
     }
 
     /// Список для «Настройки → Плагины».
-    pub fn view(&self) -> List<'_> {
+    /// `published` — что с плагинами, которые публиковали из этого профиля.
+    pub fn view<'a>(&'a self, published: &'a BTreeMap<String, market::Status>) -> List<'a> {
         List {
             dir: self.dir().display().to_string(),
             items: self
@@ -432,6 +437,8 @@ impl Registry {
                         }),
                         settings: &m.settings,
                         values: self.values(&m.id),
+                        from_store: p.from_store.is_some(),
+                        published: published.get(&m.id),
                     }
                 })
                 .collect(),
@@ -470,6 +477,10 @@ pub struct View<'a> {
     pub action: Option<ActionView<'a>>,
     pub settings: &'a [Field],
     pub values: Map<String, Value>,
+    /// Поставлен из магазина (публиковать его нельзя — он чужой).
+    pub from_store: bool,
+    /// Публиковали из этого профиля: что с ним в магазине.
+    pub published: Option<&'a market::Status>,
 }
 
 #[derive(Debug, Serialize)]
@@ -570,6 +581,7 @@ fn load_plugin(
         scripts,
         icon,
         action_icon,
+        from_store: market::marker(dir).map(|m| m.version),
     })
 }
 
@@ -623,6 +635,40 @@ fn data_url(rel: &str, bytes: &[u8]) -> String {
     format!("data:{mime};base64,{}", base64(bytes))
 }
 
+/// base64 (стандартный алфавит, с `=`) → байты; `None` — не base64.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| -> Option<u32> {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        Some(u32::from(v))
+    };
+    let bytes = text.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let chunks = bytes.len() / 4;
+    let mut out = Vec::with_capacity(chunks * 3);
+    for (i, chunk) in bytes.chunks(4).enumerate() {
+        let pad = chunk.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 || (pad > 0 && i + 1 != chunks) {
+            return None;
+        }
+        let mut n = 0u32;
+        for (j, &c) in chunk.iter().enumerate() {
+            let v = if j >= 4 - pad { 0 } else { value(c)? };
+            n = (n << 6) | v;
+        }
+        out.extend_from_slice(&n.to_be_bytes()[1..4 - pad]);
+    }
+    Some(out)
+}
+
 fn base64(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -656,6 +702,13 @@ mod tests {
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
         assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
+        for sample in [&b""[..], b"f", b"fo", b"foo", b"foob", b"\xff\x00\x10 \xfe"] {
+            assert_eq!(decode_base64(&base64(sample)).as_deref(), Some(sample));
+        }
+        assert_eq!(decode_base64("Zm9v YmFy"), None);
+        assert_eq!(decode_base64("Zg="), None);
+        assert_eq!(decode_base64("Zg==Zm9v"), None);
+        assert_eq!(decode_base64("Z==="), None);
     }
 
     fn temp_profile(name: &str) -> PathBuf {
@@ -702,7 +755,7 @@ mod tests {
         assert_eq!(reg.plugins.len(), 1);
         assert_eq!(reg.broken.len(), 2);
         assert!(
-            reg.view()
+            reg.view(&BTreeMap::new())
                 .broken
                 .iter()
                 .any(|b| b.folder == "zcopy" && b.error.contains("уже"))
@@ -790,7 +843,7 @@ mod tests {
         assert!(err.contains("UTF-8"), "{err}");
         assert!(reg.get("hello").is_none());
         assert!(reg.scripts().is_empty());
-        assert_eq!(reg.view().broken.len(), 1);
+        assert_eq!(reg.view(&BTreeMap::new()).broken.len(), 1);
         let _ = fs::remove_dir_all(&root);
     }
 

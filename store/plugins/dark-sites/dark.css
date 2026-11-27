@@ -1,0 +1,27 @@
+/* Страница переворачивается целиком, а картинки и видео — обратно, чтобы не стать негативом. */
+html[data-axiom-dark] {
+  filter: invert(1) hue-rotate(180deg) brightness(var(--axiom-dark-brightness, 0.95)) !important;
+}
+
+/* Белый фон для страниц без своего: иначе после переворота он остался бы белым.
+   :where — чтобы любой фон самого сайта был сильнее. */
+:where(html[data-axiom-dark]) {
+  background-color: #fff;
+}
+
+html[data-axiom-dark] img,
+html[data-axiom-dark] video,
+html[data-axiom-dark] canvas,
+html[data-axiom-dark] iframe,
+html[data-axiom-dark] embed,
+html[data-axiom-dark] object,
+html[data-axiom-dark] svg image,
+html[data-axiom-dark] [style*="background-image"] {
+  filter: invert(1) hue-rotate(180deg) !important;
+}
+
+/* Картинка внутри перевёрнутого элемента с фоном — уже перевёрнута дважды. */
+html[data-axiom-dark] [style*="background-image"] img,
+html[data-axiom-dark] [style*="background-image"] video {
+  filter: none !important;
+}

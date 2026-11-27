@@ -1,0 +1,20 @@
+{
+  "api": 1,
+  "id": "cookie-banners",
+  "name": "Без cookie-баннеров",
+  "version": "1.0.0",
+  "description": "Убирает окна «Мы используем файлы cookie» и затемнение под ними: OneTrust, Cookiebot, Didomi, Quantcast, Usercentrics и другие популярные, а по желанию — и похожие баннеры по тексту. Страница снова прокручивается. Ничего не отправляет и ни на что не соглашается за вас.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/cookie-banners",
+  "icon": "icon.svg",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["banners.js"], "css": ["banners.css"], "run_at": "start" }
+  ],
+  "settings": [
+    {
+      "key": "text", "type": "toggle", "label": "Искать баннеры по тексту",
+      "note": "Прятать и незнакомые окна, приклеенные к краю экрана, если в них говорится о cookie и есть кнопка",
+      "default": true
+    }
+  ]
+}

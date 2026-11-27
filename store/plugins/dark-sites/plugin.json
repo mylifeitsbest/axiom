@@ -1,0 +1,30 @@
+{
+  "api": 1,
+  "id": "dark-sites",
+  "name": "Тёмные сайты",
+  "version": "1.0.0",
+  "description": "Тёмная тема для любого сайта: светлые страницы становятся тёмными, картинки и видео остаются как есть. Включается кнопкой на панели для каждого сайта отдельно — или сразу на всех сайтах, кроме тех, что вы выключите. Сайты, которые и так тёмные, не трогает.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/dark-sites",
+  "icon": "icon.svg",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["dark.js"], "css": ["dark.css"], "run_at": "start" }
+  ],
+  "action": { "title": "Тёмный режим на этом сайте" },
+  "settings": [
+    {
+      "key": "mode", "type": "choice", "label": "Где включать",
+      "note": "Сайт включают и выключают кнопкой плагина на панели",
+      "options": [
+        { "value": "chosen", "label": "На выбранных" },
+        { "value": "all", "label": "На всех, кроме выбранных" }
+      ],
+      "default": "chosen"
+    },
+    {
+      "key": "brightness", "type": "number", "label": "Яркость",
+      "note": "В процентах: меньше — темнее",
+      "min": 70, "max": 110, "step": 5, "default": 95
+    }
+  ]
+}

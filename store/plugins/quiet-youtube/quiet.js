@@ -2,6 +2,8 @@
 const apply = (settings) => {
   const html = document.documentElement;
   html.toggleAttribute('data-quiet-shorts', settings.shorts);
+  html.toggleAttribute('data-quiet-endscreen', settings.endscreen);
+  html.toggleAttribute('data-quiet-recs', settings.recs);
   html.toggleAttribute('data-quiet-comments', settings.comments === 'hide');
 };
 

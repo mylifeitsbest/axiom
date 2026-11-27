@@ -1,0 +1,35 @@
+{
+  "api": 1,
+  "id": "reading-mode",
+  "name": "Режим чтения",
+  "version": "1.0.0",
+  "description": "Статья без рекламы, меню и всплывающих окон: кнопка на панели открывает текст страницы крупным удобным шрифтом на спокойном фоне. Светлая, сепия или тёмная тема, шрифт с засечками или без, размер и ширина колонки — в настройках.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/reading-mode",
+  "icon": "icon.svg",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["reader.js"], "run_at": "ready" }
+  ],
+  "action": { "title": "Режим чтения" },
+  "settings": [
+    {
+      "key": "theme", "type": "choice", "label": "Тема",
+      "options": [
+        { "value": "light", "label": "Светлая" },
+        { "value": "sepia", "label": "Сепия" },
+        { "value": "dark", "label": "Тёмная" }
+      ],
+      "default": "sepia"
+    },
+    {
+      "key": "font", "type": "choice", "label": "Шрифт",
+      "options": [
+        { "value": "serif", "label": "С засечками" },
+        { "value": "sans", "label": "Без засечек" }
+      ],
+      "default": "serif"
+    },
+    { "key": "size", "type": "number", "label": "Размер текста", "note": "В пикселях", "min": 14, "max": 28, "step": 1, "default": 19 },
+    { "key": "width", "type": "number", "label": "Ширина колонки", "note": "В пикселях", "min": 520, "max": 900, "step": 20, "default": 680 }
+  ]
+}

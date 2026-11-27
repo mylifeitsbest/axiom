@@ -1,0 +1,34 @@
+/* Стили плагина применяются ко всей странице youtube.com, даже при строгой CSP сайта.
+   Что прятать, решают атрибуты на <html>: их ставит quiet.js по настройкам. */
+
+/* Shorts: полки на главной, в поиске и на каналах, ролики-шортсы в списках, пункт меню. */
+html[data-quiet-shorts] ytd-reel-shelf-renderer,
+html[data-quiet-shorts] ytd-rich-shelf-renderer[is-shorts],
+html[data-quiet-shorts] ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts]),
+html[data-quiet-shorts] ytd-rich-item-renderer:has(a[href^="/shorts/"]),
+html[data-quiet-shorts] ytd-video-renderer:has(a[href^="/shorts/"]),
+html[data-quiet-shorts] ytd-grid-video-renderer:has(a[href^="/shorts/"]),
+html[data-quiet-shorts] ytd-reel-item-renderer,
+html[data-quiet-shorts] ytm-shorts-lockup-view-model,
+html[data-quiet-shorts] yt-tab-shape[tab-title="Shorts"],
+html[data-quiet-shorts] ytd-guide-entry-renderer:has(a[title="Shorts"]),
+html[data-quiet-shorts] ytd-mini-guide-entry-renderer[aria-label="Shorts"] {
+  display: none !important;
+}
+
+/* Конечные заставки: карточки видео и канала поверх последних секунд ролика. */
+html[data-quiet-endscreen] .ytp-ce-element,
+html[data-quiet-endscreen] .ytp-endscreen-content,
+html[data-quiet-endscreen] .ytp-ce-covering-overlay {
+  display: none !important;
+}
+
+/* Рекомендации справа от видео. */
+html[data-quiet-recs] ytd-watch-flexy #secondary #related,
+html[data-quiet-recs] ytd-watch-next-secondary-results-renderer {
+  display: none !important;
+}
+
+html[data-quiet-comments] ytd-comments#comments {
+  display: none !important;
+}

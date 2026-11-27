@@ -1,0 +1,19 @@
+{
+  "api": 1,
+  "id": "time-tracker",
+  "name": "Время на сайтах",
+  "version": "1.0.0",
+  "description": "Считает, сколько времени за день вы провели на каждом сайте — только пока вкладка на экране. Кнопка на панели показывает время на этом сайте и за весь день, а лимит напомнит, когда пора закрыть YouTube. Всё хранится только у вас, неделю.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/time-tracker",
+  "icon": "icon.svg",
+  "permissions": ["notify"],
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["tracker.js"] }
+  ],
+  "action": { "title": "Сколько я сегодня здесь?" },
+  "settings": [
+    { "key": "limit", "type": "number", "label": "Лимит в день", "note": "В минутах. Дольше — Axiom напомнит один раз за день. 0 — без лимита", "min": 0, "max": 600, "step": 5, "default": 0 },
+    { "key": "sites", "type": "text", "label": "Сайты для лимита", "note": "Через запятую, например: youtube.com, vk.com. Пусто — все сайты", "placeholder": "youtube.com, vk.com", "max_length": 500 }
+  ]
+}

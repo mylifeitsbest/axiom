@@ -1,0 +1,8 @@
+/* Выделение текста — только на сайтах, где плагин включили (атрибут ставит unlock.js). */
+html[data-axiom-copy],
+html[data-axiom-copy] *,
+html[data-axiom-copy] *::before,
+html[data-axiom-copy] *::after {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}

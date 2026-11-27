@@ -1,0 +1,28 @@
+{
+  "api": 1,
+  "id": "scroll-top",
+  "name": "Наверх",
+  "version": "1.0.0",
+  "description": "Круглая кнопка «наверх» на длинных страницах: появляется, когда прокрутили больше экрана, и плавно возвращает в начало. По желанию — и кнопка «вниз».",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/scroll-top",
+  "icon": "icon.svg",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["top.js"] }
+  ],
+  "settings": [
+    {
+      "key": "side", "type": "choice", "label": "Где кнопка",
+      "options": [
+        { "value": "right", "label": "Справа" },
+        { "value": "left", "label": "Слева" }
+      ],
+      "default": "right"
+    },
+    {
+      "key": "down", "type": "toggle", "label": "Кнопка «вниз» тоже",
+      "note": "Вторая кнопка ведёт в конец страницы",
+      "default": false
+    }
+  ]
+}

@@ -1334,6 +1334,7 @@
     permission_ask(m) { pm.onAsk(m); },
     permissions(m) { pm.onList(m); },
     plugins(m) { plg.onList(m); },
+    market(m) { plg.onMarket(m); },
     zoom(m) { zm.onZoom(m); },
     report_info(m) { panels.onReportInfo(m); },
     reported(m) { panels.onReported(m); },

@@ -1,0 +1,34 @@
+{
+  "api": 1,
+  "id": "video-speed",
+  "name": "Скорость видео",
+  "version": "1.0.0",
+  "description": "Скорость любого видео с клавиатуры: Shift+> быстрее, Shift+< медленнее, Shift+0 — обычная. Работает на YouTube, ВКонтакте, в онлайн-курсах и везде, где есть видео; скорость можно запоминать для каждого сайта.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/video-speed",
+  "icon": "icon.svg",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["speed.js"], "run_at": "start", "all_frames": true }
+  ],
+  "settings": [
+    {
+      "key": "step", "type": "choice", "label": "Шаг",
+      "note": "На сколько меняется скорость за одно нажатие",
+      "options": [
+        { "value": "0.1", "label": "0,1" },
+        { "value": "0.25", "label": "0,25" }
+      ],
+      "default": "0.25"
+    },
+    {
+      "key": "speed", "type": "number", "label": "Скорость по умолчанию",
+      "note": "С этой скоростью начинается каждое видео. 1 — обычная",
+      "min": 0.25, "max": 4, "step": 0.05, "default": 1
+    },
+    {
+      "key": "remember", "type": "toggle", "label": "Запоминать скорость для сайта",
+      "note": "Поставили 1,5 на YouTube — следующее видео там начнётся с 1,5",
+      "default": true
+    }
+  ]
+}

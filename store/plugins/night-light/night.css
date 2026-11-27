@@ -1,0 +1,17 @@
+/* Тёплый слой поверх всей страницы: клики проходят сквозь него. */
+html[data-axiom-night]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  background: rgb(255, 138, 36);
+  opacity: var(--axiom-night, 0.3);
+  mix-blend-mode: multiply;
+}
+
+@media print {
+  html[data-axiom-night]::after {
+    display: none;
+  }
+}

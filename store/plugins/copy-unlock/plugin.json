@@ -1,0 +1,27 @@
+{
+  "api": 1,
+  "id": "copy-unlock",
+  "name": "Копирование без запретов",
+  "version": "1.0.0",
+  "description": "Возвращает выделение, копирование и правый клик на сайтах, которые их запрещают. Включается кнопкой на панели для каждого сайта отдельно: на остальных сайтах ничего не меняется.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/store/plugins/copy-unlock",
+  "icon": "icon.svg",
+  "permissions": ["notify"],
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["unlock.js"], "css": ["unlock.css"], "run_at": "start" }
+  ],
+  "action": { "title": "Разрешить копирование на этом сайте" },
+  "settings": [
+    {
+      "key": "context", "type": "toggle", "label": "Правый клик",
+      "note": "Возвращать обычное меню по правой кнопке мыши",
+      "default": true
+    },
+    {
+      "key": "notify", "type": "toggle", "label": "Показывать сообщение",
+      "note": "Говорить, что поменялось, когда нажимаете кнопку плагина",
+      "default": true
+    }
+  ]
+}

@@ -125,6 +125,8 @@ pub struct App {
     /// Скрипт плагина в самой странице вкладки (контекст его мира): туда идут
     /// нажатия кнопки плагина и новые настройки. `None` — главный фрейм (Linux).
     plugin_pages: std::collections::HashMap<(TabId, String), Option<i64>>,
+    /// Магазин плагинов: каталог и что сейчас ставится или публикуется.
+    market: crate::plugins::market::State,
 }
 
 impl App {
@@ -219,6 +221,7 @@ impl App {
             suggest: crate::suggest::Remote::default(),
             plugins,
             plugin_pages: std::collections::HashMap::new(),
+            market: crate::plugins::market::State::default(),
         };
         app.sync_tracking();
         app.sync_identity();
@@ -250,6 +253,7 @@ impl App {
             },
             UserEvent::Hotkey(hotkey) => self.on_hotkey(hotkey)?,
             UserEvent::Plugin(msg) => self.on_plugin(msg),
+            UserEvent::Market(event) => self.on_market(event),
             UserEvent::PluginMissed { tab, plugin } => self.plugin_missed(tab, &plugin),
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
             UserEvent::TabLoad { id, started, url } => self.on_load(id, started, url),
@@ -609,6 +613,21 @@ impl App {
             UiCmd::PluginsReload => self.plugins_reload(),
             UiCmd::PluginsFolder => self.plugins_folder(),
             UiCmd::PluginRemove { folder } => self.plugin_remove(&folder),
+            UiCmd::MarketOpen => self.market_open(),
+            UiCmd::MarketInstall { id } => self.market_install(&id),
+            UiCmd::PluginPublish {
+                id,
+                author,
+                contact,
+                note,
+            } => self.plugin_publish(
+                &id,
+                crate::plugins::market::Publish {
+                    author,
+                    contact,
+                    note,
+                },
+            ),
         }
         Ok(Flow::Continue)
     }

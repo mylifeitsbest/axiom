@@ -14,13 +14,177 @@ use crate::{
         api::{self, Op, Request},
         bridge,
         manifest::Permission,
+        market,
     },
     tabs::TabId,
 };
 
 impl App {
     pub(super) fn push_plugins(&self) {
-        self.send(&ToUi::Plugins(self.plugins.view()));
+        self.send(&ToUi::Plugins(self.plugins.view(&self.market.status)));
+    }
+
+    fn push_market(&self) {
+        let m = &self.market;
+        let items = m
+            .items
+            .iter()
+            .flatten()
+            .map(|item| {
+                let local = self.plugins.get(&item.id);
+                market::ItemView {
+                    item,
+                    installed: local.map(|p| p.manifest.version.as_str()),
+                    from_store: local.is_some_and(|p| p.from_store.is_some()),
+                }
+            })
+            .collect();
+        self.send(&ToUi::Market(market::View {
+            loaded: m.items.is_some(),
+            loading: m.loading,
+            error: m.error.as_deref(),
+            items,
+            busy: &m.busy,
+        }));
+    }
+
+    /// Открыли «Магазин»: каталог (каждый раз заново — там могли появиться новые)
+    /// и что с плагинами, которые публиковали отсюда.
+    pub(super) fn market_open(&mut self) {
+        if !self.market.loading {
+            self.market.loading = true;
+            self.market.error = None;
+            market::load_index(&self.events);
+            market::load_status(&self.paths.root, &self.events);
+        }
+        self.push_market();
+    }
+
+    pub(super) fn market_install(&mut self, id: &str) {
+        if self.market.busy.iter().any(|b| b == id) {
+            return;
+        }
+        let Some(item) = self.market.item(id) else {
+            return;
+        };
+        if self.plugins.get(id).is_some_and(|p| p.from_store.is_none()) {
+            self.toast_text(&format!(
+                "У вас уже есть свой плагин «{id}» — переименуйте или удалите его папку"
+            ));
+            return;
+        }
+        market::download(item, &self.events);
+        self.market.set_busy(id, true);
+        self.push_market();
+    }
+
+    pub(super) fn plugin_publish(&mut self, id: &str, about: market::Publish) {
+        let Some(plugin) = self.plugins.get(id) else {
+            return;
+        };
+        if plugin.from_store.is_some() {
+            self.toast_text(
+                "Этот плагин поставлен из магазина — опубликовать его может только автор",
+            );
+            return;
+        }
+        if self.market.busy.iter().any(|b| b == id) {
+            return;
+        }
+        let dir = self.plugins.dir().join(&plugin.folder);
+        let cut = |s: &str, n: usize| s.trim().chars().take(n).collect::<String>();
+        let about = market::Publish {
+            author: cut(&about.author, market::MAX_AUTHOR),
+            contact: cut(&about.contact, market::MAX_CONTACT),
+            note: cut(&about.note, market::MAX_NOTE),
+        };
+        match market::publish(&self.paths.root, &dir, id, about, &self.events) {
+            Ok(()) => {
+                self.market.set_busy(id, true);
+                self.push_plugins();
+                self.push_market();
+                self.toast_text("Плагин отправляется в магазин…");
+            }
+            Err(err) => self.toast_text(&format!("Плагин не отправлен: {err}")),
+        }
+    }
+
+    pub(super) fn on_market(&mut self, event: market::Event) {
+        match event {
+            market::Event::Index(result) => {
+                self.market.loading = false;
+                match result {
+                    Ok(items) => {
+                        self.market.items = Some(items);
+                        self.market.error = None;
+                    }
+                    Err(err) => self.market.error = Some(err),
+                }
+                self.push_market();
+            }
+            market::Event::Status(status) => {
+                self.market.status = status;
+                self.push_plugins();
+            }
+            market::Event::Downloaded { id, result } => {
+                self.market.set_busy(&id, false);
+                let dir = self.plugins.dir();
+                let installed = result.and_then(|bundle| {
+                    market::install(&dir, &id, &bundle).map(|fresh| (fresh, bundle.version))
+                });
+                match installed {
+                    Ok((fresh, version)) => {
+                        self.plugins.rescan();
+                        // Поставили — значит, хотят пользоваться: включаем сразу.
+                        // Обновление оставляет плагин таким, каким он был.
+                        let enabled = if fresh {
+                            self.plugins.set_enabled(&id, true)
+                        } else {
+                            Ok(false)
+                        };
+                        self.plugins_changed();
+                        let name = self.plugin_name(&id);
+                        let text = match enabled {
+                            Err(err) => format!("«{name}» поставлен, но не включился: {err}"),
+                            Ok(_) if fresh => format!(
+                                "«{name}» установлен — работает на страницах, которые вы откроете или обновите"
+                            ),
+                            Ok(_) => format!("«{name}» обновлён до {version} — обновите страницу"),
+                        };
+                        self.toast_text(&text);
+                    }
+                    Err(err) => self.toast_text(&format!("Не удалось поставить плагин: {err}")),
+                }
+                self.push_market();
+            }
+            market::Event::Published { id, result } => {
+                self.market.set_busy(&id, false);
+                match result {
+                    Ok(version) => {
+                        self.market.status.insert(
+                            id.clone(),
+                            market::Status {
+                                version,
+                                status: "pending".into(),
+                                reason: String::new(),
+                                published: self
+                                    .market
+                                    .status
+                                    .get(&id)
+                                    .and_then(|s| s.published.clone()),
+                            },
+                        );
+                        let name = self.plugin_name(&id);
+                        self.toast_text(&format!(
+                            "«{name}» отправлен на проверку — после неё он появится в магазине"
+                        ));
+                    }
+                    Err(err) => self.toast_text(&format!("Плагин не отправлен: {err}")),
+                }
+                self.push_plugins();
+                self.push_market();
+            }
+        }
     }
 
     /// Набор или код плагинов поменялся: всем живым вкладкам — новые скрипты.

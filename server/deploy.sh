@@ -16,6 +16,7 @@ DOMAIN="${AXIOM_STATS_DOMAIN:-179-254-172-240.sslip.io}"
 
 echo "==> Python-служба"
 install -D -m 0644 "$SRC/stats.py" /opt/axiom-stats/stats.py
+install -D -m 0644 "$SRC/store.py" /opt/axiom-stats/store.py
 
 # Секретный ключ панели создаём один раз и больше не трогаем.
 if [ ! -f /etc/axiom-stats.env ]; then
@@ -45,6 +46,18 @@ systemctl enable --now caddy.service
 # и новый stats.py и Caddyfile иначе не применились бы.
 systemctl restart axiom-stats.service
 systemctl reload caddy.service || systemctl restart caddy.service
+
+# Плагины Axiom в магазин: store/plugins рядом с server/ (запуск из клона репозитория)
+# или store-plugins рядом с deploy.sh (если папку сервера скопировали отдельно).
+# База — та же, что у службы (AXIOM_STATS_DB в axiom-stats.service); служба уже
+# запущена и создала её папку.
+for PLUGINS in "$SRC/../store/plugins" "$SRC/store-plugins"; do
+	if [ -d "$PLUGINS" ]; then
+		echo "==> Плагины Axiom в магазин"
+		AXIOM_STATS_DB=/var/lib/axiom-stats/stats.db python3 /opt/axiom-stats/stats.py store-import "$PLUGINS"
+		break
+	fi
+done
 
 # Если включён ufw — открыть порты 80/443 и 22.
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then

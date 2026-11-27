@@ -1,6 +1,6 @@
 # Политика конфиденциальности Axiom
 
-Коротко: страницы, история, закладки, пароли и куки хранятся только на вашем компьютере. Сам Axiom отправляет совсем немного, и всё это можно выключить в настройках («Система», подсказки поиска — «Поиск и ИИ»). Об этом же говорит приветствие при первом запуске.
+Коротко: страницы, история, закладки, пароли и куки хранятся только на вашем компьютере. Сам Axiom отправляет совсем немного, и всё это можно выключить в настройках («Система», подсказки поиска — «Поиск и ИИ», списки фильтров рекламы — «Безопасность»). Об этом же говорит приветствие при первом запуске.
 
 _English version below._
 
@@ -26,6 +26,11 @@ _English version below._
 - Когда: пока вы набираете текст в адресной строке или в поиске новой вкладки, ещё до Enter.
 - Что: набранный текст (до 120 знаков) и та же строка браузера (`User-Agent`), что у вкладок. Куки не отправляются. Похожее на адрес сайта (`example.com/…`) не отправляется вовсе; со своим адресом поиска подсказок нет.
 - Выключить: «Настройки → Поиск и ИИ → Подсказки поисковой системы». Ваши прошлые запросы из истории подсказываются без сети и при выключенных подсказках.
+
+**Списки фильтров рекламы** — с сервера списков EasyList (`easylist-downloads.adblockplus.org`, запасной адрес для EasyList — `easylist.to`).
+- Когда: раз в 4 дня (первая проверка — через 20 секунд после запуска), не вышло — через час. И по кнопке «Проверить» в «Настройки → Безопасность».
+- Что: обычные запросы файлов `easylist.txt` и `advblock.txt` (RuAdList); в заголовке `User-Agent` — версия Axiom, в `If-Modified-Since` — когда скачан ваш прежний список, чтобы неизменный не качался заново. О вас, о вкладках и об открытых сайтах ничего не уходит: какие запросы блокировать, Axiom решает сам, у себя.
+- Выключить: «Настройки → Безопасность → Обновлять списки фильтров». Тогда блокировка работает по спискам, встроенным в Axiom (они обновляются вместе с ним). Сама блокировка рекламы — там же, «Блокировать рекламу»; она ничего не отправляет.
 
 **Ответы на «Сообщить о проблеме»** — на сервер разработчика.
 - Когда: только если вы отправляли сообщение, раз в 20 минут в течение месяца после отправки.
@@ -66,13 +71,14 @@ _English version below._
 
 # Axiom privacy policy (English)
 
-Pages, history, bookmarks, passwords and cookies stay on your computer. Axiom itself sends very little, and every item below can be turned off in Settings (System; search suggestions in Search and AI). The first-run welcome screen shows the same list with the switches.
+Pages, history, bookmarks, passwords and cookies stay on your computer. Axiom itself sends very little, and every item below can be turned off in Settings (System; search suggestions in Search and AI; ad filter lists in Security). The first-run welcome screen shows the same list with the switches.
 
 **Sent automatically:**
 - **Usage statistics** to the developer's server (`179-254-172-240.sslip.io`), hourly while Axiom is open and at start: Axiom version, OS (Windows or Linux) and a few yes/no flags (new install; first run today, this week, this month; just updated; first run of this version today; data imported from another browser, once, without the browser's name or the data; an "hourly" flag used to count open browsers). No identifier, URLs, history or user name. Switch: «Статистика использования» (usage statistics). When it is off, nothing goes to the developer's server in the background except checks for replies to messages you sent yourself.
 - **Crash reports** to the developer's server, only after a crash: error message, code location, stack trace, the tail of `axiom.log`, version and OS; on Linux, if systemd-coredump caught the crash, also the name of the crashed Axiom or engine process, the signal and its stack (no command line, no memory dump). URLs, user-name paths, e-mail addresses and tokens are removed before the report is written to disk. Switch: «Отправлять отчёты об ошибках» (send crash reports); when off, reports are deleted unsent.
 - **Search suggestions** to the chosen search engine (DuckDuckGo by default) while you type in the address bar or the new-tab search, before you press Enter: the typed text (up to 120 characters) and the same `User-Agent` as the tabs, no cookies. Input that looks like a site address is never sent; a custom search URL gets no suggestions. Switch: «Подсказки поисковой системы» in Settings → Search and AI. Your own past searches from history are suggested offline either way.
 - **Update checks** to GitHub, every 6 hours (beta builds: every 30 minutes); the `User-Agent` header carries the Axiom version. Switch: «Проверять автоматически» (check automatically).
+- **Ad filter lists** from the EasyList list server (`easylist-downloads.adblockplus.org`, fallback for EasyList `easylist.to`), every 4 days (first check 20 seconds after start, retry in an hour on failure) and on «Проверить» in Settings → Security: plain downloads of `easylist.txt` and `advblock.txt` (RuAdList) with the Axiom version in `User-Agent` and `If-Modified-Since` so an unchanged list is not downloaded again. Nothing about you, your tabs or the sites you open is sent: Axiom decides what to block locally. Switch: «Обновлять списки фильтров» in Settings → Security; when off, the lists built into Axiom are used (they update with Axiom). Ad blocking itself («Блокировать рекламу») sends nothing.
 - **Replies to "Report a problem"**: only if you sent a message, every 20 minutes for a month, using that message's random reply key, which is not linked to the browser or to the statistics.
 
 **Sent only when you act:** "Report a problem" (your text, optionally the log and files, with photo and video location and camera data removed); installing WebView2 on Windows when it is missing (after you answer "Yes", the installer is downloaded from Microsoft, `go.microsoft.com`, and started); page translation (page text goes to Google Translate when you click Translate or enable auto-translate for a language); address-bar search (to the chosen search engine, DuckDuckGo by default, plus Google AI Mode in the side panel while "double search" is on); the sites you open.

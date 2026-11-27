@@ -1,5 +1,6 @@
-/* Расширение веб-процесса WebKitGTK для вкладок: подмена заголовка Referer
- * и запрет сайтам из интернета обращаться к устройствам локальной сети.
+/* Расширение веб-процесса WebKitGTK для вкладок: подмена заголовка Referer,
+ * запрет сайтам из интернета обращаться к устройствам локальной сети и счётчик
+ * заблокированной рекламы.
  *
  * Заголовки и сами запросы WebKitGTK даёт трогать только внутри веб-процесса —
  * в сигнале WebKitWebPage::send-request. build.rs собирает этот файл в .so, Axiom
@@ -260,11 +261,36 @@ static gboolean on_send_request(WebKitWebPage *page, WebKitURIRequest *request,
     return FALSE;
 }
 
+/* ---------- блокировка рекламы: счётчик ----------
+ *
+ * Рекламу блокирует сам WebKit по правилам Axiom (src/adblock/linux.rs) и о каждой
+ * заблокированной загрузке пишет в консоль страницы. По этим строкам вкладка
+ * узнаёт, сколько заблокировано: ей уходит сообщение "axiom-adblock". Сигнал
+ * консоли в WebKitGTK 2.40 объявлен устаревшим, но в API 4.1 он есть и работает. */
+
+#define BLOCKED_PREFIX "Content blocker prevented frame displaying "
+
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+static void on_console(WebKitWebPage *page, WebKitConsoleMessage *message, gpointer data)
+{
+    (void)data;
+    const gchar *text = webkit_console_message_get_text(message);
+    if (!text || !g_str_has_prefix(text, BLOCKED_PREFIX))
+        return;
+    guint64 id = webkit_web_page_get_id(page);
+    if (!g_hash_table_contains(tabs, &id))
+        return;
+    webkit_web_page_send_message_to_view(page, webkit_user_message_new("axiom-adblock", NULL), NULL,
+                                         NULL, NULL);
+}
+G_GNUC_END_IGNORE_DEPRECATIONS
+
 static void on_page_created(WebKitWebExtension *extension, WebKitWebPage *page, gpointer data)
 {
     (void)extension;
     (void)data;
     g_signal_connect(page, "send-request", G_CALLBACK(on_send_request), NULL);
+    g_signal_connect(page, "console-message-sent", G_CALLBACK(on_console), NULL);
 }
 
 static gboolean on_message(WebKitWebExtension *extension, WebKitUserMessage *message,

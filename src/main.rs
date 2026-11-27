@@ -6,6 +6,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod adblock;
 mod ai_panel;
 mod app;
 mod downloads;

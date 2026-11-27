@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Реклама</title>
+<!-- Проверка блокировки рекламы (.github/linux-gui/adblock.sh): рекламные скрипты,
+     картинка, fetch и фрейм не грузятся, рекламные элементы скрыты, обычные видны.
+     Через 8 с страница отчитывается запросом /report?… — его видно в журнале сервера. -->
+<script>window.R = { ok: [], fail: [] }; function mark(n, ok) { (ok ? R.ok : R.fail).push(n); }</script>
+<script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js" onload="mark('adsbygoogle',1)" onerror="mark('adsbygoogle',0)"></script>
+<script src="https://an.yandex.ru/system/context.js" onload="mark('yandex',1)" onerror="mark('yandex',0)"></script>
+<script src="/own.js" onload="mark('own',1)" onerror="mark('own',0)"></script>
+</head><body>
+<h1 id="title">Новости</h1>
+<div class="adsbygoogle-box" id="g1">РЕКЛАМА</div>
+<div class="SC_TBlock" id="g2">РЕКЛАМА</div>
+<div id="ad_block">РЕКЛАМА</div>
+<div class="content" id="n1">Обычный текст</div>
+<img id="adimg" src="https://example.com/banners/ad_728x90.gif" onload="mark('adimg',1)" onerror="mark('adimg',0)">
+<div id="late"></div>
+<script>
+fetch('https://ads.adfox.ru/123/getBulk', { mode: 'no-cors' }).then(() => mark('adfox', 1), () => mark('adfox', 0));
+setTimeout(() => { document.getElementById('late').innerHTML = '<div class="adsbygoogle-wrapper" id="g3">РЕКЛАМА</div>'; }, 1000);
+setTimeout(() => {
+  const css = {};
+  for (const id of ['g1', 'g2', 'ad_block', 'g3', 'n1', 'title']) css[id] = getComputedStyle(document.getElementById(id)).display;
+  new Image().src = '/report?' + encodeURIComponent(JSON.stringify({ R, css, own: !!window.ownLoaded }));
+}, 8000);
+</script>
+</body></html>

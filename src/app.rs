@@ -1,5 +1,6 @@
 //! Состояние браузера и обработка событий главного цикла.
 
+mod adblock;
 mod ai_tabs;
 mod app_links;
 mod history_page;
@@ -127,6 +128,8 @@ pub struct App {
     plugin_pages: std::collections::HashMap<(TabId, String), Option<i64>>,
     /// Магазин плагинов: каталог и что сейчас ставится или публикуется.
     market: crate::plugins::market::State,
+    /// Блокировка рекламы: списки, сборка движка, обновления.
+    adblock: crate::adblock::Manager,
 }
 
 impl App {
@@ -141,6 +144,9 @@ impl App {
         crate::reports::set_auto(settings.crash_reports);
         crate::stats::set_enabled(settings.usage_stats);
         let events = event_loop.create_proxy();
+        // Движок блокировщика собирается в фоне, пока строятся окно и интерфейс:
+        // к первым запросам восстановленных вкладок он уже готов.
+        let adblock = crate::adblock::Manager::start(&paths, &settings.adblock(), events.clone());
         crate::reports::answers::listen(&paths.root, events.clone());
         let mut updater = Updater::new();
         updater.set_updated_from(updated_from);
@@ -222,6 +228,7 @@ impl App {
             plugins,
             plugin_pages: std::collections::HashMap::new(),
             market: crate::plugins::market::State::default(),
+            adblock,
         };
         app.sync_tracking();
         app.sync_identity();
@@ -253,6 +260,7 @@ impl App {
             },
             UserEvent::Hotkey(hotkey) => self.on_hotkey(hotkey)?,
             UserEvent::Plugin(msg) => self.on_plugin(msg),
+            UserEvent::Adblock(event) => self.on_adblock(event),
             UserEvent::Market(event) => self.on_market(event),
             UserEvent::PluginMissed { tab, plugin } => self.plugin_missed(tab, &plugin),
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
@@ -357,6 +365,7 @@ impl App {
                 self.push_downloads();
                 self.push_permissions();
                 self.push_plugins();
+                self.push_adblock();
                 self.push_update(false);
                 self.push_answers(false);
                 self.push_window_state();
@@ -585,6 +594,10 @@ impl App {
                 decision,
             } => self.set_site_permission(&site, kind, decision),
             UiCmd::ForgetSite { site } => self.forget_site(&site),
+            UiCmd::AdblockSite { on } => self.adblock_site(on),
+            UiCmd::AdblockAllow { site } => self.adblock_list(&site, true),
+            UiCmd::AdblockForget { site } => self.adblock_list(&site, false),
+            UiCmd::AdblockUpdate => self.adblock_update(),
             UiCmd::PermissionDefault { kind, block } => self.set_permission_default(kind, block),
             UiCmd::ForgetAppLink { site, scheme } => self.forget_app_link(&site, &scheme),
             UiCmd::Zoom { step } => self.zoom_from_bubble(step),
@@ -942,6 +955,7 @@ impl App {
         };
         let was_active = self.tabs.active == Some(id);
         self.permissions_tab_gone(id);
+        crate::adblock::forget(id);
         // Закрытые настройки и история возвращают туда, откуда их открыли.
         let own = self
             .tabs
@@ -1450,6 +1464,7 @@ impl App {
             });
         self.sync_tracking();
         self.sync_identity();
+        self.sync_adblock();
         if self.settings.ai_proxy != old_proxy {
             self.apply_proxy_change();
         }
@@ -1749,6 +1764,9 @@ impl App {
 
     fn on_tick(&mut self) {
         self.updater.tick(self.settings.check_updates, &self.events);
+        if self.adblock.tick() {
+            self.push_adblock();
+        }
         crate::reports::tick();
         // Страховка: webview страницы на весь экран мог пропасть без нашего ведома.
         if self.fullscreen.is_on() {
@@ -2028,6 +2046,7 @@ impl App {
         let _ = self.history.save_all(&self.paths);
         let _ = self.downloads.save_if_dirty(&self.paths);
         self.zoom.save_if_dirty(&self.paths);
+        self.adblock.save_if_dirty();
         self.persist_settings();
     }
 
@@ -2096,6 +2115,8 @@ impl App {
                 muted: t.muted,
                 volume: t.volume,
                 zoom: crate::tabs::zoom::percent(t.zoom),
+                blocked: crate::adblock::blocked(t.id),
+                ads_blocked: !crate::adblock::site_allowed(&t.url),
             })
             .collect();
         let on_newtab = self.tabs.active_tab().is_some_and(|t| t.is_newtab());

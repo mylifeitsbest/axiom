@@ -158,6 +158,11 @@ pub struct SettingsIn {
     /// Статистика использования. Нет поля — не менять.
     #[serde(default)]
     pub usage_stats: Option<bool>,
+    /// Блокировка рекламы и обновление её списков. Нет поля — не менять.
+    #[serde(default)]
+    pub adblock: Option<bool>,
+    #[serde(default)]
+    pub adblock_updates: Option<bool>,
     /// Подсказки поисковой системы. Нет поля — не менять.
     #[serde(default)]
     pub search_suggest: Option<bool>,
@@ -408,6 +413,20 @@ pub enum UiCmd {
     ForgetSite {
         site: String,
     },
+    /// Блокировать рекламу на сайте активной вкладки (`on`) или нет; страница
+    /// перезагружается.
+    AdblockSite {
+        on: bool,
+    },
+    /// Сайт — в список «не блокировать» (вписали в настройках) или из него.
+    AdblockAllow {
+        site: String,
+    },
+    AdblockForget {
+        site: String,
+    },
+    /// Проверить списки фильтров сейчас.
+    AdblockUpdate,
     /// «Не спрашивать» для всех сайтов (`block`) или снова спрашивать.
     PermissionDefault {
         kind: crate::storage::permissions::Perm,
@@ -593,6 +612,9 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
                 return Err(IpcError::Invalid("decision"));
             }
         }
+        UiCmd::AdblockAllow { site } | UiCmd::AdblockForget { site } => {
+            short(site, 2048, "site")?;
+        }
         UiCmd::ForgetSite { site } | UiCmd::ForgetAppLink { site, .. } => {
             short(site, 300, "site")?;
             if let UiCmd::ForgetAppLink { scheme, .. } = cmd {
@@ -689,6 +711,10 @@ pub struct TabView<'a> {
     pub volume: u8,
     /// Масштаб страницы в процентах (100 — без масштаба).
     pub zoom: u16,
+    /// Заблокировано рекламы на странице.
+    pub blocked: u32,
+    /// Реклама на сайте вкладки блокируется (не выключена вовсе и не для этого сайта).
+    pub ads_blocked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -802,6 +828,14 @@ pub enum ToUi<'a> {
         height: f64,
     },
     Update(crate::update::View),
+    /// Блокировка рекламы: настройки, списки, счётчик за всё время.
+    Adblock(crate::adblock::View<'a>),
+    /// Заблокировано на странице вкладки (и всего).
+    Blocked {
+        id: u64,
+        count: u32,
+        total: u64,
+    },
     /// Список изменений для «Что нового»; `error` — не удалось скачать.
     UpdateNotes {
         which: crate::update::NotesWhich,

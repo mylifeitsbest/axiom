@@ -56,7 +56,7 @@
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: null, maximized: false };
   let A = { ...DEFAULTS };
   // no_sleep_sites: null — настройки ещё не пришли, Rust список не трогает.
-  let B = { double_search: true, ai_proxy: '', ai_new_chat: true, sleep_minutes: 5, live_tabs: 3, no_sleep_sites: null, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, usage_stats: true, search_suggest: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
+  let B = { double_search: true, ai_proxy: '', ai_new_chat: true, sleep_minutes: 5, live_tabs: 3, no_sleep_sites: null, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, usage_stats: true, adblock: true, adblock_updates: true, search_suggest: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -136,6 +136,8 @@
   // ---------- плагины (ui/plugins.js) ----------
   const plg = createPlugins({ esc, send, toast: (t) => toast(t), closeSettings: () => closeSettings() });
   const pm = createPermissions({ esc, send, setOverlay, isPage, toast: (t) => toast(t), activeTab: () => activeTab(), favHtml: (u) => favHtml(u), openSettings: (s) => openSettings(s) });
+  // ---------- блокировка рекламы (ui/adblock.js) ----------
+  const ab = createAdblock({ esc, send, setOverlay, isPage, activeTab: () => activeTab(), tabs: () => S.tabs, openSettings: (s) => openSettings(s) });
 
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });
@@ -383,6 +385,8 @@
         strip_tracking: B.strip_tracking !== false,
         crash_reports: B.crash_reports !== false,
         usage_stats: B.usage_stats !== false,
+        adblock: B.adblock !== false,
+        adblock_updates: B.adblock_updates !== false,
         search_suggest: B.search_suggest !== false,
         // null — бета-версии ещё не включали и не выключали: Rust не трогает поле.
         beta: typeof B.beta === 'boolean' ? B.beta : null,
@@ -709,6 +713,7 @@
     star.title = t?.bookmarked ? 'В закладках — убрать (Ctrl+D)' : 'Добавить в закладки (Ctrl+D)';
     tr.render(t, S.tabs);
     pm.renderOmni(t);
+    ab.renderOmni(t);
     if (mode === 'find') return;
     if (document.activeElement === inp) {
       // Вкладку сменили, не выходя из строки (Ctrl+Tab): набранное остаётся своей вкладке.
@@ -1198,6 +1203,7 @@
     answers: ans,
     translate: tr,
     perms: pm,
+    adblock: ab,
     plugins: plg,
     openUpdate() { dl.close(); upd.open(); },
     openNotes() { dl.close(); upd.openNotes(); },
@@ -1261,7 +1267,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', ai_new_chat: s.ai_new_chat !== false, sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, no_sleep_sites: sitesIn(s.no_sleep_sites), onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, usage_stats: s.usage_stats !== false, search_suggest: s.search_suggest !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', ai_new_chat: s.ai_new_chat !== false, sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, no_sleep_sites: sitesIn(s.no_sleep_sites), onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, usage_stats: s.usage_stats !== false, adblock: s.adblock !== false, adblock_updates: s.adblock_updates !== false, search_suggest: s.search_suggest !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
@@ -1333,6 +1339,8 @@
     app_link(m) { xap.onRequest(m); },
     permission_ask(m) { pm.onAsk(m); },
     permissions(m) { pm.onList(m); },
+    adblock(m) { ab.onState(m); },
+    blocked(m) { ab.onBlocked(m); },
     plugins(m) { plg.onList(m); },
     market(m) { plg.onMarket(m); },
     zoom(m) { zm.onZoom(m); },

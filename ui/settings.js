@@ -133,7 +133,7 @@ function createPanels(ax) {
     { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
     { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome, Edge, Firefox и других браузеров.' },
-    { id: 'security', icon: 'shield', title: 'Безопасность', desc: 'Что сайтам можно: микрофон, камера, место, уведомления и запуск приложений.' },
+    { id: 'security', icon: 'shield', title: 'Безопасность', desc: 'Блокировка рекламы и что сайтам можно: микрофон, камера, место, уведомления и запуск приложений.' },
     { id: 'plugins', icon: 'puzzle', title: 'Плагины', desc: 'Свои скрипты и стили для сайтов — ваши или чужие.' },
     { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка, обновления и браузер по умолчанию.' },
     { id: 'keys', icon: 'keyboard', title: 'Клавиши', desc: 'Привычные сочетания плюс пара своих.' },
@@ -277,7 +277,7 @@ function createPanels(ax) {
         </div>
         <div class="note">${icon('sparkles')}<span>В панели открывается только AI Mode. Ссылки из ответа, обычная выдача Google и другие сайты открываются в новой вкладке.</span></div>`,
       translate: ax.translate.sectionHtml(),
-      security: ax.perms.sectionHtml(),
+      security: ax.adblock.sectionHtml() + ax.perms.sectionHtml(),
       plugins: ax.plugins.sectionHtml(),
       memory: `
         <div class="card">
@@ -423,6 +423,7 @@ function createPanels(ax) {
       // «Картинки в картинке» в WebKitGTK нет.
       $('#islPipRow').hidden = !win;
       ax.translate.syncSheet();
+      ax.adblock.syncSheet();
       ax.perms.syncSheet();
       ax.plugins.syncSheet();
     }
@@ -1252,6 +1253,7 @@ function createPanels(ax) {
             ${row('Отчёты об ошибках', 'Если Axiom вылетит: что сломалось и конец журнала, без адресов страниц', toggle('data-bkey', 'crash_reports'))}
             ${row('Проверять обновления', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии', toggle('data-bkey', 'check_updates'))}
             ${row('Подсказки поиска', 'Пока вы набираете запрос, текст уходит в выбранную поисковую систему — она подсказывает популярные запросы', toggle('data-bkey', 'search_suggest'))}
+            ${row('Списки фильтров рекламы', 'Раз в 4 дня Axiom скачивает свежие EasyList и RuAdList — только сами списки, ничего о вас', toggle('data-bkey', 'adblock_updates'))}
           </div>
           <p class="onb-small">Подробно — в Настройки → Система → «Политика конфиденциальности»</p>
         </section>

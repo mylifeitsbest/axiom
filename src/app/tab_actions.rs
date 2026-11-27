@@ -55,7 +55,7 @@ impl App {
     }
 
     /// Перезагрузка; `hard` — без кэша. Спящая вкладка просто просыпается.
-    fn reload_tab_with(&mut self, id: TabId, hard: bool) {
+    pub(super) fn reload_tab_with(&mut self, id: TabId, hard: bool) {
         let Some(tab) = self.tabs.get(id) else {
             return;
         };

@@ -1,5 +1,6 @@
 //! Встраивает иконку и описание в axiom.exe (Windows). На Linux собирает
 //! расширение веб-процесса WebKitGTK для подмены Referer (src/tabs/webext.c).
+//! Сжимает встроенные списки фильтров рекламы (assets/adblock → src/adblock/lists.rs).
 //!
 //! Бета-версия (`AXIOM_BETA_BUILD=N`, её задаёт .github/workflows/beta.yml)
 //! получает версию файла `X.Y.Z.N`: по ней более новая копия узнаёт, что
@@ -9,6 +10,7 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/axiom.ico");
     println!("cargo:rerun-if-env-changed=AXIOM_BETA_BUILD");
     let beta = beta_build();
+    filter_lists();
     #[cfg(windows)]
     {
         let mut res = winresource::WindowsResource::new();
@@ -99,6 +101,47 @@ fn web_extension() {
         Ok(status) => panic!("{} не собрал {SRC}: {status}", cc[0]),
         Err(err) => panic!("не запустить {}: {err}", cc[0]),
     }
+}
+
+/// `assets/adblock/<id>.txt` → `OUT_DIR/<id>.txt.z` (deflate). Комментарии внутри
+/// списка выбрасываем, заголовок (версия, дата, лицензия) оставляем.
+fn filter_lists() {
+    use std::{env, fs, path::PathBuf};
+
+    let Some(out_dir) = env::var_os("OUT_DIR") else {
+        panic!("cargo не задал OUT_DIR");
+    };
+    // Отпечаток встроенных списков: по нему Linux узнаёт, что правила WebKit уже
+    // скомпилированы из них (src/adblock/linux.rs). FNV-1a — для этого хватает.
+    let mut stamp: u64 = 0xcbf2_9ce4_8422_2325;
+    for id in ["easylist", "ruadlist"] {
+        let src = format!("assets/adblock/{id}.txt");
+        println!("cargo:rerun-if-changed={src}");
+        let text = match fs::read_to_string(&src) {
+            Ok(text) => text,
+            Err(err) => panic!("нет списка фильтров {src}: {err}"),
+        };
+        let mut kept = String::with_capacity(text.len());
+        let mut header = true;
+        for line in text.lines() {
+            let comment = line.starts_with('!') || line.starts_with('[');
+            header &= comment;
+            if line.trim().is_empty() || (comment && !header) {
+                continue;
+            }
+            kept.push_str(line);
+            kept.push('\n');
+        }
+        for b in kept.bytes() {
+            stamp = (stamp ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+        let packed = miniz_oxide::deflate::compress_to_vec(kept.as_bytes(), 10);
+        let out = PathBuf::from(&out_dir).join(format!("{id}.txt.z"));
+        if let Err(err) = fs::write(&out, packed) {
+            panic!("не записать {}: {err}", out.display());
+        }
+    }
+    println!("cargo:rustc-env=AXIOM_ADBLOCK_LISTS={stamp:016x}");
 }
 
 /// Номер бета-версии: целое от 1 до 65535 (столько вмещает версия файла Windows).

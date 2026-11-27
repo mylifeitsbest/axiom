@@ -180,6 +180,8 @@ pub fn build_tab(
         .with_initialization_script_for_main_only(super::volume::PAGE_SCRIPT, false)
         // Что играет и кнопки для островка — только главный фрейм (см. `media`).
         .with_initialization_script_for_main_only(super::media::PAGE_SCRIPT, true)
+        // Скрытие рекламы — во всех фреймах (Windows; на Linux скрипт пустой).
+        .with_initialization_script_for_main_only(crate::adblock::PAGE_SCRIPT, false)
         .with_navigation_handler(move |url| {
             // `data:` — только набранный человеком; не страница вовсе — ссылка
             // на приложение (`mailto:`, `tg:`…): решает external.
@@ -214,6 +216,7 @@ pub fn build_tab(
 
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
     super::local_net::install(&webview);
+    crate::adblock::install(&webview, id);
     hotkeys::install_tab(&webview, events.clone());
     super::popups::install(&webview);
     super::external::install(&webview, id, events.clone());

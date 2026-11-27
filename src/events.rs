@@ -21,6 +21,8 @@ pub enum UserEvent {
     Hotkey(Hotkey),
     /// Запрос скрипта плагина из вкладки (`plugins::bridge`).
     Plugin(crate::plugins::Message),
+    /// Блокировка рекламы: движок собран, списки проверены, что-то заблокировано.
+    Adblock(crate::adblock::Event),
     /// Магазин плагинов: каталог, скачанный плагин, итог публикации.
     Market(crate::plugins::market::Event),
     /// Кнопку плагина нажали, а на странице активной вкладки его нет.

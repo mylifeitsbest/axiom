@@ -101,6 +101,13 @@ pub struct Settings {
     pub crash_reports: bool,
     /// Раз в час отмечаться на сервере статистики (см. `stats`, PRIVACY.md).
     pub usage_stats: bool,
+    /// Блокировать рекламу во вкладках (см. `adblock`).
+    pub adblock: bool,
+    /// Раз в несколько дней скачивать свежие списки фильтров рекламы (PRIVACY.md).
+    pub adblock_updates: bool,
+    /// Сайты, где реклама не блокируется: `example.com` — и его поддомены.
+    #[serde(deserialize_with = "sleep::lenient_sites")]
+    pub adblock_sites: Vec<String>,
     /// Каким браузером вкладки представляются сайтам.
     #[serde(deserialize_with = "identity::lenient")]
     pub user_agent: Agent,
@@ -136,6 +143,9 @@ impl Default for Settings {
             strip_tracking: true,
             crash_reports: true,
             usage_stats: true,
+            adblock: true,
+            adblock_updates: true,
+            adblock_sites: Vec::new(),
             user_agent: Agent::Default,
             user_agent_custom: String::new(),
             referer: Referer::Default,
@@ -182,6 +192,12 @@ impl Settings {
         if let Some(on) = incoming.usage_stats {
             self.usage_stats = on;
         }
+        if let Some(on) = incoming.adblock {
+            self.adblock = on;
+        }
+        if let Some(on) = incoming.adblock_updates {
+            self.adblock_updates = on;
+        }
         if let Some(on) = incoming.search_suggest {
             self.search_suggest = on;
         }
@@ -208,6 +224,15 @@ impl Settings {
             self.referer_custom = custom;
         }
         self.fix_identity();
+    }
+
+    /// Блокировка рекламы.
+    pub fn adblock(&self) -> crate::adblock::Prefs {
+        crate::adblock::Prefs {
+            enabled: self.adblock,
+            updates: self.adblock_updates,
+            sites: self.adblock_sites.clone(),
+        }
     }
 
     /// Подмена User-Agent и Referer для вкладок.
@@ -272,6 +297,7 @@ impl Settings {
         self.sleep_minutes = self.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.live_tabs = self.live_tabs.min(MAX_LIVE_TABS);
         self.no_sleep_sites = sleep::clean_sites(&self.no_sleep_sites);
+        self.adblock_sites = sleep::clean_sites(&self.adblock_sites);
         self.translate = self.translate.sanitized();
         self.fix_identity();
         if crate::ai_panel::proxy::parse(&self.ai_proxy).is_err() {

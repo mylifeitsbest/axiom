@@ -115,6 +115,11 @@ const ASSETS: &[Asset] = &[
         bytes: include_bytes!("../../ui/tabmenu.js"),
     },
     Asset {
+        path: "/plugins.js",
+        mime: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../../ui/plugins.js"),
+    },
+    Asset {
         path: "/applink.js",
         mime: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../../ui/applink.js"),

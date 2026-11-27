@@ -1,0 +1,27 @@
+{
+  "api": 1,
+  "id": "hello",
+  "name": "Привет, плагин",
+  "version": "1.0.0",
+  "description": "Пример плагина: кнопка на панели считает слова на странице и время чтения.",
+  "author": "Axiom",
+  "homepage": "https://github.com/mylifeitsbest/axiom/tree/main/examples/plugins/hello",
+  "icon": "icon.svg",
+  "permissions": ["notify"],
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["content.js"] }
+  ],
+  "action": { "title": "Сколько слов на странице?" },
+  "settings": [
+    {
+      "key": "speed", "type": "number", "label": "Скорость чтения",
+      "note": "Слов в минуту — по ней считается время чтения",
+      "default": 200, "min": 50, "max": 1000, "step": 10
+    },
+    {
+      "key": "counter", "type": "toggle", "label": "Считать нажатия",
+      "note": "Сколько раз вы нажали кнопку — число хранится в axiom.storage",
+      "default": true
+    }
+  ]
+}

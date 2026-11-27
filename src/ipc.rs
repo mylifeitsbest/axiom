@@ -430,6 +430,28 @@ pub enum UiCmd {
     ReportFileDrop {
         slot: usize,
     },
+    /// Включить или выключить плагин.
+    PluginToggle {
+        id: String,
+        on: bool,
+    },
+    /// Новые значения настроек плагина (только изменённые или все).
+    PluginSettings {
+        id: String,
+        values: Map<String, Value>,
+    },
+    /// Нажали кнопку плагина на панели.
+    PluginAction {
+        id: String,
+    },
+    /// «Обновить»: перечитать папку плагинов.
+    PluginsReload,
+    /// «Папка плагинов»: открыть её в проводнике.
+    PluginsFolder,
+    /// Удалить плагин (папку `folder` в папке плагинов) вместе с его данными.
+    PluginRemove {
+        folder: String,
+    },
 }
 
 /// Файл к «Сообщить о проблеме».
@@ -591,6 +613,14 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         UiCmd::ReportFileDrop { slot } if *slot >= crate::reports::SLOTS => {
             return Err(IpcError::Invalid("report_file"));
         }
+        UiCmd::PluginToggle { id, .. } | UiCmd::PluginAction { id } => short(id, 64, "plugin")?,
+        UiCmd::PluginSettings { id, values } => {
+            short(id, 64, "plugin")?;
+            if values.len() > 64 {
+                return Err(IpcError::Invalid("plugin"));
+            }
+        }
+        UiCmd::PluginRemove { folder } => short(folder, 255, "plugin")?,
         UiCmd::AnswersSeen { ids } => {
             if ids.len() > 32 {
                 return Err(IpcError::Invalid("ids"));
@@ -842,11 +872,45 @@ pub enum ToUi<'a> {
         since: u64,
         count: usize,
     },
+    /// Плагины для «Настройки → Плагины» и их кнопки на панели.
+    Plugins(crate::plugins::List<'a>),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_plugin_commands() {
+        assert!(matches!(
+            parse(r#"{"cmd":"plugin_toggle","id":"hello","on":true}"#),
+            Ok(UiCmd::PluginToggle { on: true, .. })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"plugin_settings","id":"hello","values":{"speed":300}}"#),
+            Ok(UiCmd::PluginSettings { .. })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"plugins_reload"}"#),
+            Ok(UiCmd::PluginsReload)
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"plugins_folder"}"#),
+            Ok(UiCmd::PluginsFolder)
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"plugin_remove","folder":"hello"}"#),
+            Ok(UiCmd::PluginRemove { .. })
+        ));
+        let long = format!(r#"{{"cmd":"plugin_action","id":"{}"}}"#, "a".repeat(65));
+        assert!(parse(&long).is_err());
+        let many: Vec<String> = (0..65).map(|i| format!(r#""k{i}":1"#)).collect();
+        let too_many = format!(
+            r#"{{"cmd":"plugin_settings","id":"x","values":{{{}}}}}"#,
+            many.join(",")
+        );
+        assert!(parse(&too_many).is_err());
+    }
 
     #[test]
     fn parses_import() {

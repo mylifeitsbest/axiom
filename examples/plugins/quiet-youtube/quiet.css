@@ -1,0 +1,12 @@
+/* Стили плагина применяются ко всей странице youtube.com, даже при строгой CSP сайта.
+   Что прятать, решают атрибуты на <html>: их ставит quiet.js по настройкам. */
+html[data-quiet-shorts] ytd-reel-shelf-renderer,
+html[data-quiet-shorts] ytd-rich-shelf-renderer[is-shorts],
+html[data-quiet-shorts] ytd-guide-entry-renderer:has(a[title="Shorts"]),
+html[data-quiet-shorts] ytd-mini-guide-entry-renderer[aria-label="Shorts"] {
+  display: none !important;
+}
+
+html[data-quiet-comments] ytd-comments#comments {
+  display: none !important;
+}

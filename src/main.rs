@@ -12,6 +12,7 @@ mod downloads;
 mod events;
 mod instance;
 mod ipc;
+mod plugins;
 mod reports;
 mod settings;
 mod stats;

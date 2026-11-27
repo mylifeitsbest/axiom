@@ -19,6 +19,13 @@ pub enum UserEvent {
     Ui(String),
     /// Горячая клавиша, нажатая внутри страницы или панели ИИ.
     Hotkey(Hotkey),
+    /// Запрос скрипта плагина из вкладки (`plugins::bridge`).
+    Plugin(crate::plugins::Message),
+    /// Кнопку плагина нажали, а на странице активной вкладки его нет.
+    PluginMissed {
+        tab: TabId,
+        plugin: String,
+    },
     TabTitle(TabId, String),
     TabLoad {
         id: TabId,

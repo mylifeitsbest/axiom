@@ -133,6 +133,8 @@
   const xap = createAppLink({ esc, send, setOverlay });
   // ---------- разрешения сайтов (ui/permissions.js) ----------
   // Функции ниже объявлены через function: к первому вызову они уже есть.
+  // ---------- плагины (ui/plugins.js) ----------
+  const plg = createPlugins({ esc, send, toast: (t) => toast(t), closeSettings: () => closeSettings() });
   const pm = createPermissions({ esc, send, setOverlay, isPage, toast: (t) => toast(t), activeTab: () => activeTab(), favHtml: (u) => favHtml(u), openSettings: (s) => openSettings(s) });
 
   // ---------- иконки и фавиконки ----------
@@ -1196,6 +1198,7 @@
     answers: ans,
     translate: tr,
     perms: pm,
+    plugins: plg,
     openUpdate() { dl.close(); upd.open(); },
     openNotes() { dl.close(); upd.openNotes(); },
     closeSettings,
@@ -1330,6 +1333,7 @@
     app_link(m) { xap.onRequest(m); },
     permission_ask(m) { pm.onAsk(m); },
     permissions(m) { pm.onList(m); },
+    plugins(m) { plg.onList(m); },
     zoom(m) { zm.onZoom(m); },
     report_info(m) { panels.onReportInfo(m); },
     reported(m) { panels.onReported(m); },

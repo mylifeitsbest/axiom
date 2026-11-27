@@ -4,6 +4,7 @@ mod ai_tabs;
 mod app_links;
 mod history_page;
 mod permissions;
+mod plugins;
 mod tab_actions;
 mod translation;
 mod waking;
@@ -119,6 +120,11 @@ pub struct App {
     mini: Option<crate::tabs::mini::Show>,
     /// Подсказки поисковой системы в адресной строке.
     suggest: crate::suggest::Remote,
+    /// Плагины из профиля и их скрипты для вкладок.
+    plugins: crate::plugins::Registry,
+    /// Скрипт плагина в самой странице вкладки (контекст его мира): туда идут
+    /// нажатия кнопки плагина и новые настройки. `None` — главный фрейм (Linux).
+    plugin_pages: std::collections::HashMap<(TabId, String), Option<i64>>,
 }
 
 impl App {
@@ -143,6 +149,7 @@ impl App {
         let bookmarks = Bookmarks::load(&paths);
         let downloads = Downloads::load(&paths);
         let zoom = zoom::State::load(&paths);
+        let plugins = crate::plugins::Registry::load(&paths);
         let window = build_window(event_loop)?;
         #[cfg(target_os = "linux")]
         crate::ui::hotkeys::install_window(&window, events.clone());
@@ -210,6 +217,8 @@ impl App {
             island_dock: None,
             mini: None,
             suggest: crate::suggest::Remote::default(),
+            plugins,
+            plugin_pages: std::collections::HashMap::new(),
         };
         app.sync_tracking();
         app.sync_identity();
@@ -240,6 +249,8 @@ impl App {
                 }
             },
             UserEvent::Hotkey(hotkey) => self.on_hotkey(hotkey)?,
+            UserEvent::Plugin(msg) => self.on_plugin(msg),
+            UserEvent::PluginMissed { tab, plugin } => self.plugin_missed(tab, &plugin),
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
             UserEvent::TabLoad { id, started, url } => self.on_load(id, started, url),
             UserEvent::OpenTab { url, ai, from } => {
@@ -340,6 +351,7 @@ impl App {
                 self.push_state();
                 self.push_downloads();
                 self.push_permissions();
+                self.push_plugins();
                 self.push_update(false);
                 self.push_answers(false);
                 self.push_window_state();
@@ -591,6 +603,12 @@ impl App {
                 });
             }
             UiCmd::ReportFileDrop { slot } => crate::reports::detach(slot),
+            UiCmd::PluginToggle { id, on } => self.plugin_toggle(&id, on),
+            UiCmd::PluginSettings { id, values } => self.plugin_settings(&id, &values),
+            UiCmd::PluginAction { id } => self.plugin_action(&id),
+            UiCmd::PluginsReload => self.plugins_reload(),
+            UiCmd::PluginsFolder => self.plugins_folder(),
+            UiCmd::PluginRemove { folder } => self.plugin_remove(&folder),
         }
         Ok(Flow::Continue)
     }
@@ -793,6 +811,7 @@ impl App {
             ai,
             muted,
             zoom,
+            plugins: self.plugins.scripts(),
         };
         let webview = if ai {
             let context = self.ai.context(&self.paths, &mut self.context);
@@ -1733,6 +1752,7 @@ impl App {
         self.sleep_idle_tabs(idle);
         self.limit_live_tabs();
         self.prune_permission_asks();
+        self.prune_plugin_pages();
         // Скачивание из панели ИИ прервалось бы вместе с её webview.
         if !self.downloads.busy_untracked() {
             self.ai.sleep_if_idle(idle);

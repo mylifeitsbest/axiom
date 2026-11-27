@@ -40,6 +40,10 @@ _English version below._
 - **Сайты, которые вы открываете**, — как в любом браузере.
 - **Установка WebView2** (Windows) — если в системе нет WebView2, Axiom спрашивает, установить ли его, и после «Да» скачивает установщик с сайта Microsoft (`go.microsoft.com`) и запускает его.
 
+## Плагины
+
+Плагины ставите вы сами (папка `plugins` в профиле), и включаются они только вашим переключателем в «Настройки → Плагины». Сам Axiom за плагины ничего никуда не отправляет. Но код плагина работает на страницах сайтов, как расширение в Chrome: он видит эти страницы и может обращаться к сети от их имени. Ставьте только плагины, которым доверяете. Хранилище плагина лежит у вас в профиле (`plugin-data`).
+
 ## Движок страниц
 
 На Windows страницы показывает Microsoft Edge WebView2, на Linux — WebKitGTK. Проверка адресов и файлов SmartScreen в движке выключена. Что WebView2 сам отправляет в Microsoft, определяют настройки диагностических данных Windows и [заявление Microsoft о конфиденциальности](https://privacy.microsoft.com/privacystatement).
@@ -67,6 +71,8 @@ Pages, history, bookmarks, passwords and cookies stay on your computer. Axiom it
 - **Replies to "Report a problem"**: only if you sent a message, every 20 minutes for a month, using that message's random reply key, which is not linked to the browser or to the statistics.
 
 **Sent only when you act:** "Report a problem" (your text, optionally the log and files, with photo and video location and camera data removed); installing WebView2 on Windows when it is missing (after you answer "Yes", the installer is downloaded from Microsoft, `go.microsoft.com`, and started); page translation (page text goes to Google Translate when you click Translate or enable auto-translate for a language); address-bar search (to the chosen search engine, DuckDuckGo by default, plus Google AI Mode in the side panel while "double search" is on); the sites you open.
+
+**Plugins:** you install them yourself (the `plugins` folder in the profile), and each one runs only after you turn it on in Settings → Plugins. Axiom sends nothing on their behalf, but a plugin's code runs on web pages like a Chrome extension: it sees those pages and can make network requests as them. Install only plugins you trust. A plugin's storage stays in your profile (`plugin-data`).
 
 **Engine:** pages are rendered by Microsoft Edge WebView2 on Windows and WebKitGTK on Linux. SmartScreen URL and file checks are disabled in the engine. What WebView2 itself sends to Microsoft is governed by Windows diagnostic data settings and the [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
 

@@ -124,6 +124,8 @@ pub struct TabSpec<'a> {
     pub muted: bool,
     /// Масштаб страницы (1.0 — 100 %).
     pub zoom: f64,
+    /// Скрипты включённых плагинов.
+    pub plugins: std::rc::Rc<[crate::plugins::Script]>,
 }
 
 pub fn build_tab(
@@ -141,7 +143,9 @@ pub fn build_tab(
     let nav_tx = events.clone();
     // С подменой Referer страница грузится после `identity::install`: иначе первый
     // документ ушёл бы без неё. User-Agent wry ставит ещё до первого запроса.
-    let defer = super::identity::defer_load();
+    // Плагинам тоже: их скрипты должны встать до первого документа.
+    let plugins = spec.plugins.clone();
+    let defer = super::identity::defer_load() || !plugins.is_empty();
 
     let builder = WebViewBuilder::new_with_web_context(context);
     let builder = if defer {
@@ -220,6 +224,7 @@ pub fn build_tab(
     }
     enable_autofill(&webview);
     super::identity::install(&webview);
+    crate::plugins::bridge::apply(&webview, id, events, plugins);
     if defer {
         webview
             .load_url(spec.url)

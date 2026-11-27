@@ -100,6 +100,9 @@ fn run() -> Result<()> {
     reports::start(&paths.root, heavy);
     #[cfg(target_os = "linux")]
     gpu.announce(&paths);
+    // Без WebView2 окна не будет: спросить, установить ли его, а не закрыться молча.
+    #[cfg(windows)]
+    system::webview2::ensure()?;
     update::cleanup();
     stats::start(&paths.root);
     let updated_from = system::started(&paths);
@@ -107,6 +110,8 @@ fn run() -> Result<()> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let mut app = App::new(&event_loop, paths, &urls, updated, updated_from)?;
     events::spawn_ticker(event_loop.create_proxy());
+    #[cfg(target_os = "linux")]
+    quit_on_signals(event_loop.create_proxy());
     let registration = claimed.spawn(event_loop.create_proxy());
 
     event_loop.run(move |event, _target, control_flow| {
@@ -140,6 +145,28 @@ fn run() -> Result<()> {
             *control_flow = ControlFlow::Exit;
         }
     });
+}
+
+/// Linux: SIGTERM (выключение компьютера, выход из сеанса, `kill`), SIGINT (Ctrl+C
+/// в терминале) и SIGHUP (терминал закрыли) раньше убивали процесс на месте: вкладки
+/// не сохранялись, а следующий запуск принимал это за вылет и слал отчёт. Теперь
+/// Axiom закрывается как по крестику. Второй такой сигнал завершает процесс сразу:
+/// источник снят, и GLib возвращает сигналу действие по умолчанию.
+#[cfg(target_os = "linux")]
+fn quit_on_signals(proxy: tao::event_loop::EventLoopProxy<UserEvent>) {
+    let signals = [
+        (libc::SIGTERM, "SIGTERM"),
+        (libc::SIGINT, "SIGINT"),
+        (libc::SIGHUP, "SIGHUP"),
+    ];
+    for (signal, name) in signals {
+        let proxy = proxy.clone();
+        gtk::glib::unix_signal_add(signal, move || {
+            eprintln!("получен {name}: Axiom закрывается");
+            let _ = proxy.send_event(UserEvent::Quit);
+            gtk::glib::ControlFlow::Break
+        });
+    }
 }
 
 /// `--check-import`: что будет перенесено из каждого найденного браузера, без записи.

@@ -14,7 +14,7 @@ _English version below._
 
 **Отчёты об ошибках** — на сервер разработчика.
 - Когда: только если Axiom вылетел или упал процесс страницы, при следующем запуске.
-- Что: что сломалось и где (сообщение, место в коде, стек), конец журнала `axiom.log`, версия и система. Адреса страниц, пути с именем пользователя, почта и токены вычищаются ещё до записи отчёта на диск.
+- Что: что сломалось и где (сообщение, место в коде, стек), конец журнала `axiom.log`, версия и система. На Linux, если вылет принял systemd-coredump, — ещё имя упавшего процесса Axiom или его движка, сигнал и стек (без командной строки и дампа памяти). Адреса страниц, пути с именем пользователя, почта и токены вычищаются ещё до записи отчёта на диск.
 - Выключить: «Отправлять отчёты об ошибках». Тогда отчёты удаляются, никуда не уходя.
 
 **Проверка обновлений** — на GitHub (`github.com`).
@@ -38,6 +38,7 @@ _English version below._
 - **Перевод страниц** — текст страницы уходит в Google Переводчик (`translate.googleapis.com`), когда вы нажали «Перевести» или включили автоперевод для языка. Язык страницы Axiom определяет сам, ничего не отправляя. [Политика Google](https://policies.google.com/privacy).
 - **Поиск из адресной строки** — в выбранную поисковую систему (по умолчанию DuckDuckGo). Пока включён «Двойной поиск», запрос уходит ещё и в Google AI Mode в панели ИИ.
 - **Сайты, которые вы открываете**, — как в любом браузере.
+- **Установка WebView2** (Windows) — если в системе нет WebView2, Axiom спрашивает, установить ли его, и после «Да» скачивает установщик с сайта Microsoft (`go.microsoft.com`) и запускает его.
 
 ## Движок страниц
 
@@ -60,12 +61,12 @@ Pages, history, bookmarks, passwords and cookies stay on your computer. Axiom it
 
 **Sent automatically:**
 - **Usage statistics** to the developer's server (`179-254-172-240.sslip.io`), hourly while Axiom is open and at start: Axiom version, OS (Windows or Linux) and a few yes/no flags (new install; first run today, this week, this month; just updated; first run of this version today; data imported from another browser, once, without the browser's name or the data; an "hourly" flag used to count open browsers). No identifier, URLs, history or user name. Switch: «Статистика использования» (usage statistics). When it is off, nothing goes to the developer's server in the background except checks for replies to messages you sent yourself.
-- **Crash reports** to the developer's server, only after a crash: error message, code location, stack trace, the tail of `axiom.log`, version and OS. URLs, user-name paths, e-mail addresses and tokens are removed before the report is written to disk. Switch: «Отправлять отчёты об ошибках» (send crash reports); when off, reports are deleted unsent.
+- **Crash reports** to the developer's server, only after a crash: error message, code location, stack trace, the tail of `axiom.log`, version and OS; on Linux, if systemd-coredump caught the crash, also the name of the crashed Axiom or engine process, the signal and its stack (no command line, no memory dump). URLs, user-name paths, e-mail addresses and tokens are removed before the report is written to disk. Switch: «Отправлять отчёты об ошибках» (send crash reports); when off, reports are deleted unsent.
 - **Search suggestions** to the chosen search engine (DuckDuckGo by default) while you type in the address bar or the new-tab search, before you press Enter: the typed text (up to 120 characters) and the same `User-Agent` as the tabs, no cookies. Input that looks like a site address is never sent; a custom search URL gets no suggestions. Switch: «Подсказки поисковой системы» in Settings → Search and AI. Your own past searches from history are suggested offline either way.
 - **Update checks** to GitHub, every 6 hours (beta builds: every 30 minutes); the `User-Agent` header carries the Axiom version. Switch: «Проверять автоматически» (check automatically).
 - **Replies to "Report a problem"**: only if you sent a message, every 20 minutes for a month, using that message's random reply key, which is not linked to the browser or to the statistics.
 
-**Sent only when you act:** "Report a problem" (your text, optionally the log and files, with photo and video location and camera data removed); page translation (page text goes to Google Translate when you click Translate or enable auto-translate for a language); address-bar search (to the chosen search engine, DuckDuckGo by default, plus Google AI Mode in the side panel while "double search" is on); the sites you open.
+**Sent only when you act:** "Report a problem" (your text, optionally the log and files, with photo and video location and camera data removed); installing WebView2 on Windows when it is missing (after you answer "Yes", the installer is downloaded from Microsoft, `go.microsoft.com`, and started); page translation (page text goes to Google Translate when you click Translate or enable auto-translate for a language); address-bar search (to the chosen search engine, DuckDuckGo by default, plus Google AI Mode in the side panel while "double search" is on); the sites you open.
 
 **Engine:** pages are rendered by Microsoft Edge WebView2 on Windows and WebKitGTK on Linux. SmartScreen URL and file checks are disabled in the engine. What WebView2 itself sends to Microsoft is governed by Windows diagnostic data settings and the [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
 

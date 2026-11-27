@@ -15,6 +15,8 @@
 //! отчёты об ошибках»; выключено — они удаляются, не уходя никуда.
 
 pub mod answers;
+#[cfg(target_os = "linux")]
+mod coredump;
 mod files;
 mod journal;
 mod meta;
@@ -221,6 +223,22 @@ pub fn start(root: &Path, heavy: bool) {
              или выключение компьютера без завершения программ{started}. \
              Ниже — конец журнала того запуска."
         );
+        // Linux: чей это вылет — Axiom или процесса WebKit — и его стек, если вылет
+        // принял systemd-coredump. `coredumpctl` бывает небыстрым — не на пути к окну.
+        #[cfg(target_os = "linux")]
+        {
+            let since = marker.started;
+            let _ = thread::Builder::new()
+                .name("coredumps".into())
+                .spawn(move || {
+                    let text = match coredump::since(since) {
+                        Some(dumps) => format!("{text}\n\n{dumps}"),
+                        None => text,
+                    };
+                    record(Kind::Crash, &version, &text, &log);
+                });
+        }
+        #[cfg(not(target_os = "linux"))]
         record(Kind::Crash, &version, &text, &log);
     }
     write_marker(root, false);

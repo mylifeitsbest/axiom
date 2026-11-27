@@ -15,6 +15,8 @@ pub mod memory;
 #[cfg(windows)]
 mod refresh;
 #[cfg(windows)]
+pub mod webview2;
+#[cfg(windows)]
 mod windows;
 
 use std::path::PathBuf;

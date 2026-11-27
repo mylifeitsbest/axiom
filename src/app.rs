@@ -310,6 +310,7 @@ impl App {
             UserEvent::Untracked { id, url } => self.load_untracked(id, url),
             UserEvent::Reported(outcome) => self.on_reported(outcome),
             UserEvent::Answers => self.push_answers(true),
+            UserEvent::Quit => return Ok(Flow::Exit),
             UserEvent::Completions(answer) => {
                 self.suggest.remember(&answer);
                 // Пока шёл запрос, систему могли сменить или подсказки выключить.

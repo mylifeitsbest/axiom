@@ -120,6 +120,10 @@ pub enum UserEvent {
     Completions(crate::suggest::Answer),
     /// Свои сообщения разработчику изменились: новое, пришёл ответ, ответ прочитан.
     Answers,
+    /// Linux: процесс попросили завершиться (SIGTERM при выключении компьютера, Ctrl+C
+    /// в терминале) — закрыться как по крестику, сохранив вкладки.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Quit,
     Tick,
 }
 

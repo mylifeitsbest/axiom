@@ -1,28 +1,27 @@
 //! Магазин плагинов: каталог, установка и обновление, публикация своих.
 //!
-//! Сервер — `server/store.py`, на том же сервере, что статистика (`stats::base_url`).
+//! Сервер — `store/server/store.py`, отдельная служба на своём адресе ([`STORE_URL`]).
 //! В сеть Axiom ходит только по действию человека: открыл «Магазин» в «Настройки →
-//! Плагины», нажал «Установить», «Обновить» или «Опубликовать» (см. PRIVACY.md).
+//! Плагины», нажал «Установить» или «Обновить» (см. PRIVACY.md).
 //!
 //! Плагин из магазина ставится в `plugins/<id>/` с отметкой `.axiom-store.json`:
 //! только такую папку магазин может заменить новой версией. Свой плагин с тем же
 //! именем папки он не тронет.
 //!
-//! Публикация: браузер шлёт файлы плагина и ключ автора — 128 случайных бит, которые
-//! он придумывает при первой публикации и хранит в `plugin-keys.json` профиля. Новую
-//! версию примут только с тем же ключом. В магазине плагин появится после проверки.
+//! Плагины в магазин выкладывают разработчики на сайте магазина: заявка, личный ключ,
+//! загрузка, проверка администратором. Браузер только ставит и обновляет.
 
 use std::{
     collections::BTreeMap,
     fs,
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
     thread,
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tao::event_loop::EventLoopProxy;
 
@@ -36,30 +35,33 @@ const MAX_BUNDLE: u64 = 8 << 20;
 const MAX_FILES: usize = 100;
 const MAX_BYTES: usize = 5 << 20;
 const MAX_FILE: usize = 2 << 20;
-/// Ключи автора своих опубликованных плагинов.
-const KEYS: &str = "plugin-keys.json";
 /// Отметка «поставлен из магазина» в папке плагина.
 pub const MARKER: &str = ".axiom-store.json";
 /// Что может лежать в папке плагина (как `EXTS` в `server/store.py`).
 const EXTS: [&str; 13] = [
     "js", "mjs", "css", "json", "png", "svg", "webp", "jpg", "jpeg", "gif", "ico", "md", "txt",
 ];
-pub const MAX_AUTHOR: usize = 100;
-pub const MAX_CONTACT: usize = 200;
-pub const MAX_NOTE: usize = 1000;
+/// Сайт магазина: каталог для браузера и страницы для разработчиков.
+pub const STORE_URL: &str = "https://plugins.179-254-172-240.sslip.io";
+
+/// Адрес магазина. В debug его можно подменить локальным (`AXIOM_STORE_URL=http://127.0.0.1:…`).
+pub fn base_url() -> String {
+    #[cfg(debug_assertions)]
+    if let Ok(url) = std::env::var("AXIOM_STORE_URL") {
+        let url = url.trim_end_matches('/');
+        if url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:") {
+            return url.to_string();
+        }
+    }
+    STORE_URL.to_string()
+}
 
 #[derive(Debug)]
 pub enum Event {
     Index(Result<Vec<Item>, String>),
-    /// Что с плагинами, которые публиковали из этого профиля.
-    Status(BTreeMap<String, Status>),
     Downloaded {
         id: String,
         result: Result<Bundle, String>,
-    },
-    Published {
-        id: String,
-        result: Result<String, String>,
     },
 }
 
@@ -112,7 +114,7 @@ impl Item {
         let cut = |s: &mut String, n: usize| *s = s.chars().take(n).collect();
         cut(&mut self.name, 60);
         cut(&mut self.description, 400);
-        cut(&mut self.author, MAX_AUTHOR);
+        cut(&mut self.author, 100);
         cut(&mut self.updated, 40);
         if !(self.homepage.starts_with("https://") || self.homepage.starts_with("http://"))
             || self.homepage.len() > 300
@@ -134,18 +136,6 @@ impl Item {
         }
         Some(self)
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Status {
-    /// Последняя присланная версия и что с ней: pending, approved, rejected.
-    pub version: String,
-    pub status: String,
-    #[serde(default)]
-    pub reason: String,
-    /// Какая версия сейчас в магазине (`None` — никакая или плагин сняли).
-    #[serde(default)]
-    pub published: Option<String>,
 }
 
 /// Скачанный плагин: файлы уже проверены (пути, размеры, sha256).
@@ -172,6 +162,8 @@ pub struct View<'a> {
     pub error: Option<&'a str>,
     pub items: Vec<ItemView<'a>>,
     pub busy: &'a [String],
+    /// Сайт магазина: «Стать разработчиком».
+    pub site: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -192,7 +184,6 @@ pub struct State {
     pub error: Option<String>,
     /// Ставятся, обновляются или публикуются прямо сейчас.
     pub busy: Vec<String>,
-    pub status: BTreeMap<String, Status>,
 }
 
 impl State {
@@ -227,7 +218,7 @@ fn spawn(name: &str, job: impl FnOnce() + Send + 'static) {
 pub fn load_index(events: &EventLoopProxy<UserEvent>) {
     let events = events.clone();
     spawn("market-index", move || {
-        let url = format!("{}/store/index", crate::stats::base_url());
+        let url = format!("{}/api/index", base_url());
         let result = request(&url, None, MAX_INDEX, 30).and_then(|(code, body)| {
             match code {
                 200 => parse_index(&body),
@@ -254,39 +245,12 @@ fn parse_index(body: &[u8]) -> Result<Vec<Item>, String> {
         .collect())
 }
 
-/// Что с плагинами, опубликованными из этого профиля (если такие есть).
-pub fn load_status(root: &Path, events: &EventLoopProxy<UserEvent>) {
-    let keys = keys(root);
-    if keys.is_empty() {
-        return;
-    }
-    let events = events.clone();
-    spawn("market-status", move || {
-        let items: Vec<Value> = keys
-            .iter()
-            .map(|(id, key)| json!({ "id": id, "key": key }))
-            .collect();
-        let body = json!({ "items": items }).to_string().into_bytes();
-        let url = format!("{}/store/status", crate::stats::base_url());
-        let Ok((200, raw)) = request(&url, Some(body), 1 << 20, 30) else {
-            return;
-        };
-        #[derive(Deserialize)]
-        struct Reply {
-            items: BTreeMap<String, Status>,
-        }
-        if let Ok(reply) = serde_json::from_slice::<Reply>(&raw) {
-            send(&events, Event::Status(reply.items));
-        }
-    });
-}
-
 /// Скачивает плагин из магазина и проверяет его по каталогу.
 pub fn download(item: &Item, events: &EventLoopProxy<UserEvent>) {
     let (id, version, sha256) = (item.id.clone(), item.version.clone(), item.sha256.clone());
     let events = events.clone();
     spawn("market-download", move || {
-        let url = format!("{}/store/p/{id}", crate::stats::base_url());
+        let url = format!("{}/api/p/{id}", base_url());
         let result = request(&url, None, MAX_BUNDLE, 120).and_then(|(code, body)| {
             if code != 200 {
                 return Err(error_text(code, &body));
@@ -423,112 +387,6 @@ fn sweep(dir: &Path) {
     }
 }
 
-/// Что человек пишет о себе и о плагине при публикации.
-#[derive(Debug, Clone)]
-pub struct Publish {
-    pub author: String,
-    pub contact: String,
-    pub note: String,
-}
-
-/// Отправляет свой плагин на проверку. Файлы читаются сразу (в этом потоке),
-/// отправка — в фоне.
-pub fn publish(
-    root: &Path,
-    dir: &Path,
-    id: &str,
-    about: Publish,
-    events: &EventLoopProxy<UserEvent>,
-) -> Result<(), String> {
-    let files = collect(dir)?;
-    let key = key_for(root, id)?;
-    let body = json!({
-        "key": key,
-        "author": about.author,
-        "contact": about.contact,
-        "note": about.note,
-        "files": files,
-    })
-    .to_string()
-    .into_bytes();
-    let (events, id) = (events.clone(), id.to_owned());
-    spawn("market-publish", move || {
-        let url = format!("{}/store/submit", crate::stats::base_url());
-        let result = request(&url, Some(body), 1 << 20, 180).and_then(|(code, raw)| {
-            if code != 200 {
-                return Err(error_text(code, &raw));
-            }
-            let reply: Value = serde_json::from_slice(&raw).unwrap_or_default();
-            Ok(reply["version"].as_str().unwrap_or_default().to_owned())
-        });
-        send(&events, Event::Published { id, result });
-    });
-    Ok(())
-}
-
-/// Файлы папки плагина для публикации: `{путь: base64}`. Скрытые файлы и
-/// неподходящие типы (исходники картинок, архивы) не уходят.
-fn collect(dir: &Path) -> Result<Map<String, Value>, String> {
-    let mut out = Map::new();
-    let mut total = 0;
-    let mut stack = vec![PathBuf::new()];
-    while let Some(rel_dir) = stack.pop() {
-        let entries =
-            fs::read_dir(dir.join(&rel_dir)).map_err(|e| format!("папка плагина: {e}"))?;
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
-            let rel = rel_dir.join(&name);
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_dir() {
-                if rel.components().count() < 8 {
-                    stack.push(rel);
-                }
-                continue;
-            }
-            let rel = rel.to_string_lossy().replace('\\', "/");
-            if !kind.is_file() || !valid_path(&rel) {
-                continue;
-            }
-            let data = fs::read(entry.path()).map_err(|e| format!("файл «{rel}»: {e}"))?;
-            total += data.len();
-            if data.len() > MAX_FILE {
-                return Err(format!("файл «{rel}» больше 2 МБ"));
-            }
-            if total > MAX_BYTES {
-                return Err("плагин больше 5 МБ".into());
-            }
-            out.insert(rel, Value::String(super::base64(&data)));
-            if out.len() > MAX_FILES {
-                return Err(format!("в папке плагина больше {MAX_FILES} файлов"));
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn keys(root: &Path) -> BTreeMap<String, String> {
-    storage::read_json(&root.join(KEYS)).unwrap_or_default()
-}
-
-/// Ключ автора для плагина: прежний или новый (и сразу на диск — без него новую
-/// версию не примут).
-fn key_for(root: &Path, id: &str) -> Result<String, String> {
-    let mut all = keys(root);
-    if let Some(key) = all.get(id).filter(|k| k.len() == 32) {
-        return Ok(key.clone());
-    }
-    let key = crate::instance::random_token();
-    all.insert(id.to_owned(), key.clone());
-    storage::write_json(&root.join(KEYS), &all)
-        .map_err(|e| format!("ключ автора не сохранён: {e:#}"))?;
-    Ok(key)
-}
-
 /// GET (`body` — `None`) или POST JSON. → код ответа и тело. Ошибка — нет связи.
 fn request(
     url: &str,
@@ -591,6 +449,10 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
     use super::*;
 
     fn pack(files: &[(&str, &str)]) -> (Vec<u8>, String) {
@@ -693,39 +555,6 @@ mod tests {
         assert!(err.contains("другой плагин"), "{err}");
         assert!(!dir.join("other").exists());
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn collect_skips_hidden_and_foreign_files() {
-        let dir = temp("collect");
-        fs::create_dir_all(dir.join("img")).unwrap_or_default();
-        fs::create_dir_all(dir.join(".git")).unwrap_or_default();
-        for (rel, text) in [
-            ("plugin.json", MANIFEST),
-            ("a.js", "1"),
-            ("img/i.svg", "<svg/>"),
-            (".git/config", "secret"),
-            (MARKER, "{}"),
-            ("design.psd", "x"),
-        ] {
-            fs::write(dir.join(rel), text).unwrap_or_default();
-        }
-        let files = collect(&dir).unwrap_or_default();
-        let mut names: Vec<&String> = files.keys().collect();
-        names.sort();
-        assert_eq!(names, ["a.js", "img/i.svg", "plugin.json"]);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn author_key_is_kept() {
-        let root = temp("keys");
-        let a = key_for(&root, "hello").unwrap_or_default();
-        assert_eq!(a.len(), 32);
-        assert_eq!(key_for(&root, "hello").unwrap_or_default(), a);
-        assert_ne!(key_for(&root, "other").unwrap_or_default(), a);
-        assert_eq!(keys(&root).len(), 2);
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -37,7 +37,6 @@ impl IpcError {
             Self::Invalid("input" | "query" | "report") => Some("Слишком длинный текст"),
             Self::Invalid("report_empty") => Some("Опишите, что не работает"),
             Self::Invalid("proxy") => Some("Слишком длинный адрес прокси"),
-            Self::Invalid("publish") => Some("Слишком длинный текст — плагин не отправлен"),
             _ => None,
         }
     }
@@ -466,21 +465,11 @@ pub enum UiCmd {
     PluginRemove {
         folder: String,
     },
-    /// Открыли «Магазин»: каталог и что с опубликованными своими.
+    /// Открыли «Магазин»: загрузить каталог.
     MarketOpen,
     /// «Установить» или «Обновить» плагин из магазина.
     MarketInstall {
         id: String,
-    },
-    /// «Отправить на проверку»: свой плагин в магазин.
-    PluginPublish {
-        id: String,
-        #[serde(default)]
-        author: String,
-        #[serde(default)]
-        contact: String,
-        #[serde(default)]
-        note: String,
     },
 }
 
@@ -652,19 +641,6 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
         }
         UiCmd::PluginRemove { folder } => short(folder, 255, "plugin")?,
         UiCmd::MarketInstall { id } => short(id, 64, "plugin")?,
-        UiCmd::PluginPublish {
-            id,
-            author,
-            contact,
-            note,
-        } => {
-            use crate::plugins::market::{MAX_AUTHOR, MAX_CONTACT, MAX_NOTE};
-            short(id, 64, "plugin")?;
-            // Длины — в знаках, как в форме; кириллица — по два байта.
-            short(author, MAX_AUTHOR * 4, "publish")?;
-            short(contact, MAX_CONTACT * 4, "publish")?;
-            short(note, MAX_NOTE * 4, "publish")?;
-        }
         UiCmd::AnswersSeen { ids } => {
             if ids.len() > 32 {
                 return Err(IpcError::Invalid("ids"));

@@ -44,11 +44,10 @@ _English version below._
 
 Плагины ставите вы сами (папка `plugins` в профиле или магазин), и включаются они только вашим переключателем в «Настройки → Плагины» или кнопкой «Установить». Сам Axiom за плагины фоном ничего никуда не отправляет. Но код плагина работает на страницах сайтов, как расширение в Chrome: он видит эти страницы и может обращаться к сети от их имени. Ставьте только плагины, которым доверяете. Хранилище плагина лежит у вас в профиле (`plugin-data`).
 
-**Магазин плагинов** — на сервер разработчика (`179-254-172-240.sslip.io`), только по вашему действию:
-- Открыли «Магазин» — Axiom скачивает каталог. Если вы публиковали плагины из этого профиля, он спрашивает, что с ними (по их ключам автора).
-- «Установить» или «Обновить» — скачивается плагин; сервер прибавляет к числу его установок единицу (без адреса и чего-либо о вас).
-- «Опубликовать» — уходят файлы папки плагина, ключ автора и то, что вы написали в форме (автор, как связаться, заметка). Контакт видит только проверяющий; в магазине — имя автора и описание из `plugin.json`.
-- Сервер хранит плагины, их версии и решения проверки; IP-адреса не записываются (как и для статистики).
+**Магазин плагинов** — на сервер магазина (`plugins.179-254-172-240.sslip.io`, отдельно от статистики), только по вашему действию:
+- Открыли «Магазин» в «Настройки → Плагины» — Axiom скачивает каталог.
+- «Установить» или «Обновить» — скачивается плагин; сервер прибавляет к числу его установок единицу. Ничего о вас и о браузере не уходит, IP-адреса не записываются.
+- Выкладывают плагины разработчики на сайте магазина, не из браузера: заявка (имя, как связаться, о себе) и загруженные плагины хранятся на сервере магазина; контакт видит только администратор.
 
 ## Движок страниц
 
@@ -80,7 +79,7 @@ Pages, history, bookmarks, passwords and cookies stay on your computer. Axiom it
 
 **Plugins:** you install them yourself (the `plugins` folder in the profile or the plugin store), and each one runs only after you turn it on in Settings → Plugins or press Install. Axiom sends nothing in the background on their behalf, but a plugin's code runs on web pages like a Chrome extension: it sees those pages and can make network requests as them. Install only plugins you trust. A plugin's storage stays in your profile (`plugin-data`).
 
-**Plugin store** (developer's server, only when you act): opening the store downloads the catalog (and, if you published plugins from this profile, asks about their review status using their author keys); Install/Update downloads the plugin and the server adds one to its install count (nothing about you); Publish sends the plugin folder's files, the author key and what you typed in the form (author, contact, note) — the contact is seen only by the reviewer. IP addresses are not written to disk.
+**Plugin store** (store server `plugins.179-254-172-240.sslip.io`, separate from statistics, only when you act): opening the store downloads the catalog; Install/Update downloads the plugin and the server adds one to its install count (nothing about you or your browser; IP addresses are not written to disk). Developers upload plugins on the store website, not from the browser; their application (name, contact, about) and uploaded plugins are kept on the store server, the contact is seen only by the administrator.
 
 **Engine:** pages are rendered by Microsoft Edge WebView2 on Windows and WebKitGTK on Linux. SmartScreen URL and file checks are disabled in the engine. What WebView2 itself sends to Microsoft is governed by Windows diagnostic data settings and the [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
 

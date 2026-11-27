@@ -1,11 +1,13 @@
 'use strict';
 // Плагины: раздел «Плагины» в настройках (установленные и магазин) и кнопки плагинов
-// на панели. Список, включение, настройки, удаление, магазин и публикацию решает Rust
+// на панели. Список, включение, настройки, удаление и магазин решает Rust
 // (src/app/plugins.rs, src/plugins/market.rs): сюда приходят списки, обратно — команды.
-// Код плагинов в интерфейс не попадает.
+// Код плагинов в интерфейс не попадает. Свои плагины в магазин выкладывают на его сайте.
 
 // Как писать плагины: документация в репозитории.
 const PLUGINS_DOCS = 'https://github.com/mylifeitsbest/axiom/blob/main/docs/plugins.md';
+// Сайт магазина (Rust присылает свой адрес вместе с каталогом).
+const PLUGINS_SITE = 'https://plugins.179-254-172-240.sslip.io';
 
 function createPlugins(ax) {
   const $ = (s, r = document) => r.querySelector(s);
@@ -16,12 +18,10 @@ function createPlugins(ax) {
 
   let L = { dir: '', items: [], broken: [] };
   // Магазин: каталог из Rust и что сейчас ставится или публикуется.
-  let M = { loaded: false, loading: false, error: '', items: [], busy: [] };
+  let M = { loaded: false, loading: false, error: '', items: [], busy: [], site: PLUGINS_SITE };
   let tab = 'mine';
   let openedAt = 0;
   let findQ = '';
-  // У какого плагина открыта форма «Опубликовать».
-  let pubOpen = null;
   // «Удалить» нажали один раз: второй клик в течение нескольких секунд удаляет.
   let armed = null;
   let armTimer = 0;
@@ -58,13 +58,14 @@ function createPlugins(ax) {
         </div>
         <div id="plList"></div>
         <div class="note">${icon('shield')}<span>Плагин видит и меняет страницы сайтов, на которых работает, — как расширение в Chrome. Включайте только плагины, которым доверяете. Новый плагин в папке сам не включается; что ему можно сверх страницы, видно в его карточке.</span></div>
-        <div class="note">${icon('file')}<span>Свой плагин — это папка с файлом plugin.json и скриптами. Положите её в папку плагинов и нажмите «Обновить», а когда он готов — «Опубликовать» в его карточке, и он попадёт в магазин. <button class="lnk" data-pl-act="docs">Как написать плагин</button></span></div>
+        <div class="note">${icon('file')}<span>Свой плагин — это папка с файлом plugin.json и скриптами. Положите её в папку плагинов и нажмите «Обновить». Чтобы выложить плагин в магазин, станьте разработчиком на сайте магазина. <button class="lnk" data-pl-act="docs">Как написать плагин</button> · <button class="lnk" data-pl-act="dev">Стать разработчиком</button></span></div>
       </div>
       <div id="plStore" hidden>
         <div class="pl-sbar"><label class="sfind">${icon('search')}<input id="plFind" type="text" placeholder="Найти плагин" spellcheck="false"></label>
-          <button class="btn" data-pl-act="store-reload" title="Загрузить каталог заново">${icon('reload')}Обновить</button></div>
+          <button class="btn" data-pl-act="store-reload" title="Загрузить каталог заново">${icon('reload')}Обновить</button>
+          <button class="btn" data-pl-act="dev" title="Выложить свой плагин: заявка и личный ключ на сайте магазина">${icon('up')}Стать разработчиком</button></div>
         <div id="plStoreList"></div>
-        <div class="note">${icon('shield')}<span>Каждый плагин в магазине проверил разработчик Axiom, прежде чем опубликовать. Плагин ставится в папку плагинов и сразу включается; выключить и удалить его можно на вкладке «Установленные». Каталог загружается, только когда вы открываете магазин.</span></div>
+        <div class="note">${icon('shield')}<span>Каждый плагин в магазине проверил разработчик Axiom, прежде чем опубликовать. Плагин ставится в папку плагинов и сразу включается; выключить и удалить его можно на вкладке «Установленные». Каталог загружается, только когда вы открываете магазин. Выложить свой плагин — «Стать разработчиком».</span></div>
       </div>`;
   }
 
@@ -89,29 +90,6 @@ function createPlugins(ax) {
     return `<div class="srow" data-kw="${esc(p.name.toLowerCase())}"><span class="sl"><b>${esc(f.label)}</b>${f.note ? `<small>${esc(f.note)}</small>` : ''}</span><span class="sc">${control}</span></div>`;
   }
 
-  // Что с плагином в магазине, если его публиковали отсюда.
-  function pubLine(p) {
-    const s = p.published;
-    if (!s || typeof s !== 'object') return '';
-    const live = s.published ? ` В магазине сейчас версия ${esc(s.published)}.` : '';
-    if (s.status === 'pending') return `<div class="pl-pubst wait">${icon('clock')}<span>Версия ${esc(s.version)} на проверке — после неё появится в магазине.${live}</span></div>`;
-    if (s.status === 'approved') return `<div class="pl-pubst ok">${icon('check')}<span>В магазине: версия ${esc(s.version)}.</span></div>`;
-    if (s.status === 'rejected') return `<div class="pl-pubst bad">${icon('x')}<span>Версию ${esc(s.version)} не опубликовали${s.reason ? `: ${esc(s.reason)}` : ''}.${live}</span></div>`;
-    return '';
-  }
-
-  function pubForm(p) {
-    return `<div class="pl-pub">
-      <div class="pl-pub-row">
-        <label><span>Автор</span><input type="text" class="pl-pf" data-f="author" maxlength="100" value="${esc(str(p.author))}" placeholder="Как подписать плагин"></label>
-        <label><span>Как с вами связаться</span><input type="text" class="pl-pf" data-f="contact" maxlength="200" placeholder="Telegram или почта — увидит только проверяющий"></label>
-      </div>
-      <label><span>Что в этой версии и на что посмотреть</span><textarea class="pl-pf" data-f="note" maxlength="1000" placeholder="Необязательно"></textarea></label>
-      <small>Плагин (все файлы его папки, кроме скрытых) уйдёт на проверку разработчику Axiom и появится в магазине после неё. Новые версии принимаются только из этого профиля Axiom: ключ автора хранится в нём.</small>
-      <div class="btns"><button class="btn primary" data-pl-send="${esc(p.id)}">Отправить на проверку</button><button class="btn ghost" data-pl-act="pub-cancel">Отмена</button></div>
-    </div>`;
-  }
-
   function card(p) {
     const meta = [p.version && `версия ${esc(p.version)}`, p.author && esc(p.author), p.from_store && 'из магазина'].filter(Boolean).join(' · ');
     const perms = list(p.permissions);
@@ -120,9 +98,6 @@ function createPlugins(ax) {
     const it = p.from_store ? storeItem(p.id) : null;
     const update = it && it.version !== p.version
       ? `<button class="btn primary${busy(p.id) ? ' busy' : ''}" data-pl-install="${esc(p.id)}">${icon('download')}Обновить до ${esc(it.version)}</button>` : '';
-    const publish = p.from_store ? '' : busy(p.id)
-      ? '<button class="btn busy" disabled>Отправляется</button>'
-      : `<button class="btn ghost" data-pl-pub="${esc(p.id)}">${icon('up')}${p.published ? 'Отправить новую версию' : 'Опубликовать'}</button>`;
     return `<div class="card pl${p.enabled ? ' on' : ''}" data-kw="${esc(`${p.name} ${p.id} ${p.description}`.toLowerCase())}">
       <div class="srow pl-top">${badge(p, p.icon, 'pl-ic')}
         <span class="sl"><b>${esc(p.name)}</b>${p.description ? `<small>${esc(p.description)}</small>` : ''}${meta ? `<small class="pl-meta">${meta}</small>` : ''}</span>
@@ -133,11 +108,8 @@ function createPlugins(ax) {
         ${p.action ? `<span class="pl-tag">${icon('plus')}Кнопка на панели</span>` : ''}
       </div>
       ${fields.length ? `<div class="pl-set"${p.enabled ? '' : ' data-off'}>${fields.map((f) => field(p, f)).join('')}</div>` : ''}
-      ${pubLine(p)}
-      ${pubOpen === p.id ? pubForm(p) : ''}
       <div class="pl-foot">
         ${/^https?:\/\//.test(str(p.homepage)) ? `<button class="btn ghost" data-pl-home="${esc(p.homepage)}">${icon('popout')}Страница плагина</button>` : ''}
-        ${pubOpen === p.id ? '' : publish}
         <span class="grow"></span>
         ${update}
         <button class="btn ghost${sure ? ' danger' : ''}" data-pl-remove="${esc(p.folder)}">${icon('trash')}${sure ? 'Точно удалить?' : 'Удалить'}</button>
@@ -172,7 +144,7 @@ function createPlugins(ax) {
 
   function typing(box) {
     const a = document.activeElement;
-    return box.contains(a) && a.matches('input[type=text],input[type=number],textarea');
+    return box.contains(a) && a.matches('input[type=text],input[type=number]');
   }
 
   function syncSheet() {
@@ -208,7 +180,7 @@ function createPlugins(ax) {
       return;
     }
     const fail = M.error ? msg('Каталог не обновился', esc(M.error), true) : '';
-    box.innerHTML = fail + (!M.items.length ? msg('В магазине пока пусто', 'Опубликуйте свой плагин — кнопка «Опубликовать» в его карточке на вкладке «Установленные».', false)
+    box.innerHTML = fail + (!M.items.length ? msg('В магазине пока пусто', 'Свой плагин можно выложить на сайте магазина — «Стать разработчиком».', false)
       : !shown.length ? msg('Ничего не нашлось', '', false)
       : shown.map(storeCard).join(''));
   }
@@ -237,13 +209,6 @@ function createPlugins(ax) {
     ax.send({ cmd: 'plugin_settings', id: el.dataset.plId, values: { [el.dataset.plKey]: value } });
   }
 
-  // Форма уходит: фокус из её поля — иначе список считал бы, что человек ещё печатает.
-  function closeForm() {
-    pubOpen = null;
-    if (document.activeElement?.matches('.pl-pf')) document.activeElement.blur();
-    syncSheet();
-  }
-
   function disarm() {
     armed = null;
     clearTimeout(armTimer);
@@ -270,7 +235,7 @@ function createPlugins(ax) {
   });
   // Ушли из поля — список можно перерисовать, если он менялся, пока печатали.
   sheet.addEventListener('focusout', (e) => {
-    if (stale && e.target.matches('.pl-text,.pl-num,.pl-pf')) setTimeout(() => { if (!typing($('#plList', sheet))) syncSheet(); }, 0);
+    if (stale && e.target.matches('.pl-text,.pl-num')) setTimeout(() => { if (!typing($('#plList', sheet))) syncSheet(); }, 0);
   });
   sheet.addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -281,23 +246,9 @@ function createPlugins(ax) {
     if (act === 'reload') { ax.send({ cmd: 'plugins_reload' }); return; }
     if (act === 'store-reload') { M.error = ''; openStore(); return; }
     if (act === 'docs') { ax.send({ cmd: 'new_tab', input: PLUGINS_DOCS }); ax.closeSettings(); return; }
-    if (act === 'pub-cancel') { closeForm(); return; }
+    if (act === 'dev') { ax.send({ cmd: 'new_tab', input: `${M.site}/apply` }); ax.closeSettings(); return; }
     if (b.dataset.plHome) { ax.send({ cmd: 'new_tab', input: b.dataset.plHome }); ax.closeSettings(); return; }
     if (b.dataset.plInstall) { ax.send({ cmd: 'market_install', id: b.dataset.plInstall }); return; }
-    if (b.dataset.plPub) {
-      pubOpen = b.dataset.plPub;
-      syncSheet();
-      const first = $('.pl-pub .pl-pf', sheet);
-      if (first) first.focus();
-      return;
-    }
-    if (b.dataset.plSend) {
-      const form = b.closest('.pl-pub');
-      const v = (f) => str($(`.pl-pf[data-f="${f}"]`, form)?.value).trim();
-      ax.send({ cmd: 'plugin_publish', id: b.dataset.plSend, author: v('author'), contact: v('contact'), note: v('note') });
-      closeForm();
-      return;
-    }
     const seg = b.closest('.seg[data-pl-key]');
     if (seg && b.dataset.v != null) {
       seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
@@ -329,7 +280,6 @@ function createPlugins(ax) {
       broken: list(m.broken).filter((b) => b && typeof b.folder === 'string' && typeof b.error === 'string'),
     };
     if (armed && !items.some((p) => p.folder === armed) && !L.broken.some((b) => b.folder === armed)) disarm();
-    if (pubOpen && !items.some((p) => p.id === pubOpen)) pubOpen = null;
     syncSheet();
     renderBar();
   }
@@ -342,6 +292,7 @@ function createPlugins(ax) {
       error: str(m.error),
       items: list(m.items).filter((it) => it && typeof it.id === 'string' && typeof it.name === 'string' && typeof it.version === 'string'),
       busy: list(m.busy).filter((x) => typeof x === 'string'),
+      site: /^https?:\/\/[^/\s]+$/.test(str(m.site)) ? m.site : PLUGINS_SITE,
     };
     syncSheet();
   }

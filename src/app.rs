@@ -616,19 +616,6 @@ impl App {
             UiCmd::PluginRemove { folder } => self.plugin_remove(&folder),
             UiCmd::MarketOpen => self.market_open(),
             UiCmd::MarketInstall { id } => self.market_install(&id),
-            UiCmd::PluginPublish {
-                id,
-                author,
-                contact,
-                note,
-            } => self.plugin_publish(
-                &id,
-                crate::plugins::market::Publish {
-                    author,
-                    contact,
-                    note,
-                },
-            ),
         }
         Ok(Flow::Continue)
     }

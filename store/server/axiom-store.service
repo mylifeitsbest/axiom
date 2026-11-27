@@ -1,0 +1,25 @@
+[Unit]
+Description=Axiom plugin store
+After=network.target
+
+[Service]
+# Отдельная служба: свой одноразовый пользователь, своя база в /var/lib/axiom-store,
+# свой ключ администратора в /etc/axiom-store.env. Со статистикой не делит ничего.
+DynamicUser=yes
+StateDirectory=axiom-store
+EnvironmentFile=/etc/axiom-store.env
+Environment=AXIOM_STORE_DB=/var/lib/axiom-store/store.db
+Environment=AXIOM_STORE_HOST=127.0.0.1
+Environment=AXIOM_STORE_PORT=8788
+# Плагины Axiom из репозитория: при каждом запуске — в магазин.
+Environment=AXIOM_STORE_OFFICIAL=/opt/axiom-store/official
+ExecStart=/usr/bin/python3 /opt/axiom-store/store.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

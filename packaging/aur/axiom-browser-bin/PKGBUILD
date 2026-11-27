@@ -9,7 +9,7 @@ pkgrel=1
 pkgdesc='Lightweight Rust browser with DuckDuckGo and a Google AI Mode side panel (prebuilt binary)'
 arch=('x86_64')
 url='https://github.com/mylifeitsbest/axiom'
-license=('custom')
+license=('MIT')
 # Видео: H.264/HEVC/AAC (mp4) декодирует gst-libav, VP8/VP9 — gst-plugins-good. Без них
 # WebKitGTK показывает вместо видео чёрный прямоугольник.
 # Библиотеки — по DT_NEEDED бинарника (libdbus-1 тянет tao); xdg-utils и curl — внешние команды.
@@ -33,4 +33,8 @@ package() {
       "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/axiom-browser.png"
   done
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  # В архивах до 0.6.2 файла лицензии ещё не было.
+  if [ -f LICENSE ]; then
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  fi
 }

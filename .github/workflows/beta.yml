@@ -126,7 +126,7 @@ jobs:
           install -Dm644 packaging/linux/axiom-browser.desktop stage/axiom/axiom-browser.desktop
           install -Dm644 assets/logo.svg stage/axiom/icons/axiom-browser.svg
           cp assets/linux/*.png stage/axiom/icons/
-          cp README.md stage/axiom/
+          cp README.md LICENSE stage/axiom/
           tar -C stage -czf dist/axiom-linux-x86_64.tar.gz axiom
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

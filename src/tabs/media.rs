@@ -11,10 +11,12 @@
 //!
 //! Видео в островке ([`Action::Peek`], `tabs::mini`): страница выводит своё видео в
 //! верхний слой (`popover`) поверх всего, в заданный прямоугольник ([`mini_script`]), на
-//! чёрном фоне и со скруглёнными углами. Размер вкладки при этом не меняется (сайт не
-//! перестраивает страницу), браузер показывает только вырез под чёлкой. Само видео
-//! остаётся на своём месте в документе и играет дальше; стиль — отдельный лист
-//! (`adoptedStyleSheets`), его не блокирует CSP сайта. Видео проявляется из чёрного, пока
+//! чёрном фоне и со скруглёнными углами. На Windows размер вкладки при этом не меняется
+//! (сайт не перестраивает страницу), браузер показывает только вырез под чёлкой; на Linux
+//! вкладка размером с остров. Само видео остаётся на своём месте в документе и играет
+//! дальше; стиль — отдельный лист (`adoptedStyleSheets`), его не блокирует CSP сайта.
+//! Переставит сайт плеер (YouTube в узком окне) — браузер снимет видео с верхнего слоя,
+//! и скрипт сразу вернёт его туда. Видео проявляется из чёрного, пока
 //! остров выезжает, и гаснет, когда уезжает ([`mini_fade`]); браузер сначала ждёт, пока
 //! страница его нарисует ([`MINI_PAINTED`]), — иначе на первом кадре мелькнула бы
 //! страница, какой её видели в последний раз. [`Action::Unpeek`] возвращает всё как было.
@@ -86,6 +88,7 @@ pub const SCRIPT: &str = r#"(() => {
   let fadeIn = 'opacity 0ms,scale 0ms';
   let fadeOut = 'opacity 0ms,scale 0ms';
   let shownEl = null;
+  let keep = null; // следит, чтобы видео не выпало из верхнего слоя, пока оно в островке
   const ours = new WeakSet(); // popover поставили мы, а не страница
   const num = (v) => (typeof v === 'number' && isFinite(v) ? Math.round(v) : null);
   function size() {
@@ -111,7 +114,37 @@ pub const SCRIPT: &str = r#"(() => {
     if (!v.hasAttribute('popover')) { ours.add(v); v.setAttribute('popover', 'manual'); }
     if (!v.matches(':popover-open')) quiet(() => v.showPopover());
     shownEl = new WeakRef(v);
+    // Сайт может переставить плеер в другое место страницы: YouTube так делает, когда
+    // окно сужается (на Linux вкладка под чёлкой размером с остров). Убранный из
+    // документа popover браузер закрывает молча, видео возвращается на страницу, и в
+    // острове виден сайт. Поэтому, пока видео в островке, возвращаем его в верхний
+    // слой после каждой перестановки — раньше, чем кадр нарисуется.
+    if (!keep) {
+      keep = new MutationObserver(() => quiet(relift));
+      keep.observe(D.documentElement, { childList: true, subtree: true });
+    }
     return v.matches(':popover-open');
+  }
+  function relift() {
+    let v = shownEl ? shownEl.deref() : null;
+    if (!v) return;
+    if (!v.isConnected) {
+      // Плеер заменил само видео — в остров новое, если оно играет (в том же виде).
+      const n = pick();
+      if (!n || n === v || n.tagName !== 'VIDEO' || !n.isConnected || !playing(n)) return;
+      const state = v.getAttribute(MARK) || 'in';
+      drop(v);
+      n.setAttribute(MARK, state);
+      if (!n.hasAttribute('popover')) { ours.add(n); n.setAttribute('popover', 'manual'); }
+      v = n;
+      shownEl = new WeakRef(v);
+    }
+    if (!v.matches(':popover-open')) quiet(() => v.showPopover());
+  }
+  function drop(v) {
+    quiet(() => v.hidePopover());
+    v.removeAttribute(MARK);
+    if (ours.has(v)) { ours.delete(v); v.removeAttribute('popover'); }
   }
   // Видео — в остров, поверх всего на чёрном. Пока остров не тронулся ('pre') — его не
   // видно; выезжает ('in') — проявляется и чуть подрастает от верха, как из чёлки; уезжает
@@ -129,13 +162,10 @@ pub const SCRIPT: &str = r#"(() => {
     return `opacity ${d} ${e},scale ${d} ${e}`;
   };
   function unmini() {
+    if (keep) { keep.disconnect(); keep = null; }
     const v = shownEl ? shownEl.deref() : null;
     shownEl = null;
-    if (v) {
-      quiet(() => v.hidePopover());
-      v.removeAttribute(MARK);
-      if (ours.has(v)) { ours.delete(v); v.removeAttribute('popover'); }
-    }
+    if (v) drop(v);
     quiet(() => { D.adoptedStyleSheets = D.adoptedStyleSheets.filter((s) => s !== sheet); });
     return true;
   }

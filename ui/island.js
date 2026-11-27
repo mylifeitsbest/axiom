@@ -78,6 +78,7 @@ function createIsland(ax) {
   let hold = null;
   let lastActive;
   let peeking = null; // вкладка, чьё видео сейчас показано из чёлки
+  let testPeeked = false;
   let leaving = null; // с этой вкладки только что ушли — есть ли там видео?
   let shown = false;
   let opened = false;
@@ -684,6 +685,11 @@ function createIsland(ax) {
     // него, а остров раздаётся из обычной чёлки.
     const base = z && z.mode === 'bar' && (m.video || m.wide) ? zone(false) : z;
     sendDock(want && !collapsed ? z : null, (base && base.iw) || W);
+    // Только для разработки (debug-сборка, `AXIOM_UI_HASH=peek`): видео из чёлки без мыши.
+    if (location.hash === '#peek' && !testPeeked && want && !collapsed && m.tab && isVideo(m.tab.id)) {
+      testPeeked = true;
+      setTimeout(peek, 1500);
+    }
     // Видео встало под чёлку — раскрытый островок оказался бы под ним: сворачиваем.
     // Linux: карточку из боковой панели перенесли над страницу — список тоже убираем.
     if (opened && (m.video || collapsed || inline())) setOpen(false);

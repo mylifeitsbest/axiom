@@ -342,6 +342,38 @@ pub fn set_bounds_hanging(webview: &WebView, rect: Rect) {
     }
 }
 
+/// Для журнала тестов: где webview на деле — место GTK, окно GDK и видим ли он.
+#[cfg(target_os = "linux")]
+pub fn geometry(webview: &WebView) -> String {
+    use gtk::prelude::*;
+    use wry::WebViewExtUnix;
+    let widget = webview.webview().upcast::<gtk::Widget>();
+    let a = widget.allocation();
+    let window = widget
+        .has_window()
+        .then(|| widget.window())
+        .flatten()
+        .map(|w| {
+            let (x, y) = w.position();
+            format!(
+                "gdk {}x{} at {x},{y} native={}",
+                w.width(),
+                w.height(),
+                w.has_native()
+            )
+        })
+        .unwrap_or_else(|| "gdk none".into());
+    format!(
+        "alloc {}x{} at {},{} visible={} mapped={} {window}",
+        a.width(),
+        a.height(),
+        a.x(),
+        a.y(),
+        widget.is_visible(),
+        widget.is_mapped()
+    )
+}
+
 /// Поднимает webview над остальными (остров с видео — над страницей и интерфейсом).
 pub fn raise(webview: &WebView) {
     #[cfg(target_os = "linux")]

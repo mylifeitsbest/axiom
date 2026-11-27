@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<title>Видео для островка</title>
+<style>
+  /* Как у YouTube: шапка поверх всего, плеер в контейнере с transform и обрезкой. */
+  html, body { margin: 0; background: #ffd400; font: 24px sans-serif; }
+  header { position: fixed; top: 0; left: 0; right: 0; height: 56px; background: #d00; color: #fff;
+    display: flex; align-items: center; padding: 0 16px; z-index: 2020; }
+  main { padding: 80px 24px; }
+  .player { width: 640px; height: 360px; overflow: hidden; transform: translateZ(0); contain: layout paint;
+    border-radius: 12px; background: #333; }
+  video { width: 100%; height: 100%; display: block; }
+  p { font-size: 48px; font-weight: bold; color: #0a0; }
+</style>
+<header>ШАПКА СТРАНИЦЫ</header>
+<div id="full"></div>
+<main>
+  <div id="inner"><div class="player"><video src="video.webm" autoplay loop playsinline></video></div></div>
+  <p>ЭТО СТРАНИЦА, А НЕ ВИДЕО</p>
+  <p>ЭТО СТРАНИЦА, А НЕ ВИДЕО</p>
+  <p>ЭТО СТРАНИЦА, А НЕ ВИДЕО</p>
+  <p>ЭТО СТРАНИЦА, А НЕ ВИДЕО</p>
+</main>
+<script>
+  // Как YouTube: в узком окне плеер переезжает в другой контейнер (над страницей),
+  // в широком — обратно. Убранное из документа видео браузер снимает с верхнего слоя.
+  const player = document.querySelector('.player');
+  const place = () => {
+    const to = document.getElementById(innerWidth < 900 ? 'full' : 'inner');
+    if (player.parentElement !== to) to.append(player);
+  };
+  addEventListener('resize', place);
+  place();
+</script>
+</html>

@@ -543,7 +543,9 @@ impl App {
     /// выезжала вся страница. Поэтому вкладка размером с сам остров — за его край она
     /// не нарисуется никак, а вырез только скругляет низ и ведёт выезд. Сайт при этом
     /// перестраивается под узкое окно, но видео уже вынесено поверх страницы
-    /// (`popover`, `position: fixed`) и остаётся в острове.
+    /// (`popover`, `position: fixed`) и остаётся в острове; YouTube в узком окне
+    /// переставляет плеер, и браузер снимает видео с верхнего слоя — страница
+    /// возвращает его туда сама (`tabs::media`).
     ///
     /// Видео страница ставит ровно в остров, с рамкой [`mini::PAD`] — раньше, чем вкладка
     /// сожмётся: иначе плеер успел бы стать меньше, чем «видео для островка».
@@ -574,9 +576,10 @@ impl App {
         );
         let send_video = show.sent != Some(video);
         if send_video {
-            script::run(
+            script::ask(
                 webview,
                 &media::mini_script(video.0, video.1, video.2, video.3, scale),
+                |raw| mini::log_for_tests(&format!("mini script: {raw}")),
             );
         }
         // Место вкладки — только когда оно другое: каждый кадр двигать окно незачем.
@@ -594,6 +597,10 @@ impl App {
         let cut = island.cut(k, dock.from);
         mini::round_bottom(webview, Some(cut), mini::RADIUS, scale);
         mini::log_for_tests(&format!("frame k={k:.3} w={:.1} h={:.1}", cut.w, cut.h));
+        #[cfg(target_os = "linux")]
+        if cfg!(debug_assertions) {
+            mini::log_for_tests(&format!("place {}", tab_webview::geometry(webview)));
+        }
         if let Some(show) = self.mini.as_mut() {
             show.at = Some(at);
             if send_video {

@@ -1,0 +1,20 @@
+# Сайт магазина плагинов. deploy.sh кладёт его в /etc/caddy/sites/axiom-store.caddy,
+# основной Caddyfile подключает эту папку. __DOMAIN__ подставит deploy.sh.
+__DOMAIN__ {
+	encode gzip
+	# Загрузка плагина: до 5 МБ файлов в base64 (store.py сам не примет больше 7,1 МБ).
+	handle /upload {
+		request_body {
+			max_size 8MiB
+		}
+		reverse_proxy 127.0.0.1:8788
+	}
+	# Остальное — страницы, формы, каталог: большие тела дальше Caddy не идут.
+	handle {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy 127.0.0.1:8788
+	}
+	header Strict-Transport-Security "max-age=31536000"
+}

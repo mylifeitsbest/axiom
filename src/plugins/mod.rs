@@ -11,7 +11,7 @@
 //! подложенная в папку программа сама ничего не запустит.
 //!
 //! Документация для авторов — `docs/plugins.md`, примеры — `examples/plugins/` и
-//! плагины Axiom из магазина (`store/plugins/`, магазин — `market` и `server/store.py`).
+//! плагины Axiom из магазина (`store/plugins/`, магазин — `market` и `store/server/`).
 
 pub mod api;
 mod bootstrap;
@@ -403,8 +403,7 @@ impl Registry {
     }
 
     /// Список для «Настройки → Плагины».
-    /// `published` — что с плагинами, которые публиковали из этого профиля.
-    pub fn view<'a>(&'a self, published: &'a BTreeMap<String, market::Status>) -> List<'a> {
+    pub fn view(&self) -> List<'_> {
         List {
             dir: self.dir().display().to_string(),
             items: self
@@ -438,7 +437,6 @@ impl Registry {
                         settings: &m.settings,
                         values: self.values(&m.id),
                         from_store: p.from_store.is_some(),
-                        published: published.get(&m.id),
                     }
                 })
                 .collect(),
@@ -477,10 +475,8 @@ pub struct View<'a> {
     pub action: Option<ActionView<'a>>,
     pub settings: &'a [Field],
     pub values: Map<String, Value>,
-    /// Поставлен из магазина (публиковать его нельзя — он чужой).
+    /// Поставлен из магазина: его обновляет магазин.
     pub from_store: bool,
-    /// Публиковали из этого профиля: что с ним в магазине.
-    pub published: Option<&'a market::Status>,
 }
 
 #[derive(Debug, Serialize)]
@@ -755,7 +751,7 @@ mod tests {
         assert_eq!(reg.plugins.len(), 1);
         assert_eq!(reg.broken.len(), 2);
         assert!(
-            reg.view(&BTreeMap::new())
+            reg.view()
                 .broken
                 .iter()
                 .any(|b| b.folder == "zcopy" && b.error.contains("уже"))
@@ -843,7 +839,7 @@ mod tests {
         assert!(err.contains("UTF-8"), "{err}");
         assert!(reg.get("hello").is_none());
         assert!(reg.scripts().is_empty());
-        assert_eq!(reg.view(&BTreeMap::new()).broken.len(), 1);
+        assert_eq!(reg.view().broken.len(), 1);
         let _ = fs::remove_dir_all(&root);
     }
 

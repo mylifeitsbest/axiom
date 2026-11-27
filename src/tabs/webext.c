@@ -8,7 +8,8 @@
  * Выбор приходит от Axiom: при запуске процесса — в данных инициализации
  * "(usat)" (режим, свой адрес, id страниц вкладок), дальше — сообщениями всем
  * процессам: "axiom-referer" "(us)" и "axiom-tab" "(t)" (id страницы новой вкладки).
- * Страницы интерфейса и панели ИИ живут в тех же процессах — их не трогаем.
+ * Страницы интерфейса и панели ИИ живут в тех же процессах — их Referer не трогаем,
+ * а запрет на локальную сеть действует для всех страниц.
  */
 #include <gmodule.h>
 #include <string.h>
@@ -231,12 +232,16 @@ static gboolean on_send_request(WebKitWebPage *page, WebKitURIRequest *request,
                                 WebKitURIResponse *redirect, gpointer data)
 {
     (void)data;
+    /* Локальная сеть — для любой страницы, а не только для вкладок из списка:
+     * вкладка попадает в него сообщением от Axiom, а страница могла начать грузиться
+     * раньше, и её первые запросы ушли бы без проверки. Так же и панель ИИ: в списке
+     * её нет никогда. Интерфейс (`axiom://`) правило и так не трогает. TRUE — запрос
+     * не уходит. */
+    if (blocked(page, request, redirect))
+        return TRUE;
     guint64 id = webkit_web_page_get_id(page);
     if (!g_hash_table_contains(tabs, &id))
         return FALSE;
-    /* TRUE — запрос не уходит. */
-    if (blocked(page, request, redirect))
-        return TRUE;
     if (mode == KEEP)
         return FALSE;
     SoupMessageHeaders *headers = webkit_uri_request_get_http_headers(request);

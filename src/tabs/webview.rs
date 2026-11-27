@@ -143,9 +143,10 @@ pub fn build_tab(
     let nav_tx = events.clone();
     // С подменой Referer страница грузится после `identity::install`: иначе первый
     // документ ушёл бы без неё. User-Agent wry ставит ещё до первого запроса.
-    // Плагинам тоже: их скрипты должны встать до первого документа.
+    // Плагинам тоже: их скрипты должны встать до первого документа. На Windows —
+    // всегда: запрет на локальную сеть (`local_net`) ставится на готовый webview.
     let plugins = spec.plugins.clone();
-    let defer = super::identity::defer_load() || !plugins.is_empty();
+    let defer = cfg!(windows) || super::identity::defer_load() || !plugins.is_empty();
 
     let builder = WebViewBuilder::new_with_web_context(context);
     let builder = if defer {
@@ -205,6 +206,7 @@ pub fn build_tab(
     let builder = downloads::attach(builder, events);
 
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;
+    super::local_net::install(&webview);
     hotkeys::install_tab(&webview, events.clone());
     super::popups::install(&webview);
     super::external::install(&webview, id, events.clone());

@@ -5,6 +5,7 @@ pub mod external;
 pub mod fullscreen;
 pub mod identity;
 pub mod links;
+pub mod local_net;
 pub mod media;
 pub mod mini;
 pub mod omnibox;

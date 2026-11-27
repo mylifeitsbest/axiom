@@ -121,8 +121,8 @@ impl AiPanel {
                 let proxy = self.proxy_config();
                 let start = query.map_or_else(|| omnibox::AI_HOME.to_string(), omnibox::ai_url);
                 let context = self.context(paths, shared);
+                // Адрес — после сборки: сначала должен встать запрет на локальную сеть.
                 let builder = WebViewBuilder::new_with_web_context(context)
-                    .with_url(start)
                     .with_bounds(bounds.unwrap_or_default())
                     .with_visible(bounds.is_some())
                     // Когда был клик — для переходов, которые панель отдаёт во вкладки.
@@ -158,8 +158,12 @@ impl AiPanel {
                     });
                 let builder = styled(builder, look, proxy.as_ref());
                 let builder = downloads::attach(builder, events);
+                // Linux: расширение веб-процесса не даёт панели обращаться к локальной сети
+                // (как и вкладкам). Без прокси окружение общее, и оно там уже есть.
+                let builder = crate::tabs::identity::with_extension(builder);
                 let webview = crate::tabs::webview::build_child(builder, window)
                     .context("не удалось создать панель ИИ")?;
+                crate::tabs::local_net::install(&webview);
                 hotkeys::install(&webview, events.clone());
                 pages::guard(&webview, events.clone());
                 crate::tabs::popups::install(&webview);
@@ -177,6 +181,7 @@ impl AiPanel {
                 );
                 crate::reports::watch(&webview, crate::reports::Source::Ai);
                 crate::tabs::error_page::install(&webview);
+                webview.load_url(&start)?;
                 self.webview = Some(webview);
                 self.query = query.map(String::from);
             }

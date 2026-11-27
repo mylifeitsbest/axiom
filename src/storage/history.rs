@@ -35,6 +35,18 @@ pub struct History {
     top_cache: RefCell<Option<(usize, Vec<Site>)>>,
     /// Домены, убранные с плиток крестиком. История и подсказки их по-прежнему знают.
     hidden: Vec<String>,
+    /// Прошлые поисковые запросы для подсказок (и свой адрес поиска, по которому
+    /// их искали): разбирать каждый адрес истории на каждую букву — дорого.
+    queries: RefCell<Option<(String, Vec<Query>)>>,
+}
+
+/// Поисковый запрос из истории: все его страницы результатов вместе.
+#[derive(Debug, Clone)]
+struct Query {
+    text: String,
+    low: String,
+    visits: u32,
+    last: u64,
 }
 
 impl History {
@@ -101,6 +113,7 @@ impl History {
     fn changed(&mut self) {
         self.dirty = true;
         self.top_cache.get_mut().take();
+        self.queries.get_mut().take();
     }
 
     /// Учитывает посещение. Записываются только http(s).
@@ -266,6 +279,68 @@ impl History {
             .collect()
     }
 
+    /// Прошлые поисковые запросы, которые начинаются с набранного (или одно из
+    /// их слов): набрали «пр» — «привет», который искали вчера. `custom` — свой
+    /// адрес поиска из настроек. Частые и свежие выше, сам набранный текст не входит.
+    pub fn searches(&self, typed: &str, custom: &str, limit: usize) -> Vec<String> {
+        let typed = words(typed).join(" ");
+        if typed.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let mut cache = self.queries.borrow_mut();
+        if cache.as_ref().is_none_or(|(c, _)| c != custom) {
+            *cache = Some((custom.to_string(), self.collect_queries(custom)));
+        }
+        let Some((_, all)) = cache.as_ref() else {
+            return Vec::new();
+        };
+        let inner = format!(" {typed}");
+        let now = now_secs();
+        let mut hits: Vec<(f64, &Query)> = all
+            .iter()
+            .filter(|q| q.low != typed)
+            .filter_map(|q| {
+                let prefix = q.low.starts_with(&typed);
+                if !prefix && !q.low.contains(&inner) {
+                    return None;
+                }
+                let age_days = now.saturating_sub(q.last) as f64 / 86_400.0;
+                let score = f64::from(q.visits).ln_1p() * 2.0 + if prefix { 3.0 } else { 0.0 }
+                    - age_days.min(90.0) / 15.0;
+                Some((score, q))
+            })
+            .collect();
+        hits.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.low.cmp(&b.1.low)));
+        hits.into_iter()
+            .take(limit)
+            .map(|(_, q)| q.text.clone())
+            .collect()
+    }
+
+    fn collect_queries(&self, custom: &str) -> Vec<Query> {
+        let mut by_text: HashMap<String, Query> = HashMap::new();
+        for e in &self.entries {
+            let Some(raw) = crate::tabs::omnibox::search_query(&e.url, custom) else {
+                continue;
+            };
+            let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+            // Длинное — скорее вставленный текст, чем запрос, который набирают снова.
+            if text.is_empty() || text.chars().count() > 200 {
+                continue;
+            }
+            let low = text.to_lowercase();
+            let q = by_text.entry(low.clone()).or_insert_with(|| Query {
+                text,
+                low,
+                visits: 0,
+                last: 0,
+            });
+            q.visits = q.visits.saturating_add(e.visits);
+            q.last = q.last.max(e.last);
+        }
+        by_text.into_values().collect()
+    }
+
     /// Самые посещаемые сайты (по домену) для новой вкладки.
     pub fn top_sites(&self, limit: usize) -> Vec<Site> {
         if let Some((cached_limit, sites)) = self.top_cache.borrow().as_ref()
@@ -365,6 +440,61 @@ mod tests {
 
         let top = h.top_sites(5);
         assert_eq!(top[0].url, "https://github.com");
+    }
+
+    #[test]
+    fn past_searches_complete_the_typed_text() {
+        let mut h = History::default();
+        h.record(
+            "https://yandex.ru/search/?text=%D0%BF%D1%80%D0%B8%D0%B2%D0%B5%D1%82",
+            "привет — Яндекс",
+        );
+        h.record(
+            "https://duckduckgo.com/?q=%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82",
+            "Привет at DuckDuckGo",
+        );
+        h.record("https://www.google.com/search?q=%D0%BF%D1%80%D0%BE%D0%B3%D0%BD%D0%BE%D0%B7+%D0%BF%D0%BE%D0%B3%D0%BE%D0%B4%D1%8B", "прогноз погоды");
+        h.record("https://www.google.com/search?q=%D1%87%D0%B5%D0%BC+%D0%BF%D1%80%D0%BE%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C", "чем прокачать");
+        h.record(
+            "https://www.google.com/search?udm=50&q=%D0%BF%D1%80%D0%BE+AI",
+            "AI Mode",
+        );
+        h.record("https://example.com/%D0%BF%D1%80", "пр — не поиск");
+        h.record("https://www.google.com/search?q=%D0%BF%D1%80", "пр");
+
+        let found = h.searches("пр", "", 10);
+        // «привет» дважды (Яндекс и DuckDuckGo, разный регистр) — одна подсказка и выше всех.
+        assert_eq!(found[0].to_lowercase(), "привет");
+        assert_eq!(
+            found
+                .iter()
+                .filter(|q| q.to_lowercase() == "привет")
+                .count(),
+            1
+        );
+        assert!(found.contains(&"прогноз погоды".to_string()));
+        // Слово внутри запроса тоже подходит, но ниже начала.
+        assert_eq!(found.last().map(String::as_str), Some("чем прокачать"));
+        // Сам набранный текст, AI Mode и обычные страницы — не подсказки.
+        assert_eq!(found.len(), 3, "{found:?}");
+        assert_eq!(h.searches("  ПРИ  ", "", 10).len(), 1);
+        assert_eq!(h.searches("пр", "", 1).len(), 1);
+        assert!(h.searches("", "", 10).is_empty());
+
+        // Удалили из истории — пропало и из подсказок.
+        h.remove_since(0);
+        assert!(h.searches("пр", "", 10).is_empty());
+
+        // Свой адрес поиска.
+        h.record(
+            "https://search.example/find/%D0%BF%D1%80%D0%B8%D0%B2%D0%B5%D1%82",
+            "x",
+        );
+        assert!(h.searches("пр", "", 10).is_empty());
+        assert_eq!(
+            h.searches("пр", "https://search.example/find/%s", 10),
+            ["привет"]
+        );
     }
 
     fn with(entries: &[(&str, &str, u64)]) -> History {

@@ -145,6 +145,9 @@ pub struct SettingsIn {
     /// Статистика использования. Нет поля — не менять.
     #[serde(default)]
     pub usage_stats: Option<bool>,
+    /// Подсказки поисковой системы. Нет поля — не менять.
+    #[serde(default)]
+    pub search_suggest: Option<bool>,
     /// Новый разговор в панели ИИ при каждом открытии. Нет поля или null — не менять.
     #[serde(default)]
     pub ai_new_chat: Option<bool>,
@@ -691,6 +694,13 @@ pub enum ToUi<'a> {
     Suggestions {
         q: &'a str,
         items: Vec<Suggestion>,
+        /// Прошлые запросы из истории, начинающиеся с набранного.
+        searches: Vec<String>,
+    },
+    /// Подсказки поисковой системы на набранный `q` (могут прийти позже `Suggestions`).
+    Completions {
+        q: &'a str,
+        items: &'a [String],
     },
     Hotkey {
         action: String,

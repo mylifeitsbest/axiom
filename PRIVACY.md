@@ -1,6 +1,6 @@
 # Политика конфиденциальности Axiom
 
-Коротко: страницы, история, закладки, пароли и куки хранятся только на вашем компьютере. Сам Axiom отправляет совсем немного, и всё это можно выключить в «Настройки → Система». Об этом же говорит приветствие при первом запуске.
+Коротко: страницы, история, закладки, пароли и куки хранятся только на вашем компьютере. Сам Axiom отправляет совсем немного, и всё это можно выключить в настройках («Система», подсказки поиска — «Поиск и ИИ»). Об этом же говорит приветствие при первом запуске.
 
 _English version below._
 
@@ -21,6 +21,11 @@ _English version below._
 - Когда: раз в 6 часов, у бета-версий — раз в полчаса.
 - Что: обычный запрос страницы последнего выпуска; в заголовке `User-Agent` — версия Axiom. Обновление скачивается с GitHub только после нажатия «Обновить».
 - Выключить: «Проверять автоматически».
+
+**Подсказки поиска** — в выбранную поисковую систему (по умолчанию DuckDuckGo): `duckduckgo.com/ac`, `www.google.com/complete/search`, `suggest.yandex.ru`, `www.bing.com/osjson.aspx`, `search.brave.com/api/suggest`, `www.startpage.com/osuggestions` или `ac.ecosia.org`.
+- Когда: пока вы набираете текст в адресной строке или в поиске новой вкладки, ещё до Enter.
+- Что: набранный текст (до 120 знаков) и та же строка браузера (`User-Agent`), что у вкладок. Куки не отправляются. Похожее на адрес сайта (`example.com/…`) не отправляется вовсе; со своим адресом поиска подсказок нет.
+- Выключить: «Настройки → Поиск и ИИ → Подсказки поисковой системы». Ваши прошлые запросы из истории подсказываются без сети и при выключенных подсказках.
 
 **Ответы на «Сообщить о проблеме»** — на сервер разработчика.
 - Когда: только если вы отправляли сообщение, раз в 20 минут в течение месяца после отправки.
@@ -51,11 +56,12 @@ _English version below._
 
 # Axiom privacy policy (English)
 
-Pages, history, bookmarks, passwords and cookies stay on your computer. Axiom itself sends very little, and every item below can be turned off in Settings → System. The first-run welcome screen shows the same list with the switches.
+Pages, history, bookmarks, passwords and cookies stay on your computer. Axiom itself sends very little, and every item below can be turned off in Settings (System; search suggestions in Search and AI). The first-run welcome screen shows the same list with the switches.
 
 **Sent automatically:**
 - **Usage statistics** to the developer's server (`179-254-172-240.sslip.io`), hourly while Axiom is open and at start: Axiom version, OS (Windows or Linux) and a few yes/no flags (new install; first run today, this week, this month; just updated; first run of this version today; data imported from another browser, once, without the browser's name or the data; an "hourly" flag used to count open browsers). No identifier, URLs, history or user name. Switch: «Статистика использования» (usage statistics). When it is off, nothing goes to the developer's server in the background except checks for replies to messages you sent yourself.
 - **Crash reports** to the developer's server, only after a crash: error message, code location, stack trace, the tail of `axiom.log`, version and OS. URLs, user-name paths, e-mail addresses and tokens are removed before the report is written to disk. Switch: «Отправлять отчёты об ошибках» (send crash reports); when off, reports are deleted unsent.
+- **Search suggestions** to the chosen search engine (DuckDuckGo by default) while you type in the address bar or the new-tab search, before you press Enter: the typed text (up to 120 characters) and the same `User-Agent` as the tabs, no cookies. Input that looks like a site address is never sent; a custom search URL gets no suggestions. Switch: «Подсказки поисковой системы» in Settings → Search and AI. Your own past searches from history are suggested offline either way.
 - **Update checks** to GitHub, every 6 hours (beta builds: every 30 minutes); the `User-Agent` header carries the Axiom version. Switch: «Проверять автоматически» (check automatically).
 - **Replies to "Report a problem"**: only if you sent a message, every 20 minutes for a month, using that message's random reply key, which is not linked to the browser or to the statistics.
 

@@ -16,6 +16,7 @@ mod reports;
 mod settings;
 mod stats;
 mod storage;
+mod suggest;
 mod system;
 mod tabs;
 mod translate;

@@ -155,6 +155,17 @@ pub fn agent() -> Option<String> {
     agent_string(prefs.agent, &prefs.agent_custom, engine(), today())
 }
 
+/// Строка браузера для своих запросов к сайтам (подсказки поиска): та же, что
+/// у новых вкладок. Поисковики на запрос без строки браузера отвечают пусто.
+pub fn browser_agent() -> String {
+    agent()
+        .or_else(|| engine().map(str::to_string))
+        .unwrap_or_else(|| FALLBACK_AGENT.to_string())
+}
+
+/// Пока движок не сказал свою строку (первая вкладка ещё не создана).
+const FALLBACK_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+
 /// Грузить ли страницу новой вкладки только после [`install`]: иначе первый
 /// документ ушёл бы без подмены Referer и без скрипта.
 pub fn defer_load() -> bool {

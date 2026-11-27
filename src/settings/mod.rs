@@ -61,6 +61,9 @@ pub struct Settings {
     pub search_custom: String,
     /// Запрос из адресной строки уходит и в поисковую систему, и в AI Mode.
     pub double_search: bool,
+    /// Подсказки поисковой системы в адресной строке: набранное уходит в неё
+    /// ещё до Enter (см. `suggest`, PRIVACY.md).
+    pub search_suggest: bool,
     /// Прокси только для панели ИИ: `http://host:port` или `socks5://host:port`.
     pub ai_proxy: String,
     /// Закрытая панель ИИ при следующем открытии начинает новый разговор,
@@ -117,6 +120,7 @@ impl Default for Settings {
             search_engine: Engine::DuckDuckGo,
             search_custom: String::new(),
             double_search: true,
+            search_suggest: true,
             ai_proxy: String::new(),
             ai_new_chat: true,
             sleep_minutes: 5,
@@ -177,6 +181,9 @@ impl Settings {
         }
         if let Some(on) = incoming.usage_stats {
             self.usage_stats = on;
+        }
+        if let Some(on) = incoming.search_suggest {
+            self.search_suggest = on;
         }
         if let Some(on) = incoming.ai_new_chat {
             self.ai_new_chat = on;

@@ -56,7 +56,7 @@
   const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: null, maximized: false };
   let A = { ...DEFAULTS };
   // no_sleep_sites: null — настройки ещё не пришли, Rust список не трогает.
-  let B = { double_search: true, ai_proxy: '', ai_new_chat: true, sleep_minutes: 5, live_tabs: 3, no_sleep_sites: null, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, usage_stats: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
+  let B = { double_search: true, ai_proxy: '', ai_new_chat: true, sleep_minutes: 5, live_tabs: 3, no_sleep_sites: null, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, usage_stats: true, search_suggest: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -381,6 +381,7 @@
         strip_tracking: B.strip_tracking !== false,
         crash_reports: B.crash_reports !== false,
         usage_stats: B.usage_stats !== false,
+        search_suggest: B.search_suggest !== false,
         // null — бета-версии ещё не включали и не выключали: Rust не трогает поле.
         beta: typeof B.beta === 'boolean' ? B.beta : null,
         gpu: String(B.gpu || 'auto'),
@@ -790,13 +791,22 @@
 
   let sugQ = '';
   let sugHist = [];
+  // Прошлые запросы из истории и подсказки поисковой системы («пр» → «привет»).
+  let sugPast = [];
+  let sugRemote = { q: '', items: [] };
   let sugItems = [];
   let sugSel = 0;
   let sugTimer;
+  // Что набрано руками: стрелки подставляют в поле выбранную подсказку, а строка
+  // самого запроса возвращает набранное. Пока ходят стрелками, список не перестраивается.
+  let sugTyped = '';
+  let sugNav = false;
   // Чьи подсказки: адресной строки или поиска новой вкладки (ui/newtab.js).
   let sugSrc = inp;
   function updateSug(src = inp) {
     sugSrc = src;
+    sugTyped = src.value;
+    sugNav = false;
     const q = src.value.trim();
     sugQ = q;
     if (!q) { hideSug(); return; }
@@ -804,21 +814,60 @@
     sugTimer = setTimeout(() => send({ cmd: 'suggest', q }), 40);
     renderSug();
   }
+  const sugHost = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  // Набранное — как есть, дописанное подсказкой — жирным.
+  function sugTitle(t, q) {
+    const head = t.slice(0, q.length);
+    return t.length > q.length && head.toLowerCase() === q.toLowerCase() ? `${esc(head)}<b>${esc(t.slice(q.length))}</b>` : esc(t);
+  }
   function renderSug() {
     const q = sugQ;
     if (!q) { hideSug(); return; }
+    const low = q.toLowerCase();
+    const url = looksLikeUrl(q);
     const items = [];
-    if (looksLikeUrl(q)) items.push({ kind: 'go', ic: 'globe', title: q, sub: 'Перейти', input: q });
+    if (url) items.push({ kind: 'go', ic: 'globe', title: q, sub: 'Перейти', input: q });
     items.push({ kind: 'search', ic: 'search', title: q, sub: B.double_search ? `${searchEngineName(B)} + ИИ` : searchEngineName(B), input: q });
-    for (const h of sugHist.slice(0, 7)) {
-      items.push({ kind: h.kind, ic: h.kind === 'bookmark' ? 'star' : 'clock', title: h.title || h.url, sub: h.url.replace(/^https?:\/\/(www\.)?/, ''), input: h.url });
+    // Запросы: сначала свои прошлые, потом системы. Ответ на прежний текст, пока
+    // не пришёл новый, годится только там, где он продолжает набранное.
+    const seen = new Set([low]);
+    const queries = [];
+    for (const s of sugPast) {
+      if (queries.length >= 3) break;
+      const l = s.toLowerCase();
+      if (!seen.has(l)) { seen.add(l); queries.push({ text: s, past: true }); }
     }
+    const fresh = sugRemote.q === q;
+    for (const s of sugRemote.items) {
+      if (queries.length >= 5) break;
+      const l = s.toLowerCase();
+      if (seen.has(l) || (!fresh && !l.startsWith(low))) continue;
+      seen.add(l);
+      queries.push({ text: s });
+    }
+    // Сайтов меньше, когда ждём подсказки системы: иначе список прыгал бы, когда они придут.
+    const remote = B.search_suggest !== false && !url && B.search_engine !== 'custom';
+    const sites = sugHist.slice(0, remote || queries.length ? 3 : 7).map((h) => ({ kind: h.kind, ic: h.kind === 'bookmark' ? 'star' : 'clock', title: h.title || h.url, sub: h.url.replace(/^https?:\/\/(www\.)?/, ''), input: h.url, fill: h.url }));
+    // Набрали начало адреса сайта («you») — сайт сразу под первой строкой.
+    const lead = sugHist.slice(0, sites.length).findIndex((h) => sugHost(h.url).startsWith(low));
+    if (lead >= 0) items.push(...sites.splice(lead, 1));
+    for (const s of queries) items.push({ kind: 'search', ic: s.past ? 'clock' : 'search', title: s.text, sub: '', input: s.text, fill: s.text, q: true });
+    items.push(...sites);
     items.push({ kind: 'ai', ic: 'sparkles', title: 'Спросить ИИ', sub: q, input: q, kbd: 'Ctrl+Enter' });
     sugItems = items;
     sugSel = Math.min(Math.max(sugSel, 0), items.length - 1);
     $('#sug').innerHTML = items.map((it, i) =>
-      `<div class="si${i === sugSel ? ' on' : ''}" data-i="${i}" role="option">${icon(it.ic)}<span class="st">${esc(it.title)}</span><span class="ss">${esc(it.sub)}</span>${it.kbd ? `<kbd>${it.kbd}</kbd>` : ''}</div>`).join('');
+      `<div class="si${it.q ? ' q' : ''}${i === sugSel ? ' on' : ''}" data-i="${i}" role="option">${icon(it.ic)}<span class="st">${it.q ? sugTitle(it.title, q) : esc(it.title)}</span><span class="ss">${esc(it.sub)}</span>${it.kbd ? `<kbd>${it.kbd}</kbd>` : ''}</div>`).join('');
     showSug();
+  }
+  // Стрелки: выбранная подсказка встаёт в поле, как в других браузерах.
+  function moveSel(step) {
+    sugSel = (sugSel + step + sugItems.length) % sugItems.length;
+    markSel();
+    sugNav = true;
+    const field = sugSrc;
+    field.value = sugItems[sugSel]?.fill ?? sugTyped;
+    field.setSelectionRange(field.value.length, field.value.length);
   }
   function positionSug() {
     const own = sugSrc === inp;
@@ -854,7 +903,10 @@
     clearTimeout(sugTimer);
     sugQ = '';
     sugHist = [];
+    sugPast = [];
+    sugRemote = { q: '', items: [] };
     sugSel = 0;
+    sugNav = false;
   }
   const markSel = () => $$('.si', $('#sug')).forEach((e, i) => e.classList.toggle('on', i === sugSel));
   $('#sug').addEventListener('mousedown', (e) => {
@@ -875,8 +927,8 @@
       return;
     }
     const open = $('#sug').classList.contains('on');
-    if (e.key === 'ArrowDown' && open) { e.preventDefault(); sugSel = (sugSel + 1) % sugItems.length; markSel(); }
-    else if (e.key === 'ArrowUp' && open) { e.preventDefault(); sugSel = (sugSel - 1 + sugItems.length) % sugItems.length; markSel(); }
+    if (e.key === 'ArrowDown' && open) { e.preventDefault(); moveSel(1); }
+    else if (e.key === 'ArrowUp' && open) { e.preventDefault(); moveSel(-1); }
     else if (e.key === 'Enter') {
       e.preventDefault();
       const q = e.currentTarget.value.trim();
@@ -1206,7 +1258,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', ai_new_chat: s.ai_new_chat !== false, sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, no_sleep_sites: sitesIn(s.no_sleep_sites), onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, usage_stats: s.usage_stats !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
+      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', ai_new_chat: s.ai_new_chat !== false, sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, no_sleep_sites: sitesIn(s.no_sleep_sites), onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, usage_stats: s.usage_stats !== false, search_suggest: s.search_suggest !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
@@ -1242,7 +1294,17 @@
       });
       render();
     },
-    suggestions(m) { if (m.q === sugQ && mode === 'url' && document.activeElement === sugSrc) { sugHist = m.items || []; renderSug(); } },
+    suggestions(m) {
+      if (m.q !== sugQ || mode !== 'url' || document.activeElement !== sugSrc) return;
+      sugHist = m.items || [];
+      sugPast = m.searches || [];
+      if (!sugNav) renderSug();
+    },
+    completions(m) {
+      if (m.q !== sugQ || mode !== 'url' || document.activeElement !== sugSrc) return;
+      sugRemote = { q: m.q, items: m.items || [] };
+      if (!sugNav) renderSug();
+    },
     hotkey(m) { hotkey(m.action); },
     find(m) { omni.classList.toggle('nf', !m.found); },
     toast(m) { toast(m.text); },

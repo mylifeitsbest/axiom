@@ -266,6 +266,7 @@ function createPanels(ax) {
           <div class="srow col" data-kw="поисковик поисковая система поиск по умолчанию google yandex brave"><span class="sl"><b>Поисковая система</b><small id="seNote"></small></span>${engineChips()}</div>
           <div class="srow" id="seCustomRow" data-kw="свой адрес поиска шаблон %s"><span class="inline"><input type="text" id="seCustomIn" placeholder="https://example.com/search?q=%s" spellcheck="false"><button class="btn primary" data-act="search-custom">Применить</button></span></div>
           ${row('Двойной поиск', 'Запрос уходит в <span class="se-name">DuckDuckGo</span> и сразу в AI Mode — и из адресной строки, и из поиска на странице', toggle('data-bkey', 'double_search'))}
+          ${row('Подсказки поисковой системы', 'Набрали «пр» — под строкой «привет», «прогноз погоды»… Для этого набранное уходит в <span class="se-name">DuckDuckGo</span> ещё до Enter. Адреса сайтов не отправляются. Свои прошлые запросы из истории подсказываются и без этого', toggle('data-bkey', 'search_suggest'), 'data-kw="подсказки автодополнение предложения запросы дополнение популярные"')}
         </div>
         <h4>Панель ИИ</h4><div class="card">
           ${row('Прокси только для AI Mode', 'Вкладки ходят напрямую. Пусто — без прокси.', '')}
@@ -1247,6 +1248,7 @@ function createPanels(ax) {
             ${row('Статистика использования', 'Раз в час: версия, система и запускали ли Axiom сегодня. Без адресов и номера браузера', toggle('data-bkey', 'usage_stats'))}
             ${row('Отчёты об ошибках', 'Если Axiom вылетит: что сломалось и конец журнала, без адресов страниц', toggle('data-bkey', 'crash_reports'))}
             ${row('Проверять обновления', 'Раз в несколько часов Axiom узнаёт у GitHub номер последней версии', toggle('data-bkey', 'check_updates'))}
+            ${row('Подсказки поиска', 'Пока вы набираете запрос, текст уходит в выбранную поисковую систему — она подсказывает популярные запросы', toggle('data-bkey', 'search_suggest'))}
           </div>
           <p class="onb-small">Подробно — в Настройки → Система → «Политика конфиденциальности»</p>
         </section>

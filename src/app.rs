@@ -117,6 +117,8 @@ pub struct App {
     island_dock: Option<ipc::IslandDock>,
     /// Видео вкладки, показанное внутри островка (`tabs::mini`).
     mini: Option<crate::tabs::mini::Show>,
+    /// Подсказки поисковой системы в адресной строке.
+    suggest: crate::suggest::Remote,
 }
 
 impl App {
@@ -207,6 +209,7 @@ impl App {
             permissions: permissions::State::default(),
             island_dock: None,
             mini: None,
+            suggest: crate::suggest::Remote::default(),
         };
         app.sync_tracking();
         app.sync_identity();
@@ -307,6 +310,16 @@ impl App {
             UserEvent::Untracked { id, url } => self.load_untracked(id, url),
             UserEvent::Reported(outcome) => self.on_reported(outcome),
             UserEvent::Answers => self.push_answers(true),
+            UserEvent::Completions(answer) => {
+                self.suggest.remember(&answer);
+                // Пока шёл запрос, систему могли сменить или подсказки выключить.
+                if self.settings.search_suggest && answer.engine == self.settings.search_engine {
+                    self.send(&ToUi::Completions {
+                        q: &answer.q,
+                        items: &answer.items,
+                    });
+                }
+            }
             UserEvent::Tick => self.on_tick(),
         }
         Ok(Flow::Continue)
@@ -405,18 +418,7 @@ impl App {
                     self.apply_layout();
                 }
             }
-            UiCmd::Suggest { q } => {
-                let mut items = self.bookmarks.search(&q, 3);
-                for hit in self.history.search(&q, 8) {
-                    if items.len() >= 7 {
-                        break;
-                    }
-                    if !items.iter().any(|s| s.url == hit.url) {
-                        items.push(hit);
-                    }
-                }
-                self.send(&ToUi::Suggestions { q: &q, items });
-            }
+            UiCmd::Suggest { q } => self.suggest(&q),
             UiCmd::ToggleBookmark => self.toggle_bookmark(),
             UiCmd::ToggleNoSleep { id } => self.toggle_no_sleep(id),
             UiCmd::ToggleSiteNoSleep { id } => self.toggle_site_no_sleep(id),
@@ -1350,6 +1352,34 @@ impl App {
 
     // ---------- настройки ----------
 
+    /// Подсказки адресной строки на набранное: закладки, история и прошлые запросы
+    /// сразу, подсказки поисковой системы — сразу из памяти или когда она ответит.
+    fn suggest(&mut self, q: &str) {
+        let mut items = self.bookmarks.search(q, 3);
+        for hit in self.history.search(q, 8) {
+            if items.len() >= 7 {
+                break;
+            }
+            if !items.iter().any(|s| s.url == hit.url) {
+                items.push(hit);
+            }
+        }
+        let searches = self.history.searches(q, &self.settings.search_custom, 3);
+        self.send(&ToUi::Suggestions { q, items, searches });
+        let remote = if self.settings.search_suggest {
+            self.suggest
+                .ask(self.settings.search_engine, q, &self.events)
+        } else {
+            Some(Vec::new())
+        };
+        if let Some(items) = remote {
+            self.send(&ToUi::Completions {
+                q: q.trim(),
+                items: &items,
+            });
+        }
+    }
+
     fn save_settings(&mut self, mut incoming: ipc::SettingsIn) {
         let old_proxy = self.settings.ai_proxy.clone();
         let rejected = match proxy::parse(&incoming.ai_proxy) {
@@ -1366,6 +1396,9 @@ impl App {
         self.settings.apply(incoming);
         crate::reports::set_auto(self.settings.crash_reports);
         crate::stats::set_enabled(self.settings.usage_stats);
+        if !self.settings.search_suggest {
+            self.suggest.forget();
+        }
         let beta = self
             .settings
             .beta_channel(crate::update::Version::current().is_beta());

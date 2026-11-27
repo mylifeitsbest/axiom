@@ -35,6 +35,10 @@ function createAdblock(ax) {
   };
 
   // ---------- щит в адресной строке ----------
+  // Счёт на странице меняется часто (YouTube блокирует что-то каждые несколько
+  // секунд): щит и окошко меняют только текст, а не пересоздаются — иначе
+  // мигали бы подсказка и анимация появления.
+  let shownBtn = '';
   function renderOmni(t) {
     const host = ax.isPage(t) ? hostOf(t.url) : '';
     const show = !!host && V.enabled && !t.sleeping;
@@ -43,33 +47,66 @@ function createAdblock(ax) {
     if (!show) return;
     const on = t.ads_blocked !== false;
     const n = on ? Number(t.blocked || 0) : 0;
-    btn.classList.toggle('off', !on);
-    btn.innerHTML = `${icon('shield')}${n ? `<b class="ab-n">${n > 99 ? '99+' : n}</b>` : ''}`;
-    btn.title = !on ? `Реклама на ${host} не блокируется`
+    const key = `${on}|${n}`;
+    if (key !== shownBtn) {
+      shownBtn = key;
+      btn.classList.toggle('off', !on);
+      btn.innerHTML = `${icon('shield')}${n ? `<b class="ab-n">${n > 99 ? '99+' : n}</b>` : ''}`;
+    }
+    const title = !on ? `Реклама на ${host} не блокируется`
       : n ? `Заблокировано рекламы на странице: ${num(n)}` : 'Блокировка рекламы';
-    if (cardOpen()) renderCard();
+    if (btn.title !== title) btn.title = title;
+    if (cardOpen()) fillCard();
   }
 
   // ---------- окошко ----------
-  const cardOpen = () => card.classList.contains('on');
+  // Страница — нативный webview поверх интерфейса. Окошко не прячет её под снимок
+  // (на тяжёлых страницах вроде YouTube снимок не успевает, и страница темнела):
+  // Rust прорезает в странице дыру ровно по окошку, как у окошка масштаба
+  // (zoom_bubble). Страница остаётся живой и видна вокруг.
+  const cardOpen = () => card.classList.contains('on') && cardTab !== null;
+  // Сколько ждать, пока страница снова закроет место окошка, прежде чем его прятать.
+  const UNCOVER = 60;
+  let hideTimer;
+  let lastHole = '';
+  let openedAt = 0;
 
-  function renderCard() {
+  function sendHole(rect) {
+    const radius = rect ? parseFloat(getComputedStyle(card).borderTopLeftRadius) || 0 : 0;
+    const msg = { cmd: 'zoom_bubble', rect, radius: Math.min(64, Math.max(0, radius)) };
+    const key = JSON.stringify(msg);
+    if (key !== lastHole) { lastHole = key; ax.send(msg); }
+  }
+  const holeRect = () => {
+    const r = card.getBoundingClientRect();
+    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+  };
+
+  // Каркас окошка — один раз при открытии; дальше fillCard меняет только текст.
+  function buildCard() {
+    card.innerHTML = `<div class="trp-head"><span class="trp-ic" id="abcIc">${icon('shield')}</span>
+        <span class="trp-t"><b id="abcHead"></b><small id="abcSub"></small></span></div>
+      <label class="trp-row ab-row"><span class="pm-name"><span id="abcSite"></span></span><input type="checkbox" class="tg" id="abSite"></label>
+      <div class="pm-foot"><button class="lnk" data-ab-act="settings">${icon('shield')}Настройки блокировки</button></div>`;
+  }
+
+  function fillCard() {
     const t = ax.activeTab();
     if (!t) return;
     const host = hostOf(t.url);
     const on = t.ads_blocked !== false;
     const n = Number(t.blocked || 0);
-    const head = on
+    const set = (id, text) => { const el = $('#' + id, card); if (el && el.textContent !== text) el.textContent = text; };
+    set('abcHead', on
       ? (n ? `${num(n)} ${plural(n, 'запрос заблокирован', 'запроса заблокировано', 'запросов заблокировано')}` : 'Рекламы на странице не найдено')
-      : 'Реклама не блокируется';
-    const sub = on
+      : 'Реклама не блокируется');
+    set('abcSub', on
       ? `${num(V.total)} за всё время${V.ready ? '' : ' · списки ещё загружаются'}`
-      : `На ${esc(host)} выключено — включите, и страница обновится`;
-    card.innerHTML = `<div class="trp-head"><span class="trp-ic${on ? '' : ' off'}">${icon('shield')}</span>
-        <span class="trp-t"><b>${head}</b><small>${sub}</small></span></div>
-      <label class="trp-row ab-row"><span class="pm-name"><span>Блокировать на ${esc(host)}</span></span><input type="checkbox" class="tg" id="abSite" ${on ? 'checked' : ''}></label>
-      <div class="pm-foot"><button class="lnk" data-ab-act="settings">${icon('shield')}Настройки блокировки</button></div>`;
-    if (cardOpen()) place();
+      : `На ${host} выключено — включите, и страница обновится`);
+    set('abcSite', `Блокировать на ${host}`);
+    $('#abcIc', card)?.classList.toggle('off', !on);
+    const box = $('#abSite', card);
+    if (box && box.checked !== on) box.checked = on;
   }
 
   function place() {
@@ -88,18 +125,27 @@ function createAdblock(ax) {
     const t = ax.activeTab();
     if (!t || btn.hidden) return;
     if (cardOpen()) { closeCard(); return; }
+    // Дыра в странице одна: окошко масштаба уступает место.
+    ax.closeZoom();
+    clearTimeout(hideTimer);
+    openedAt = performance.now();
     cardTab = t.id;
-    renderCard();
+    buildCard();
+    fillCard();
     card.classList.add('on');
-    ax.setOverlay('abc', true);
     place();
+    // Дыра — когда окошко уже нарисовано: иначе на кадр в ней был бы виден пустой фон.
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (cardOpen()) sendHole(holeRect()); }));
   }
 
   function closeCard() {
     if (!cardOpen()) return;
-    card.classList.remove('on');
-    ax.setOverlay('abc', false);
     cardTab = null;
+    // Сначала страница снова закрывает это место, потом прячем окошко —
+    // иначе на миг мелькнул бы фон интерфейса под ним.
+    sendHole(null);
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => card.classList.remove('on'), UNCOVER);
   }
 
   btn.addEventListener('click', openCard);
@@ -116,10 +162,16 @@ function createAdblock(ax) {
   document.addEventListener('mousedown', (e) => {
     if (cardOpen() && !e.target.closest('#abc') && !e.target.closest('#abBtn')) closeCard();
   }, true);
+  // Щёлкнули по самой странице — фокус ушёл из интерфейса: окошко больше не нужно.
+  // Первые мгновения после открытия не считаем (как у меню вкладки): фокус мог
+  // уйти не от человека.
+  addEventListener('blur', () => { if (performance.now() - openedAt > 400) closeCard(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && cardOpen()) { e.preventDefault(); e.stopImmediatePropagation(); closeCard(); }
   }, true);
-  addEventListener('resize', () => { if (cardOpen()) requestAnimationFrame(place); });
+  addEventListener('resize', () => {
+    if (cardOpen()) requestAnimationFrame(() => { place(); sendHole(holeRect()); });
+  });
 
   // ---------- Настройки → Безопасность ----------
   function sectionHtml() {

@@ -93,6 +93,7 @@ function createZoom(ax) {
     if (shown) {
       sendHole(position());
     } else {
+      ax.opening?.();
       shown = true;
       panel.classList.remove('anim');
       panel.classList.add('on');

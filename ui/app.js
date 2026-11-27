@@ -98,6 +98,8 @@
     isPage: () => { const t = activeTab(); return isPage(t) && !t.sleeping; },
     // Место страницы: правее неё — панель ИИ (тоже нативный webview) или край окна.
     page: () => $('#content').getBoundingClientRect(),
+    // Дыра в странице одна: окошко щита рекламы уступает её окошку масштаба.
+    opening: () => ab.close(),
   });
 
   // ---------- загрузки (ui/downloads.js) ----------
@@ -141,7 +143,7 @@
   const plg = createPlugins({ esc, send, toast: (t) => toast(t), closeSettings: () => closeSettings() });
   const pm = createPermissions({ esc, send, setOverlay, isPage, toast: (t) => toast(t), activeTab: () => activeTab(), favHtml: (u) => favHtml(u), openSettings: (s) => openSettings(s) });
   // ---------- блокировка рекламы (ui/adblock.js) ----------
-  const ab = createAdblock({ esc, send, setOverlay, isPage, activeTab: () => activeTab(), tabs: () => S.tabs, openSettings: (s) => openSettings(s) });
+  const ab = createAdblock({ esc, send, isPage, activeTab: () => activeTab(), tabs: () => S.tabs, openSettings: (s) => openSettings(s), closeZoom: () => zm.close() });
 
   // ---------- иконки и фавиконки ----------
   const fillIcons = (scope = document) => $$('[data-i]', scope).forEach((el) => { el.innerHTML = icon(el.dataset.i); });

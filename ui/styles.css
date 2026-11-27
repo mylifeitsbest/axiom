@@ -799,8 +799,9 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .omni .ib.ab.off::after{content:"";position:absolute;left:6px;right:6px;top:50%;height:1.7px;margin-top:-.85px;border-radius:1px;background:currentColor;transform:rotate(-45deg);box-shadow:0 0 0 1.3px var(--s1)}
 .omni .ib.ab.off:hover::after{box-shadow:0 0 0 1.3px var(--s2)}
 .ab-n{position:absolute;right:-1px;bottom:0;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--acc);color:var(--bg);font:700 9px/14px system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 0 0 1.5px var(--s1)}
-.abc{padding:12px 6px 8px;transform-origin:top right}
-.dlp.abc.up{transform-origin:bottom right}
+/* Под окошком в странице прорезана дыра ровно по нему: окошко появляется сразу,
+   без сдвига и масштаба (иначе дыра и окошко на миг не совпали бы). */
+.dlp.abc,.dlp.abc.on{padding:12px 6px 8px;transform:none;transition:none}
 .abc .trp-ic.off{background:var(--s2);color:var(--t3)}
 .ab-row{margin-top:10px;cursor:pointer}
 .abc .pm-foot{justify-content:flex-start}

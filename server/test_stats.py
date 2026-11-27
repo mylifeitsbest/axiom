@@ -666,6 +666,15 @@ class Online(unittest.TestCase):
         self.assertIn('<div class="n">≈1</div>', page)
         self.assertIn('data-fmt="hour-tip" data-n="1"', page)
 
+    def test_withdrawn_0_7_0_counts_as_0_6_2(self):
+        stats.utcnow = lambda: self.NOW
+        for v, flags in (("0.7.0", {"vd": True, "up": True}), ("0.7.0", {"vd": True}),
+                         ("0.6.2", {"vd": True, "up": True})):
+            self.assertTrue(stats.record({"v": v, "os": "windows", "d": True, **flags}))
+        page = stats.dashboard()
+        self.assertNotIn("0.7.0", page)
+        self.assertIn("<tr><td>0.6.2</td><td>3</td><td>2</td></tr>", page)
+
     def test_migration_copies_pings_to_online(self):
         con = stats.db()
         with con:

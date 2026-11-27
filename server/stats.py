@@ -675,6 +675,16 @@ def ver_key(v):
     return tuple(int(x) for x in v.split("."))
 
 
+# 0.7.0 вышла по ошибке и через час была отозвана, те же изменения вышли как 0.6.2.
+# Браузеры, что успели её поставить, так и отмечаются «0.7.0» (обновления до 0.6.x
+# для них «старее»), — на панели они считаются вместе с 0.6.2. В базе всё как пришло.
+SHOWN_AS = {"0.7.0": "0.6.2"}
+
+
+def shown_version(v):
+    return SHOWN_AS.get(v, v)
+
+
 def online_now(con, now):
     """Сколько браузеров открыто: отметки «в счёт часа» за последние 60 минут.
 
@@ -749,9 +759,10 @@ def dashboard(nonce=""):
     for v, today, upd in con.execute(
             """SELECT v, SUM(CASE WHEN day=? THEN vdau ELSE 0 END), SUM(updates)
                FROM hits WHERE day>=? GROUP BY v""", (t, d30)):
-        # Старые версии, на которых сегодня никого, только загромождали бы таблицу.
-        if today or upd:
-            vers[v] = (today or 0, upd or 0)
+        was_today, was_upd = vers.get(shown_version(v), (0, 0))
+        vers[shown_version(v)] = (was_today + (today or 0), was_upd + (upd or 0))
+    # Старые версии, на которых сегодня никого, только загромождали бы таблицу.
+    vers = {v: n for v, n in vers.items() if n[0] or n[1]}
     s["versions"] = sorted(vers.items(), key=lambda kv: ver_key(kv[0]), reverse=True)
     s["oses"] = con.execute(
         """SELECT os, SUM(dau) a FROM hits WHERE day=? GROUP BY os
@@ -884,6 +895,7 @@ def feed_html(feed):
                 'обновления и переезды — через минуту после того, как они случатся.</div>')
     items = []
     for slot, v, inst, upd, imp, imp_old in feed:
+        v = shown_version(v)
         when = f'<time data-utc="{escape(slot)}:00Z" data-fmt="feed">{escape(slot[11:])}</time>'
         if inst:
             items.append(

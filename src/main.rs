@@ -80,12 +80,16 @@ fn run() -> Result<()> {
     }
     // Новую версию запустила старая: ждём, пока та закроется, иначе адреса ушли бы ей.
     if updated {
-        update::finish(&paths);
+        update::finish();
     }
-    // Если Axiom уже открыт — передаём ему адреса и выходим.
-    let Some(server) = instance::claim(&paths, &urls) else {
+    // Если Axiom уже открыт — передаём ему адреса и выходим (открытый, но ещё
+    // не готовый — ждём, а не открываем второе окно в том же профиле).
+    let Some(claimed) = instance::claim(&paths, &urls) else {
         return Ok(());
     };
+    // Профиль наш. WebView2 только что закрытого или вылетевшего Axiom может ещё
+    // держать его папку — тогда окно не создалось бы («Требуемый ресурс занят»).
+    update::wait_webview(&paths);
     // Журнал и отчёты об ошибках — первым делом: дальше всё, что пишется в stderr,
     // попадает в `axiom.log` (и в терминал, если запущен из него), а вылет оставит отчёт.
     #[cfg(target_os = "linux")]
@@ -102,7 +106,7 @@ fn run() -> Result<()> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let mut app = App::new(&event_loop, paths, &urls, updated, updated_from)?;
     events::spawn_ticker(event_loop.create_proxy());
-    let registration = server.map(|server| server.spawn(event_loop.create_proxy()));
+    let registration = claimed.spawn(event_loop.create_proxy());
 
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -126,12 +130,10 @@ fn run() -> Result<()> {
             _ => app::Flow::Continue,
         };
         if flow == app::Flow::Exit {
+            // Порт и токен на диске больше ни к чему, а адреса закрывающемуся окну
+            // не отдаём: следующий запуск дождётся выхода и откроет окно сам.
+            registration.release();
             app.shutdown();
-            // Порт и токен на диске больше ни к чему: следующий запуск не будет
-            // стучаться в закрытый порт.
-            if let Some(registration) = &registration {
-                registration.release();
-            }
             // Закрылись сами: следующий запуск не примет это за вылет.
             reports::finish();
             *control_flow = ControlFlow::Exit;

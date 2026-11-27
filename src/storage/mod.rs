@@ -150,6 +150,16 @@ pub fn create_private(path: &Path) -> io::Result<fs::File> {
     Ok(file)
 }
 
+/// То же без обрезки: файл, который держит другой процесс (замок профиля).
+pub fn open_private(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    owner::file_mode(&mut options);
+    let file = options.open(path)?;
+    owner::fix_file(&file);
+    Ok(file)
+}
+
 /// Права «только владелец». На Windows профиль лежит в `%LOCALAPPDATA%`, и его
 /// и так закрывают права папки пользователя: там ничего не меняем.
 ///

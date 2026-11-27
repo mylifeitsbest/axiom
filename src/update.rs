@@ -861,7 +861,7 @@ fn running(exe: &Path) -> bool {
 /// Её exe (`axiom.exe.old`) остаётся на месте до [`cleanup`]: если новая версия
 /// не заработает, к старой можно вернуться. Вызывается до захвата единственного экземпляра.
 #[cfg(windows)]
-pub fn finish(paths: &crate::storage::Paths) {
+pub fn finish() {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
@@ -870,8 +870,18 @@ pub fn finish(paths: &crate::storage::Paths) {
     while old.exists() && running(&old) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
     }
-    // WebView2 старого процесса закрывается чуть позже него самого. Если создать
-    // окружение раньше, новые webview прицепятся к уходящему процессу браузера.
+}
+
+#[cfg(not(windows))]
+pub fn finish() {}
+
+/// WebView2 прежнего процесса — закрытого, обновлённого или вылетевшего — уходит
+/// чуть позже него самого. Если создать окружение раньше, новые webview прицепятся
+/// к уходящему процессу браузера, а то и не создадутся вовсе («Требуемый ресурс
+/// занят»). Вызывается главным экземпляром, когда профиль уже его: живого Axiom
+/// с этими папками нет, и в обычный запуск ждать нечего.
+#[cfg(windows)]
+pub fn wait_webview(paths: &crate::storage::Paths) {
     let locks = webview_locks(&paths.root);
     let deadline = Instant::now() + Duration::from_secs(8);
     while locks
@@ -884,7 +894,7 @@ pub fn finish(paths: &crate::storage::Paths) {
 }
 
 #[cfg(not(windows))]
-pub fn finish(_paths: &crate::storage::Paths) {}
+pub fn wait_webview(_paths: &crate::storage::Paths) {}
 
 /// `lockfile` Chromium в папках данных WebView2: вкладки, интерфейс и панели ИИ.
 #[cfg(windows)]

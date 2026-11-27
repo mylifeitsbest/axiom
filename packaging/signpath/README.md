@@ -1,5 +1,7 @@
 # Подпись exe через SignPath
 
+> **Заявку отклонили 27 ноября 2026.** Бесплатную подпись SignPath Foundation дают проектам, которые уже на виду: звёзды, форки и участники на GitHub, статьи, обсуждения на Reddit, Stack Overflow или YouTube, долгая активность. У Axiom тогда было 4 дня, 2 звезды и около 290 скачиваний. Подать снова можно, когда этих признаков станет больше: https://signpath.org/apply. Платная подписка SignPath не выдаёт сертификат SignPath Foundation. Пока переменной `SIGNPATH_ORGANIZATION_ID` нет, release.yml собирает exe без подписи, как раньше. Если заявку одобрят, в корневой README нужно вернуть раздел «Code signing policy» со строкой «Free code signing provided by SignPath.io, certificate by SignPath Foundation» и ролями, а в описание выпуска — ссылку на него.
+
 Выпуски `Axiom-windows-x64.exe` подписывает бесплатная программа SignPath для открытых проектов: сертификат выдан SignPath Foundation, и в Windows издателем значится она. Сборка уже готова: `release.yml` отправляет exe на подпись, как только в репозитории есть переменная `SIGNPATH_ORGANIZATION_ID`. Пока её нет, exe выходит без подписи, как раньше.
 
 Бета-версии не подписываются: SignPath требует вручную одобрять каждый запрос, а бета собирается из каждого коммита.

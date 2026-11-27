@@ -17,7 +17,6 @@
 </p>
 
 <p align="center">
-  <a href="#code-signing-policy">Code signing policy</a> ·
   <a href="PRIVACY.md">Конфиденциальность</a> ·
   <a href="LICENSE">MIT</a>
 </p>
@@ -65,7 +64,7 @@
 irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
 ```
 
-Или вручную: скачайте [`Axiom-windows-x64.exe`](https://github.com/mylifeitsbest/axiom/releases/latest/download/Axiom-windows-x64.exe) и запустите. Выпуски будут подписаны бесплатной подписью SignPath Foundation, как только проект одобрят (см. [Code signing policy](#code-signing-policy)); до этого, а у бета-версий всегда, файл без подписи. Пока у новой версии мало скачиваний, SmartScreen может предупредить: «Подробнее» → «Выполнить в любом случае». При первом запуске откроется приветствие: выбор вида, перенос из другого браузера, «Установить» и выбор браузера по умолчанию.
+Или вручную: скачайте [`Axiom-windows-x64.exe`](https://github.com/mylifeitsbest/axiom/releases/latest/download/Axiom-windows-x64.exe) и запустите. Файл пока не подписан сертификатом (см. [«Подпись exe»](#подпись-exe)), поэтому SmartScreen может предупредить: «Подробнее» → «Выполнить в любом случае». При первом запуске откроется приветствие: выбор вида, перенос из другого браузера, «Установить» и выбор браузера по умолчанию.
 
 Нужен WebView2 Runtime. В Windows 10 и 11 он уже есть.
 
@@ -157,15 +156,9 @@ sudo pacman -U https://github.com/mylifeitsbest/axiom/releases/latest/download/a
 
 Страницы, история, закладки, пароли и куки хранятся только на компьютере. Сам Axiom отправляет немного: статистику использования (раз в час версию, систему и запускали ли его сегодня — без адресов и номера браузера), отчёты о вылетах, проверку обновлений на GitHub и набранный в адресной строке текст в выбранную поисковую систему ради подсказок. Всё это выключается в настройках («Система», подсказки — «Поиск и ИИ»), а при первом запуске приветствие показывает те же переключатели. Подробно, с тем, что хранит сервер, — в [PRIVACY.md](PRIVACY.md).
 
-## Code signing policy
+## Подпись exe
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-
-- Committers and reviewers: [mylifeitsbest](https://github.com/mylifeitsbest)
-- Approvers: [mylifeitsbest](https://github.com/mylifeitsbest)
-- Privacy policy: [PRIVACY.md](PRIVACY.md)
-
-Подписывается только `Axiom-windows-x64.exe` из выпусков: его собирает GitHub Actions ([`release.yml`](.github/workflows/release.yml)) из этого репозитория по тегу версии, и каждый запрос на подпись одобряется вручную. Бета-версии не подписываются. Проверить подпись: «Свойства» файла → «Цифровые подписи» → SignPath Foundation, или в PowerShell `Get-AuthenticodeSignature .\Axiom-windows-x64.exe`.
+`Axiom-windows-x64.exe` пока не подписан сертификатом, поэтому Windows пишет «Неизвестный издатель». Что файл тот самый, собранный GitHub Actions из этого репозитория, проверяется по `SHA256SUMS.txt` выпуска — это делают и установщик `install.ps1`, и встроенное обновление. Подпись в сборке уже готова ([`release.yml`](.github/workflows/release.yml), [`packaging/signpath`](packaging/signpath)) и включится, когда у проекта появится сертификат.
 
 ## Память
 

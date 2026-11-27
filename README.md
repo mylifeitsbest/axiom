@@ -17,6 +17,12 @@
 </p>
 
 <p align="center">
+  <a href="#code-signing-policy">Code signing policy</a> ·
+  <a href="PRIVACY.md">Конфиденциальность</a> ·
+  <a href="LICENSE">MIT</a>
+</p>
+
+<p align="center">
   <img src="assets/screenshots/settings.png" width="820" alt="Настройки Axiom">
 </p>
 
@@ -58,7 +64,7 @@
 irm https://raw.githubusercontent.com/mylifeitsbest/axiom/main/install.ps1 | iex
 ```
 
-Или вручную: скачайте [`Axiom-windows-x64.exe`](https://github.com/mylifeitsbest/axiom/releases/latest/download/Axiom-windows-x64.exe) и запустите. Файл не подписан, поэтому SmartScreen может предупредить: «Подробнее» → «Выполнить в любом случае». При первом запуске откроется приветствие: выбор вида, перенос из другого браузера, «Установить» и выбор браузера по умолчанию.
+Или вручную: скачайте [`Axiom-windows-x64.exe`](https://github.com/mylifeitsbest/axiom/releases/latest/download/Axiom-windows-x64.exe) и запустите. Выпуски будут подписаны бесплатной подписью SignPath Foundation, как только проект одобрят (см. [Code signing policy](#code-signing-policy)); до этого, а у бета-версий всегда, файл без подписи. Пока у новой версии мало скачиваний, SmartScreen может предупредить: «Подробнее» → «Выполнить в любом случае». При первом запуске откроется приветствие: выбор вида, перенос из другого браузера, «Установить» и выбор браузера по умолчанию.
 
 Нужен WebView2 Runtime. В Windows 10 и 11 он уже есть.
 
@@ -145,6 +151,20 @@ sudo pacman -U https://github.com/mylifeitsbest/axiom/releases/latest/download/a
 Репозитории APT и pacman подписаны ключом «Axiom Packages», отпечаток `643C 6DE6 01D4 BBB6 61D5 322A F2F3 79CD 75CF 5C03`. Публичный ключ лежит в [`packaging/keys`](packaging/keys) и на [странице установки](https://mylifeitsbest.github.io/axiom/). Приватный ключ хранится только в секретах GitHub Actions.
 
 На Linux Axiom становится браузером по умолчанию кнопкой в настройках (через `xdg-settings`), а перенос данных находит и обычные установки браузеров, и snap- и flatpak-версии (Chromium, Firefox, Chrome, Brave, Edge, Zen).
+
+## Конфиденциальность
+
+Страницы, история, закладки, пароли и куки хранятся только на компьютере. Сам Axiom отправляет немного: статистику использования (раз в час версию, систему и запускали ли его сегодня — без адресов и номера браузера), отчёты о вылетах и проверку обновлений на GitHub. Всё это выключается в «Настройки → Система», а при первом запуске приветствие показывает те же переключатели. Подробно, с тем, что хранит сервер, — в [PRIVACY.md](PRIVACY.md).
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- Committers and reviewers: [mylifeitsbest](https://github.com/mylifeitsbest)
+- Approvers: [mylifeitsbest](https://github.com/mylifeitsbest)
+- Privacy policy: [PRIVACY.md](PRIVACY.md)
+
+Подписывается только `Axiom-windows-x64.exe` из выпусков: его собирает GitHub Actions ([`release.yml`](.github/workflows/release.yml)) из этого репозитория по тегу версии, и каждый запрос на подпись одобряется вручную. Бета-версии не подписываются. Проверить подпись: «Свойства» файла → «Цифровые подписи» → SignPath Foundation, или в PowerShell `Get-AuthenticodeSignature .\Axiom-windows-x64.exe`.
 
 ## Память
 
@@ -241,6 +261,10 @@ assets/            логотип, иконка и скрипт, который 
 - [ ] Linux с видеокартой NVIDIA: если окно мигает, когда его двигаете, попробуйте «Настройки → Система → Отрисовка страниц». Режимы «Без DMA-BUF» и «Без ускорения» рисуют страницы процессором и на части систем вылетают на видео; после трёх вылетов подряд Axiom сам возвращается в «Авто». Громкость отдельных вкладок, видео в островке и «Видео в окне» на Linux пока выключены.
 - [ ] macOS пока не поддерживается сборками.
 - [x] Свой репозиторий APT и pacman для обновлений через `apt upgrade` и `pacman -Syu`.
+
+## Лицензия
+
+[MIT](LICENSE).
 
 ## Связь со мной
 - [ ] TG - @senzor1x

@@ -21,17 +21,72 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
+    # SignPath скачивает файл для подписи из артефактов этого запуска: нужен actions: read.
+    permissions:
+      contents: read
+      actions: read
+    env:
+      # Подпись SignPath включается переменной репозитория SIGNPATH_ORGANIZATION_ID и
+      # секретом SIGNPATH_API_TOKEN (packaging/signpath/README.md). Без них exe
+      # выходит без подписи, как раньше. Бета-версии (beta.yml) не подписываются:
+      # каждый запрос на подпись одобряют вручную.
+      SIGNPATH: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --release --locked
+      - name: Файл для подписи
+        id: unsigned-file
+        if: env.SIGNPATH == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force unsigned | Out-Null
+          Copy-Item target/release/axiom.exe unsigned/Axiom-windows-x64.exe
+          # SignPath сверяет версию в exe с этой (packaging/signpath/artifact-configuration.xml).
+          $v = (Get-Item unsigned/Axiom-windows-x64.exe).VersionInfo.ProductVersion
+          Write-Host "Версия в exe: $v"
+          "version=$v" >> $env:GITHUB_OUTPUT
+      - name: Выгрузка для SignPath
+        id: unsigned
+        if: env.SIGNPATH == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-unsigned
+          path: unsigned/Axiom-windows-x64.exe
+          retention-days: 1
+      - name: Подпись SignPath
+        if: env.SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'axiom' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          parameters: |
+            version: "${{ steps.unsigned-file.outputs.version }}"
+          wait-for-completion: true
+          # Запрос одобряют вручную (письмо от SignPath) — ждём до часа.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
       - name: Упаковка
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/axiom.exe dist/Axiom-windows-x64.exe
-          Compress-Archive -Path target/release/axiom.exe, README.md -DestinationPath dist/Axiom-windows-x64.zip
+          New-Item -ItemType Directory -Force dist, zip | Out-Null
+          if ($env:SIGNPATH -eq 'true') {
+            $sig = Get-AuthenticodeSignature signed/Axiom-windows-x64.exe
+            Write-Host "Подпись: $($sig.Status), $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "подпись недействительна: $($sig.StatusMessage)" }
+            if ($sig.SignerCertificate.Subject -notmatch 'SignPath Foundation') { throw "подписал не SignPath Foundation" }
+            if (-not $sig.TimeStamperCertificate) { throw "у подписи нет отметки времени" }
+            Copy-Item signed/Axiom-windows-x64.exe dist/Axiom-windows-x64.exe
+          } else {
+            Write-Host "::notice::SignPath не настроен — exe без подписи"
+            Copy-Item target/release/axiom.exe dist/Axiom-windows-x64.exe
+          }
+          Copy-Item dist/Axiom-windows-x64.exe zip/axiom.exe
+          Compress-Archive -Path zip/axiom.exe, README.md, LICENSE, PRIVACY.md -DestinationPath dist/Axiom-windows-x64.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows
@@ -62,7 +117,7 @@ jobs:
           install -Dm644 packaging/linux/axiom-browser.desktop stage/axiom/axiom-browser.desktop
           install -Dm644 assets/logo.svg stage/axiom/icons/axiom-browser.svg
           cp assets/linux/*.png stage/axiom/icons/
-          cp README.md stage/axiom/
+          cp README.md LICENSE stage/axiom/
           tar -C stage -czf dist/axiom-linux-x86_64.tar.gz axiom
           dpkg-deb --info dist/axiom_amd64.deb
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -134,7 +189,7 @@ jobs:
           test -f /usr/share/icons/hicolor/256x256/apps/axiom-browser.png
           if ldd /usr/bin/axiom-browser | grep "not found"; then exit 1; fi
           pacman -Qi axiom-browser-bin
-          # namcap — для сведения: на license=('custom') без файла лицензии он ругается всегда.
+          # namcap — для сведения, его замечания сборку не валят.
           namcap "$AUR/PKGBUILD" "$AUR"/axiom-browser-bin-"$VER"-*.pkg.tar.zst || true
           {
             echo "### AUR: axiom-browser-bin $VER"
@@ -153,10 +208,19 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+      # Артефакты по именам: неподписанный exe для SignPath (windows-unsigned) в выпуск не идёт.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: windows
           path: dist
-          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: debian
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: arch
+          path: dist
       - name: Контрольные суммы
         run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Публикация

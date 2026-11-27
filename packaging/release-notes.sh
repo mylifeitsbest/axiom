@@ -3,7 +3,7 @@
 #   sh packaging/release-notes.sh vX.Y.Z [коммит] > notes.md
 # Текст — раздел «## X.Y.Z» из CHANGELOG.md рабочей копии. Раздела нет — заголовки коммитов
 # после прошлой версии (без AUR, CI, README и коммита с номером версии).
-# В конце — ссылка на все изменения и на установку в README.
+# В конце — ссылки на все изменения, установку, Code signing policy и PRIVACY.md.
 set -eu
 
 TAG=$1
@@ -47,3 +47,5 @@ else
 fi
 echo
 echo "Как установить или обновить — в [README](https://github.com/$REPO#установка)."
+echo
+echo "[Code signing policy](https://github.com/$REPO#code-signing-policy) · [Политика конфиденциальности](https://github.com/$REPO/blob/main/PRIVACY.md)"

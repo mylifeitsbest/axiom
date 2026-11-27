@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Конфигурация артефакта для SignPath: вставить в проект axiom → Artifact configurations.
+  release.yml выгружает Axiom-windows-x64.exe через upload-artifact, а тот кладёт файл в ZIP,
+  поэтому корень — zip-file. Версию (ProductVersion из exe) передаёт release.yml параметром
+  version; название, компания и копирайт — из build.rs.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="Axiom-windows-x64.exe" product-name="Axiom" product-version="${version}" company-name="Axiom" copyright="Axiom contributors">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

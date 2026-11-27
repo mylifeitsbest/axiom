@@ -10,8 +10,6 @@
 (IP живёт лишь в памяти ограничителя частоты, и то в виде хэша с солью).
 Зависимостей нет: всё из стандартной библиотеки, запускается на голой Ubuntu.
 
-Магазин плагинов (`/store/...`, страница проверки `/d/<ключ>/store`) — в store.py.
-
 Отчёт из «Сообщить о проблеме» может прийти с файлами (`POST /rf`): снимки экрана,
 фото, видео, текст. Они лежат на диске рядом с базой (`files/<номер отчёта>/<n>`),
 на панели картинки и видео показываются прямо в отчёте.
@@ -41,8 +39,6 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlsplit
-
-import store
 
 DB = os.environ.get("AXIOM_STATS_DB", "stats.db")
 HOST = os.environ.get("AXIOM_STATS_HOST", "127.0.0.1")
@@ -196,7 +192,6 @@ def init():
                 gone INTEGER NOT NULL DEFAULT 0)"""
         )
         con.execute("CREATE INDEX IF NOT EXISTS report_files_report ON report_files(report)")
-        store.init(con)
     con.close()
 
 
@@ -661,10 +656,6 @@ class Limiter:
 
 
 LIMITERS = {path: Limiter(*limit) for path, limit in LIMITS.items()}
-# Магазин плагинов: присылать плагины — редко, смотреть каталог и ставить — чаще.
-STORE_LIMITS = {"/store/submit": (10, 3600), "/store/status": (60, 3600),
-                "/store/index": (240, 3600), "/store/p": (300, 3600)}
-STORE_LIMITERS = {path: Limiter(*limit) for path, limit in STORE_LIMITS.items()}
 FILE_BYTES = Limiter(*FILE_BYTES_LIMIT)
 
 
@@ -771,8 +762,6 @@ def dashboard(nonce=""):
                   r.ans, r.ans_got,
                   (SELECT COUNT(*) FROM report_files f WHERE f.report = r.id)
            FROM reports r ORDER BY r.id DESC LIMIT 30""").fetchall()
-    s["store_pending"] = store.pending_count(con)
-    s["store_live"] = len(store.published(con))
     s["reports_day"] = dict(con.execute(
         "SELECT kind, COUNT(*) FROM reports WHERE at>=? GROUP BY kind",
         ((now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),)).fetchall())
@@ -927,13 +916,6 @@ def first_line(text):
     if lines and lines[0].startswith("Axiom ") and " · " in lines[0]:
         lines = lines[1:]
     return lines[0] if lines else ""
-
-
-def store_line(s):
-    live = f"в магазине {s['store_live']} {plural(s['store_live'], 'плагин', 'плагина', 'плагинов')}"
-    if s["store_pending"]:
-        return f"Ждут проверки: {s['store_pending']} · {live}"
-    return f"Проверять нечего · {live}"
 
 
 def report_href(id_):
@@ -1337,9 +1319,6 @@ def render(s, nonce=""):
   <p class="hint">{reports_hint(s["reports_day"])}</p>
   {reports_html(s["reports"])}
 
-  <h2>Магазин плагинов</h2>
-  <p class="hint"><a href="/d/{escape(KEY)}/store">{store_line(s)}</a></p>
-
   <h2>По часам, последние сутки</h2>
   <p class="hint">Сколько браузеров было открыто в каждый час. Открытый браузер отмечается раз в час,
     поэтому столбик ≈ число людей. Последний столбик — текущий час, он ещё растёт.</p>
@@ -1482,11 +1461,6 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/d/([^/?#]+)/r/(\d{1,12})/?", path)
         if m:
             return self.post_answer(m)
-        m = re.fullmatch(r"/d/([^/?#]+)/store/(\d{1,12}|p/[a-z0-9-]{2,40})/?", path)
-        if m:
-            return self.post_store_review(m)
-        if path in ("/store/submit", "/store/status"):
-            return self.post_store(path)
         if path not in LIMITERS:
             return self._send(404, b"not found")
         if path == "/rf":
@@ -1553,86 +1527,6 @@ class Handler(BaseHTTPRequestHandler):
         if page is None:
             return self._send(404, b"not found")
         self._send(400, page.encode("utf-8"), "text/html; charset=utf-8", nonce, forms=True)
-    def post_store(self, path):
-        """Магазин: прислать плагин или спросить, что с присланными."""
-        limit = store.MAX_SUBMIT_BODY if path == "/store/submit" else store.MAX_STATUS_BODY
-        raw = self.body(limit)
-        if raw is None:
-            return
-        ip = client_ip(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
-        if not STORE_LIMITERS[path].allow(ip):
-            return self.send_json(429, {"error": "слишком часто, попробуйте через час"})
-        try:
-            payload = json.loads(raw)
-        except (ValueError, UnicodeDecodeError):
-            return self.send_json(400, {"error": "неверный запрос"})
-        con = db()
-        try:
-            if path == "/store/submit":
-                code, reply = store.submit(con, payload, utc_iso(utcnow()))
-            else:
-                found = store.status(con, payload)
-                code, reply = ((400, {"error": "неверный запрос"}) if found is None
-                               else (200, {"items": found}))
-        finally:
-            con.close()
-        self.send_json(code, reply)
-
-    def send_json(self, code, value, raw=None):
-        body = raw if raw is not None else json.dumps(value, ensure_ascii=False).encode("utf-8")
-        self._send(code, body, "application/json; charset=utf-8")
-
-    def post_store_review(self, m):
-        """Решение по плагину со страницы магазина в панели."""
-        raw = self.body(store.MAX_REASON * 8)
-        if raw is None:
-            return
-        if not KEY or not hmac.compare_digest(m[1].encode(), KEY.encode()):
-            return self._send(404, b"not found")
-        try:
-            form = {k: v[0] for k, v in parse_qs(
-                raw.decode("utf-8"), keep_blank_values=True, max_num_fields=5).items()}
-        except (UnicodeDecodeError, ValueError):
-            return self._send(400, b"bad")
-        base = f"/d/{KEY}/store"
-        con = db()
-        try:
-            if m[2].startswith("p/"):
-                if form.get("do") not in ("hide", "show"):
-                    return self._send(400, b"bad")
-                store.set_hidden(con, m[2][2:], form["do"] == "hide")
-                error = None
-            else:
-                error = store.review(con, int(m[2]), form, utc_iso(utcnow()))
-            if error is None:
-                self.send_response(303)
-                self.send_header("Location", base)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            nonce = secrets.token_urlsafe(16)
-            page = store.page(con, escape(base), REPORT_CSS, nonce, error)
-        finally:
-            con.close()
-        self._send(400, page.encode("utf-8"), "text/html; charset=utf-8", nonce, forms=True)
-
-    def get_store(self, path):
-        """Каталог магазина и сами плагины."""
-        ip = client_ip(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
-        limiter = STORE_LIMITERS["/store/index" if path == "/store/index" else "/store/p"]
-        if not limiter.allow(ip):
-            return self.send_json(429, {"error": "слишком часто"})
-        con = db()
-        try:
-            if path == "/store/index":
-                return self.send_json(200, None, store.index(con))
-            body = store.download(con, path[len("/store/p/"):])
-        finally:
-            con.close()
-        if body is None:
-            return self.send_json(404, {"error": "плагина нет в магазине"})
-        self.send_json(200, None, body)
-
     def post_files(self):
         """Отчёт с файлами: строка JSON (отчёт и список файлов), `\\n`, файлы подряд.
         Файлы идут прямо на диск, в память целиком не читаются."""
@@ -1740,18 +1634,6 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         if url.path == "/health":
             return self._send(200, b"ok")
-        if url.path == "/store/index" or re.fullmatch(r"/store/p/[a-z0-9-]{2,40}", url.path):
-            return self.get_store(url.path)
-        m = re.fullmatch(r"/d/([^/?#]+)/store/?", url.path)
-        if KEY and m and hmac.compare_digest(m[1].encode(), KEY.encode()):
-            nonce = secrets.token_urlsafe(16)
-            con = db()
-            try:
-                page = store.page(con, escape(f"/d/{KEY}/store"), REPORT_CSS, nonce)
-            finally:
-                con.close()
-            return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8", nonce,
-                              forms=True)
         m = re.fullmatch(r"/d/([^/?#]+)(?:/r/(\d{1,12})(?:/f/(\d{1,3}))?)?/?", url.path)
         if KEY and m and hmac.compare_digest(m[1].encode(), KEY.encode()):
             if m[3] is not None:
@@ -1800,16 +1682,6 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
-    # Плагины Axiom в магазин: python3 stats.py store-import <папка store/plugins>
-    if len(sys.argv) == 3 and sys.argv[1] == "store-import":
-        init()
-        con = db()
-        try:
-            for line in store.import_dir(con, sys.argv[2], utc_iso(utcnow())):
-                print(line)
-        finally:
-            con.close()
-        return
     init()
     srv = Server((HOST, PORT), Handler)
     print(f"axiom-stats на http://{HOST}:{PORT} (база {DB})", flush=True)

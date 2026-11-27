@@ -14,13 +14,17 @@
 //! чёрном фоне и со скруглёнными углами. Размер вкладки при этом не меняется (сайт не
 //! перестраивает страницу), браузер показывает только вырез под чёлкой. Само видео
 //! остаётся на своём месте в документе и играет дальше; стиль — отдельный лист
-//! (`adoptedStyleSheets`), его не блокирует CSP сайта. [`Action::Unpeek`] возвращает всё
-//! как было.
+//! (`adoptedStyleSheets`), его не блокирует CSP сайта. Видео проявляется из чёрного, пока
+//! остров выезжает, и гаснет, когда уезжает ([`mini_fade`]); браузер сначала ждёт, пока
+//! страница его нарисует ([`MINI_PAINTED`]), — иначе на первом кадре мелькнула бы
+//! страница, какой её видели в последний раз. [`Action::Unpeek`] возвращает всё как было.
 //!
 //! Видео и звук во встроенных чужих фреймах (плеер с другого сайта) отсюда не видны:
 //! для них островок показывает только вкладку и звук.
 
 use serde::{Deserialize, Serialize};
+
+use crate::tabs::mini::Bezier;
 
 /// Скрипт главного фрейма вкладки (см. описание модуля).
 pub const SCRIPT: &str = r#"(() => {
@@ -28,6 +32,10 @@ pub const SCRIPT: &str = r#"(() => {
   const D = document;
   const call = Reflect.apply;
   const quiet = (f) => { try { return f(); } catch {} };
+  // Свои, пока страница не подменила: ими островок ждёт, пока видео нарисуется.
+  const P = W.Promise;
+  const raf = W.requestAnimationFrame.bind(W);
+  const later = W.setTimeout.bind(W);
   const handlers = new Map();
   quiet(() => {
     const P = MediaSession.prototype;
@@ -73,6 +81,10 @@ pub const SCRIPT: &str = r#"(() => {
   // ---------- видео в островке: поверх всего на чёрном, в заданном месте ----------
   const MARK = 'data-axiom-mini';
   let sheet = null;
+  let place = ''; // где видео: правила из последнего mini()
+  // Проявление и угасание видео — в такт острову: длительность (мс) и кривая от браузера.
+  let fadeIn = 'opacity 0ms,scale 0ms';
+  let fadeOut = 'opacity 0ms,scale 0ms';
   let shownEl = null;
   const ours = new WeakSet(); // popover поставили мы, а не страница
   const num = (v) => (typeof v === 'number' && isFinite(v) ? Math.round(v) : null);
@@ -91,15 +103,31 @@ pub const SCRIPT: &str = r#"(() => {
     // Уже показанное видео стоит размером с остров (и вкладка на Linux тоже) — оно
     // меньше «видео для островка», но переставлять его можно.
     if (v !== shown && !big(v)) return false;
-    if (!sheet) sheet = new CSSStyleSheet();
-    sheet.replaceSync(`video[${MARK}]{position:fixed!important;left:${x}px!important;top:${y}px!important;right:auto!important;bottom:auto!important;width:${w}px!important;height:${h}px!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;border-radius:14px!important;object-fit:contain!important;background:#000!important;transform:none!important;opacity:1!important;visibility:visible!important;clip-path:none!important;filter:none!important;z-index:2147483647!important;overflow:hidden!important}video[${MARK}]::backdrop{background:#000!important}`);
-    quiet(() => { if (!D.adoptedStyleSheets.includes(sheet)) D.adoptedStyleSheets = [...D.adoptedStyleSheets, sheet]; });
-    v.setAttribute(MARK, '');
+    place = `left:${x}px!important;top:${y}px!important;width:${w}px!important;height:${h}px!important`;
+    restyle();
+    // Впервые — видео ещё не видно (на чёрном фоне): проявится, когда остров тронется
+    // ('miniin'); дальше только двигаем.
+    if (!v.hasAttribute(MARK)) v.setAttribute(MARK, 'pre');
     if (!v.hasAttribute('popover')) { ours.add(v); v.setAttribute('popover', 'manual'); }
     if (!v.matches(':popover-open')) quiet(() => v.showPopover());
     shownEl = new WeakRef(v);
     return v.matches(':popover-open');
   }
+  // Видео — в остров, поверх всего на чёрном. Пока остров не тронулся ('pre') — его не
+  // видно; выезжает ('in') — проявляется и чуть подрастает от верха, как из чёлки; уезжает
+  // ('out') — гаснет. Переходы, а не анимации: вернули мышь посреди угасания — видео
+  // снова проявляется с той же яркости, без вспышки.
+  function restyle() {
+    if (!sheet) sheet = new CSSStyleSheet();
+    sheet.replaceSync(`video[${MARK}]{position:fixed!important;${place};right:auto!important;bottom:auto!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;border-radius:14px!important;object-fit:contain!important;background:#000!important;transform:none!important;transform-origin:50% 0!important;visibility:visible!important;clip-path:none!important;filter:none!important;z-index:2147483647!important;overflow:hidden!important;animation:none!important}video[${MARK}="pre"]{opacity:0!important;scale:.94!important;transition:none!important}video[${MARK}="in"]{opacity:1!important;scale:1!important;transition:${fadeIn}!important}video[${MARK}="out"]{opacity:0!important;scale:.97!important;transition:${fadeOut}!important}video[${MARK}]::backdrop{background:#000!important}`);
+    quiet(() => { if (!D.adoptedStyleSheets.includes(sheet)) D.adoptedStyleSheets = [...D.adoptedStyleSheets, sheet]; });
+  }
+  // Переход длиной `ms` по кривой `ease` (только цифры, точки и запятые).
+  const fade = (ms, ease) => {
+    const d = `${Math.max(0, Math.round(+ms || 0))}ms`;
+    const e = /^[\d.,]+$/.test(String(ease)) ? `cubic-bezier(${ease})` : 'ease';
+    return `opacity ${d} ${e},scale ${d} ${e}`;
+  };
   function unmini() {
     const v = shownEl ? shownEl.deref() : null;
     shownEl = null;
@@ -159,6 +187,17 @@ pub const SCRIPT: &str = r#"(() => {
     }
     if (a === 'mini') return mini(...args);
     if (a === 'unmini') return unmini();
+    // Остров уезжает — видео гаснет; вернули мышь — снова проявляется.
+    if (a === 'miniout' || a === 'miniin') {
+      const v = shownEl ? shownEl.deref() : null;
+      if (!v) return false;
+      if (a === 'miniin') fadeIn = fade(...args); else fadeOut = fade(...args);
+      restyle();
+      v.setAttribute(MARK, a === 'miniout' ? 'out' : 'in');
+      return true;
+    }
+    // Видео в верхнем слое уже на экране: через два кадра (или 200 мс, если кадров нет).
+    if (a === 'painted') return new P((ok) => { later(() => ok(false), 200); raf(() => raf(() => ok(true))); });
     return false;
   }
   Object.defineProperty(W, '__axiomMedia', { value: (a, ...args) => quiet(() => (a ? act(String(a), args) : info())) ?? null });
@@ -213,6 +252,26 @@ pub fn action(a: Action) -> String {
         a.name()
     )
 }
+
+/// Остров выезжает (`true`: видео проявляется) или уезжает (`false`: гаснет) за `ms`
+/// миллисекунд по кривой `curve` — в такт ему.
+pub fn mini_fade(on: bool, ms: f64, curve: Bezier) -> String {
+    let Bezier(x1, y1, x2, y2) = curve;
+    format!(
+        "typeof window.__axiomMedia === 'function' && window.__axiomMedia('{}', {}, '{},{},{},{}')",
+        if on { "miniin" } else { "miniout" },
+        ms.max(0.0).round(),
+        x1,
+        y1,
+        x2,
+        y2
+    )
+}
+
+/// Ждать, пока видео в верхнем слое нарисуется: обещание `true` через два кадра (`false`
+/// — кадров нет 200 мс). Для [`crate::tabs::script::ask_after`].
+pub const MINI_PAINTED: &str =
+    "typeof window.__axiomMedia === 'function' ? window.__axiomMedia('painted') : false";
 
 /// Вывести видео поверх страницы в прямоугольник `x, y, w, h` (логические px окна от
 /// верха вкладки; `scale` — масштаб экрана, свой масштаб страницы она учтёт сама).
@@ -339,6 +398,14 @@ mod tests {
             "typeof window.__axiomMedia === 'function' && window.__axiomMedia('mini', 8, 30, 384, 217, 1.25)"
         );
         assert!(serde_json::from_str::<Action>(r#""eval""#).is_err());
+        assert_eq!(
+            mini_fade(false, 210.4, Bezier(0.4, 0.0, 0.2, 1.0)),
+            "typeof window.__axiomMedia === 'function' && window.__axiomMedia('miniout', 210, '0.4,0,0.2,1')"
+        );
+        assert!(
+            mini_fade(true, 460.0, Bezier(0.3, 0.3, 0.0, 1.0))
+                .ends_with("('miniin', 460, '0.3,0.3,0,1')")
+        );
         assert_eq!(
             serde_json::from_str::<Action>(r#""pip""#).ok(),
             Some(Action::Pip)

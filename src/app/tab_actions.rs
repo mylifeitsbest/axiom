@@ -1,6 +1,8 @@
 //! Действия с вкладкой: меню вкладки, звук и громкость, исходный код, печать, масштаб,
 //! инструменты разработчика и ссылки, открытые в фоне.
 
+use std::time::{Duration, Instant};
+
 use wry::{
     Rect,
     dpi::{LogicalPosition, LogicalSize},
@@ -265,9 +267,28 @@ impl App {
     // ---------- видео внутри островка (tabs::mini) ----------
 
     /// Навели мышь на чёлку: страница готовит видео (`MiniReady`), потом вкладка выезжает
-    /// из чёлки. Только вкладка в фоне: на своей вкладке видео и так видно.
+    /// из чёлки. Только вкладка в фоне: на своей вкладке видео и так видно. Остров ещё
+    /// уезжает — разворачивается обратно с того места, где он сейчас.
     fn mini_open(&mut self, id: TabId) {
-        if self.mini.is_some() {
+        if let Some(show) = &self.mini {
+            if show.id != id {
+                // Показано другое видео: интерфейс снова «без видео».
+                self.send(&ToUi::Peek {
+                    id,
+                    on: false,
+                    height: 0.0,
+                });
+            } else if show.closing {
+                self.mini_reopen(id);
+            } else if show.anim.is_some() {
+                // Уже выехал, а интерфейс об этом не знает — напомнить.
+                let height = self.mini_height();
+                self.send(&ToUi::Peek {
+                    id,
+                    on: true,
+                    height,
+                });
+            }
             return;
         }
         let webview = self.tabs.get(id).and_then(|t| t.webview.as_ref());
@@ -300,7 +321,10 @@ impl App {
         }
     }
 
-    /// Страница вывела видео поверх себя: вкладка встаёт под чёлку и выезжает.
+    /// Страница знает размер видео: вкладка встаёт под чёлку (остров пока нулевой высоты),
+    /// страница выводит видео поверх себя, и, когда она его нарисует, остров выезжает
+    /// (`MiniShown`). Сразу нельзя: спрятанная вкладка на первом кадре показала бы себя,
+    /// какой её видели в последний раз (шапку сайта вместо видео).
     pub(super) fn mini_ready(&mut self, id: TabId, raw: &str) {
         let size = mini::video_size(raw);
         let wanted = self.mini.as_ref().is_some_and(|s| s.id == id && !s.closing);
@@ -326,7 +350,7 @@ impl App {
             }
             None => return,
         };
-        self.place_mini(0.0);
+        self.place_mini();
         if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
             let _ = webview.set_visible(true);
             tab_webview::raise(webview);
@@ -335,54 +359,109 @@ impl App {
         // у него может ещё не быть — ставим остров ещё раз, уже показанному. Кадр
         // нарисуется после, так что вкладка целиком не мелькнёт.
         if cfg!(target_os = "linux") {
-            self.place_mini(0.0);
+            self.place_mini();
         }
         self.sync_mini_areas();
         let events = self.events.clone();
         mini::watch(shared, move || {
             let _ = events.send_event(UserEvent::MiniEnded(id));
         });
-        self.mini_frames(id, true);
-        let height = self.mini_dock().map_or(0.0, |d| d.island(size.0, size.1).h);
-        self.send(&ToUi::Peek {
-            id,
-            on: true,
-            height,
+        let serial = self.mini.as_ref().map_or(0, |s| s.serial);
+        let events = self.events.clone();
+        let asked = self
+            .tabs
+            .get(id)
+            .and_then(|t| t.webview.as_ref())
+            .is_some_and(|webview| {
+                script::ask_after(webview, media::MINI_PAINTED, move |raw| {
+                    mini::log_for_tests(&format!("painted {raw}"));
+                    let _ = events.send_event(UserEvent::MiniShown { id, serial });
+                })
+            });
+        if !asked {
+            self.mini_shown(id, serial);
+            return;
+        }
+        // Страница не ответила (у неё свой предел — 200 мс) — всё равно выезжаем.
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(mini::PAINT_WAIT);
+            let _ = events.send_event(UserEvent::MiniShown { id, serial });
         });
     }
 
-    /// Кадры выезда (`open`) или уезда: отдельный поток просто тикает, ставит главный.
-    fn mini_frames(&self, id: TabId, open: bool) {
+    /// Видео нарисовано: остров выезжает, чёлка в тот же миг раздаётся до его ширины.
+    pub(super) fn mini_shown(&mut self, id: TabId, serial: u32) {
+        if self.mini.as_ref().is_some_and(|s| {
+            s.id == id && s.serial == serial && !s.closing && s.anim.is_none() && s.video.is_some()
+        }) {
+            self.mini_animate(true);
+        }
+    }
+
+    /// Остров трогается: выезжает (`open`) или уезжает — с той доли, где он сейчас. В тот
+    /// же миг интерфейс раздвигает или сужает чёлку (`ToUi::Peek`) с той же длительностью
+    /// и кривой, а видео на странице проявляется или гаснет.
+    fn mini_animate(&mut self, open: bool) {
+        let speed = self.mini_dock().map_or(1.0, |d| d.speed);
+        let height = if open { self.mini_height() } else { 0.0 };
+        let Some(show) = self.mini.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        let anim = mini::Anim::new(open, show.k(now), speed, now + mini::UI_LAG);
+        show.anim = Some(anim);
+        show.run = show.run.wrapping_add(1);
+        let (id, run) = (show.id, show.run);
+        mini::log_for_tests(&format!("anim open={open} from={:.3}", anim.from));
+        self.send(&ToUi::Peek {
+            id,
+            on: open,
+            height,
+        });
+        // Видео — полной длительностью: обращённый переход страница укоротит сама, как
+        // и чёлку; гаснет оно быстрее, чем уезжает остров.
+        if let Some(webview) = self.tabs.get(id).and_then(|t| t.webview.as_ref()) {
+            let (m, part) = if open {
+                (mini::OPEN, 1.0)
+            } else {
+                (mini::CLOSE, mini::FADE_OUT)
+            };
+            let ms = m.ms * part * speed.clamp(0.0, 3.0);
+            script::run(webview, &media::mini_fade(open, ms, m.curve));
+        }
+        // Кадры: поток будит главный раз за кадр экрана, пока анимация не кончится. Доля —
+        // по часам (`mini::Anim`), так что опоздавший кадр ничего не сбивает.
         let events = self.events.clone();
+        let end = anim.end() + Duration::from_millis(20);
         std::thread::spawn(move || {
-            for step in 1..=mini::FRAMES {
-                std::thread::sleep(mini::FRAME);
-                if events
-                    .send_event(UserEvent::MiniFrame { id, step, open })
-                    .is_err()
+            loop {
+                mini::next_frame();
+                if events.send_event(UserEvent::MiniFrame { id, run }).is_err()
+                    || Instant::now() >= end
                 {
                     return;
                 }
             }
         });
+        // Последний кадр — и когда экран кадров не выводит (выключен): остров должен
+        // встать на место или уехать в любом случае.
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(end.saturating_duration_since(Instant::now()));
+            let _ = events.send_event(UserEvent::MiniFrame { id, run });
+        });
     }
 
-    pub(super) fn mini_frame(&mut self, id: TabId, step: u8, open: bool) {
-        let Some(show) = self.mini.as_ref().filter(|s| s.id == id) else {
+    pub(super) fn mini_frame(&mut self, id: TabId, run: u32) {
+        let Some(show) = self.mini.as_ref().filter(|s| s.id == id && s.run == run) else {
             return;
         };
-        // Начал уезжать — кадры выезда больше не нужны.
-        if open == show.closing {
-            return;
-        }
-        let k = if open {
-            mini::open_k(step)
-        } else {
-            mini::close_k(step)
-        };
-        self.place_mini(k);
-        if !open && step >= mini::FRAMES {
+        // Уехал целиком — показ кончен.
+        if show.closing && show.anim.is_some_and(|a| a.done(Instant::now())) {
             self.mini_finish(id);
+        } else {
+            self.place_mini();
         }
     }
 
@@ -393,7 +472,29 @@ impl App {
         };
         show.closing = true;
         show.stop();
-        self.mini_frames(id, false);
+        // Остров ещё не тронулся (страница готовила видео) — уезжать нечему.
+        if show.anim.is_none() {
+            self.mini_finish(id);
+            return;
+        }
+        self.mini_animate(false);
+    }
+
+    /// Мышь вернулась на чёлку, пока остров уезжал: он снова выезжает, с того же места.
+    fn mini_reopen(&mut self, id: TabId) {
+        let Some(show) = self.mini.as_mut().filter(|s| s.id == id && s.closing) else {
+            return;
+        };
+        // Прежнее слежение за мышью уже кончилось (оно и начало уезд) — нужно новое.
+        show.closing = false;
+        show.shared = mini::Handle::default();
+        let shared = show.shared.clone();
+        self.sync_mini_areas();
+        let events = self.events.clone();
+        mini::watch(shared, move || {
+            let _ = events.send_event(UserEvent::MiniEnded(id));
+        });
+        self.mini_animate(true);
     }
 
     /// Показ закончен: страница как была, вкладка — снова на своём месте (в фоне — скрыта).
@@ -421,7 +522,17 @@ impl App {
         self.ask_media(id);
     }
 
-    /// Остров на месте: под чёлкой, высотой `k` от полной (анимация), скруглён снизу.
+    /// Высота острова с видео (логические px), 0 — показа нет.
+    fn mini_height(&self) -> f64 {
+        let video = self.mini.as_ref().and_then(|s| s.video);
+        match (video, self.mini_dock()) {
+            (Some((vw, vh)), Some(dock)) => dock.island(vw, vh).h,
+            _ => 0.0,
+        }
+    }
+
+    /// Остров на месте: под чёлкой, скруглён снизу; видна его часть по доле выезда
+    /// (`mini::Show::k`) — от ширины чёлки до всей ширины и от нуля до всей высоты.
     ///
     /// Windows: вкладка остаётся своего размера (сайт не перестраивает страницу), только
     /// встаёт левым верхним углом в угол острова (в боковой панели он левее страницы);
@@ -436,7 +547,7 @@ impl App {
     ///
     /// Видео страница ставит ровно в остров, с рамкой [`mini::PAD`] — раньше, чем вкладка
     /// сожмётся: иначе плеер успел бы стать меньше, чем «видео для островка».
-    fn place_mini(&mut self, k: f64) {
+    fn place_mini(&mut self) {
         let scale = self.window.scale_factor();
         let (Some(show), Some(dock), Some(content)) = (&self.mini, self.mini_dock(), self.content)
         else {
@@ -468,21 +579,26 @@ impl App {
                 &media::mini_script(video.0, video.1, video.2, video.3, scale),
             );
         }
-        tab_webview::set_bounds_hanging(
-            webview,
-            Rect {
-                position: LogicalPosition::new(island.x, island.y).into(),
-                size: size.into(),
-            },
-        );
-        mini::round_bottom(
-            webview,
-            Some((island.w, island.grown(k).h)),
-            mini::RADIUS,
-            scale,
-        );
-        if send_video && let Some(show) = self.mini.as_mut() {
-            show.sent = Some(video);
+        // Место вкладки — только когда оно другое: каждый кадр двигать окно незачем.
+        let at = (island.x, island.y, size.width, size.height);
+        if show.at != Some(at) {
+            tab_webview::set_bounds_hanging(
+                webview,
+                Rect {
+                    position: LogicalPosition::new(island.x, island.y).into(),
+                    size: size.into(),
+                },
+            );
+        }
+        let k = show.k(Instant::now());
+        let cut = island.cut(k, dock.from);
+        mini::round_bottom(webview, Some(cut), mini::RADIUS, scale);
+        mini::log_for_tests(&format!("frame k={k:.3} w={:.1} h={:.1}", cut.w, cut.h));
+        if let Some(show) = self.mini.as_mut() {
+            show.at = Some(at);
+            if send_video {
+                show.sent = Some(video);
+            }
         }
     }
 
@@ -493,6 +609,8 @@ impl App {
             top: d.top,
             width: d.width,
             notch_top: d.notch_top,
+            from: d.from,
+            speed: d.speed,
         })
     }
 
@@ -528,12 +646,9 @@ impl App {
 
     /// Окно переехало, поменяло размер или чёлка сдвинулась: остров — снова под чёлку.
     pub(super) fn redock_mini(&mut self) {
-        if self
-            .mini
-            .as_ref()
-            .is_some_and(|s| !s.closing && s.video.is_some())
-        {
-            self.place_mini(1.0);
+        // На той же доле выезда, что и сейчас: посреди анимации остров не прыгает.
+        if self.mini.as_ref().is_some_and(|s| s.video.is_some()) {
+            self.place_mini();
         }
         self.sync_mini_areas();
     }

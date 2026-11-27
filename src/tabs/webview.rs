@@ -60,6 +60,13 @@ pub fn styled<'a>(
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
     let mut args = String::from("--disable-features=msPdfOOUI,msSmartScreenProtection");
+    // Отладка: тестовая копия стоит внизу стопки окон, под другими, и для Chromium она
+    // «не видна» — страницы не рисуют кадров и не грузят видео. Пусть живёт как видимая
+    // (только debug-сборка с DevTools-протоколом).
+    #[cfg(debug_assertions)]
+    if std::env::var("AXIOM_CDP_PORT").is_ok_and(|p| p.parse::<u16>().is_ok()) {
+        args.push_str(",CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows");
+    }
     if force_dark {
         args.push_str(" --enable-features=WebContentsForceDark");
     }

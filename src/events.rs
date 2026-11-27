@@ -66,11 +66,15 @@ pub enum UserEvent {
         id: TabId,
         raw: String,
     },
-    /// Кадр выезда (`open`) или уезда острова с видео.
+    /// Страница нарисовала видео поверх себя (или ждать дольше не стали): остров выезжает.
+    MiniShown {
+        id: TabId,
+        serial: u32,
+    },
+    /// Кадр выезда или уезда острова с видео; `run` — какого (`tabs::mini::Show::run`).
     MiniFrame {
         id: TabId,
-        step: u8,
-        open: bool,
+        run: u32,
     },
     /// Мышь ушла с чёлки и острова (или показ остановили).
     MiniEnded(TabId),

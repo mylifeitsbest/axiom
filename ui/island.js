@@ -55,6 +55,17 @@ function createIsland(ax) {
   let overPage = true;
   let wide = false; // Linux: чёлка раскрыта вширь, кнопки прямо в ней
   let peekH = 0; // высота острова с видео (от Rust) — под неё место в боковой панели
+  // Остров с видео выезжает (или выехал): с этого мига чёлка раздаётся до его ширины, в
+  // такт ему. Решает Rust (`peek`): он трогает остров, когда страница нарисовала видео,
+  // и сразу шлёт сюда; уезжать начал — тоже сразу, чтобы чёлка сужалась вместе с ним.
+  let vidOn = false;
+  let vidOutTimer = 0;
+  // Выезд и уезд видео: длительность и кривая — как у острова (OPEN и CLOSE в
+  // src/tabs/mini.rs) и у ширины чёлки (.isl.vid, .isl.vid-out в ui/styles.css).
+  const VID_IN = { ms: 460, ease: 'cubic-bezier(.3,.3,0,1)' };
+  const VID_OUT = { ms: 300, ease: 'cubic-bezier(.4,0,.2,1)' };
+  let hadButtons = false; // в чёлке кнопки видео (а не значок звука)
+  let swapTimer = 0;
   let downloads = [];
   let lastStatus = null;
   let done = null; // { id, name } — только что докачался
@@ -110,7 +121,7 @@ function createIsland(ax) {
       run: downloads.filter(running),
       done,
       // Видео показано из чёлки — чёлка шириной с него, кнопки прямо в ней.
-      video: !!tab && peeking === tab.id,
+      video: !!tab && vidOn && peeking === tab.id,
       // Linux: чёлка раскрыта вширь — те же кнопки, но без видео под ней.
       wide: wide && !collapsed && inline(),
       // Видео в окошке «картинка в картинке».
@@ -194,6 +205,16 @@ function createIsland(ax) {
           : state === 'pip' ? `<span class="isl-st" title="Видео в окне">${icon('pip')}</span>`
           : state === 'paused' ? btn('toggle', 'play', 'Играть')
           : state === 'eq' ? eq : '') + fold();
+      // Кнопки видео пришли на смену значку (или ушли), пока чёлка раздаётся или
+      // сужается: появляются по одной, а не разом.
+      if (!!buttons !== hadButtons) {
+        hadButtons = !!buttons;
+        r.classList.remove('swap');
+        void r.offsetWidth;
+        r.classList.add('swap');
+        clearTimeout(swapTimer);
+        swapTimer = setTimeout(() => r.classList.remove('swap'), ax.ms(420) + 50);
+      }
     } else if (m.run.length) {
       setRing(r, pct(m.run));
     }
@@ -611,13 +632,16 @@ function createIsland(ax) {
   }
 
   // Где чёлка — Rust ставит под неё остров с видео (src/tabs/mini.rs). Остров заходит
-  // под низ чёлки на её скругление, и вместе они — одно чёрное целое.
+  // под низ чёлки на её скругление, и вместе они — одно чёрное целое. `from` — ширина
+  // чёлки без видео: остров раздаётся вширь из неё, как сама чёлка; `speed` — скорость
+  // анимаций (0 — без них), чтобы остров не ехал, когда чёлка прыгает сразу.
   let dockKey = '';
-  function sendDock(z) {
+  function sendDock(z, from) {
+    const speed = Math.round(ax.ms(1000)) / 1000;
     // В боковой панели видео выезжает под карточкой, во всю её ширину.
     const dock = !z ? null : z.mode === 'panel'
-      ? { cx: Math.round(z.cx), top: Math.round(z.top + CARD), width: Math.round(z.width), notch_top: Math.round(z.top) }
-      : { cx: Math.round(z.cx), top: H - 8, width: VW, notch_top: 0 };
+      ? { cx: Math.round(z.cx), top: Math.round(z.top + CARD), width: Math.round(z.width), notch_top: Math.round(z.top), from: Math.round(z.width), speed }
+      : { cx: Math.round(z.cx), top: H - 8, width: VW, notch_top: 0, from: Math.round(Math.min(from || W, VW)), speed };
     const key = JSON.stringify(dock);
     if (key === dockKey) return;
     dockKey = key;
@@ -635,13 +659,31 @@ function createIsland(ax) {
     // расступаются шире (а потом смыкаются обратно).
     const z = place(m);
     const want = enabled && !!z && busy(m);
-    el.classList.toggle('vid', want && m.video && !collapsed);
+    const vid = want && m.video && !collapsed;
+    // Надпись в чёлке с видео — слева, без него — посередине: где она сейчас (до смены).
+    const slide = vid !== el.classList.contains('vid') && shown ? titleX() : null;
+    // Остров уезжает — чёлка сужается с его длительностью и кривой (`.vid-out`), а не
+    // своей пружинкой; потом переходы снова обычные. Промежуток в ряду вкладок — так же.
+    if (!vid && el.classList.contains('vid')) {
+      el.classList.add('vid-out');
+      gap.classList.add('vid-out');
+      clearTimeout(vidOutTimer);
+      vidOutTimer = setTimeout(() => { el.classList.remove('vid-out'); gap.classList.remove('vid-out'); }, ax.ms(VID_OUT.ms) + 80);
+    } else if (vid) {
+      clearTimeout(vidOutTimer);
+      el.classList.remove('vid-out');
+      gap.classList.remove('vid-out');
+    }
+    el.classList.toggle('vid', vid);
+    gap.classList.toggle('vid', vid);
     el.classList.toggle('wide', want && m.wide && !m.video);
     el.classList.toggle('panel', !!z && z.mode === 'panel');
     el.classList.toggle('mini', collapsed);
     el.title = collapsed ? 'Развернуть островок' : '';
-    // Свёрнутый островок видео не показывает.
-    sendDock(want && !collapsed ? z : null);
+    // Свёрнутый островок видео не показывает. Пока видео выехало, `z` — уже шириной с
+    // него, а остров раздаётся из обычной чёлки.
+    const base = z && z.mode === 'bar' && (m.video || m.wide) ? zone(false) : z;
+    sendDock(want && !collapsed ? z : null, (base && base.iw) || W);
     // Видео встало под чёлку — раскрытый островок оказался бы под ним: сворачиваем.
     // Linux: карточку из боковой панели перенесли над страницу — список тоже убираем.
     if (opened && (m.video || collapsed || inline())) setOpen(false);
@@ -675,6 +717,7 @@ function createIsland(ax) {
         setSlot(0);
       }
       renderCompact(m);
+      if (slide != null) slideTitle(slide, vid);
       if (!shown) {
         shown = true;
         clearTimeout(showTimer);
@@ -700,6 +743,30 @@ function createIsland(ax) {
       setSlot(0);
       setStrip(false);
     }
+  }
+
+  // Надпись переезжает из середины чёлки влево (и обратно) плавно, вместе с шириной, а не
+  // скачком: с прежнего места на новое — за то же время и по той же кривой, что чёлка.
+  function titleX() {
+    const t = el.querySelector('.isl-t');
+    if (!t || !t.firstChild) return null;
+    const r = document.createRange();
+    r.selectNodeContents(t);
+    const b = r.getBoundingClientRect();
+    return b.width ? b.left : null;
+  }
+  let titleAnim = null;
+  function slideTitle(from, vid) {
+    if (titleAnim) titleAnim.cancel();
+    titleAnim = null;
+    const to = titleX();
+    const m = vid ? VID_IN : VID_OUT;
+    const dx = to == null ? 0 : from - to;
+    if (Math.abs(dx) < 0.5 || !(ax.ms(m.ms) > 0)) return;
+    titleAnim = el.querySelector('.isl-t').animate(
+      [{ transform: `translateX(${dx.toFixed(1)}px)` }, { transform: 'none' }],
+      { duration: ax.ms(m.ms), easing: m.ease },
+    );
   }
 
   // ---------- мышь ----------
@@ -804,6 +871,7 @@ function createIsland(ax) {
   function onPeek(m) {
     const id = +m.id;
     if (m.on) peeking = id; else if (peeking === id) peeking = null;
+    vidOn = !!m.on && peeking === id;
     peekH = m.on && +m.height > 0 ? +m.height : 0;
     sync();
   }

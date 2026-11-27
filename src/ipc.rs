@@ -137,7 +137,9 @@ pub struct SettingsIn {
     #[serde(default)]
     pub search_custom: String,
     pub double_search: bool,
-    pub ai_proxy: String,
+    /// Адрес прокси для вкладок; проверяет `net::address`. Нет поля — не менять.
+    #[serde(default)]
+    pub proxy: Option<String>,
     pub sleep_minutes: u32,
     pub live_tabs: u32,
     /// Сайты «не усыплять»; чистят настройки. Нет поля или не список — не менять.
@@ -237,6 +239,10 @@ pub enum UiCmd {
     },
     /// Кнопка настроек, Ctrl+,: открыть вкладку настроек (или перейти на неё).
     OpenSettings,
+    /// Кнопка прокси на панели.
+    Proxy {
+        on: bool,
+    },
     /// Лист закрытых настроек плавно ушёл: можно показывать страницу под ним.
     SettingsLeft,
     /// Ctrl+H, ссылка «История»: открыть вкладку истории (или перейти на неё).
@@ -571,7 +577,9 @@ fn validate(cmd: &UiCmd) -> Result<(), IpcError> {
             if size > MAX_APPEARANCE {
                 return Err(IpcError::Invalid("appearance"));
             }
-            short(&settings.ai_proxy, 512, "proxy")?;
+            if let Some(proxy) = &settings.proxy {
+                short(proxy, 512, "proxy")?;
+            }
             short(
                 &settings.search_custom,
                 crate::tabs::omnibox::MAX_TEMPLATE,
@@ -755,7 +763,6 @@ pub enum ToUi<'a> {
         tabs: Vec<TabView<'a>>,
         active: Option<u64>,
         ai_open: bool,
-        ai_proxy: bool,
         can_restore: bool,
         /// Плитки новой вкладки; `None`, пока активна обычная страница.
         top_sites: Option<Vec<Site>>,
@@ -836,6 +843,8 @@ pub enum ToUi<'a> {
         count: u32,
         total: u64,
     },
+    /// Прокси вкладок: кнопка на панели и раздел «Сеть».
+    Proxy(crate::net::View<'a>),
     /// Список изменений для «Что нового»; `error` — не удалось скачать.
     UpdateNotes {
         which: crate::update::NotesWhich,
@@ -1159,7 +1168,7 @@ mod tests {
     #[test]
     fn no_sleep_sites_setting_is_optional() {
         let sites = |extra: &str| match parse(&format!(
-            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
         )) {
             Ok(UiCmd::SaveSettings { settings }) => Some(settings.no_sleep_sites),
             _ => None,
@@ -1321,7 +1330,7 @@ mod tests {
         use crate::tabs::omnibox::Engine;
         let save = |extra: &str| {
             parse(&format!(
-                r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+                r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
             ))
         };
         let engine = |extra: &str| match save(extra) {
@@ -1532,7 +1541,7 @@ mod tests {
     #[test]
     fn crash_reports_setting_is_optional() {
         let save = |extra: &str| match parse(&format!(
-            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
         )) {
             Ok(UiCmd::SaveSettings { settings }) => Some(settings.crash_reports),
             _ => None,
@@ -1542,7 +1551,7 @@ mod tests {
         let mut s = crate::settings::Settings::default();
         assert!(s.crash_reports, "по умолчанию включено");
         if let Ok(UiCmd::SaveSettings { settings }) = parse(
-            r#"{"cmd":"save_settings","settings":{"appearance":{},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3,"crash_reports":false}}"#,
+            r#"{"cmd":"save_settings","settings":{"appearance":{},"double_search":true,"proxy":"","sleep_minutes":5,"live_tabs":3,"crash_reports":false}}"#,
         ) {
             s.apply(settings);
         }
@@ -1552,7 +1561,7 @@ mod tests {
     #[test]
     fn usage_stats_setting_is_optional() {
         let parse_in = |extra: &str| match parse(&format!(
-            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
         )) {
             Ok(UiCmd::SaveSettings { settings }) => Some(settings),
             _ => None,
@@ -1577,7 +1586,7 @@ mod tests {
     #[test]
     fn new_ai_chat_setting_is_optional() {
         let save = |extra: &str| match parse(&format!(
-            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"ai_proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
+            r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"proxy":"","sleep_minutes":5,"live_tabs":3{extra}}}}}"#
         )) {
             Ok(UiCmd::SaveSettings { settings }) => Some(settings.ai_new_chat),
             _ => None,
@@ -1586,6 +1595,30 @@ mod tests {
         assert_eq!(save(r#","ai_new_chat":false"#), Some(Some(false)));
         assert_eq!(save(r#","ai_new_chat":null"#), Some(None));
         assert_eq!(save(r#","ai_new_chat":"нет""#), None);
+    }
+
+    #[test]
+    fn proxy_button_and_address() {
+        assert!(matches!(
+            parse(r#"{"cmd":"proxy","on":true}"#),
+            Ok(UiCmd::Proxy { on: true })
+        ));
+        assert!(parse(r#"{"cmd":"proxy"}"#).is_err());
+        let save = |proxy: &str| {
+            parse(&format!(
+                r#"{{"cmd":"save_settings","settings":{{"appearance":{{}},"double_search":true,"sleep_minutes":5,"live_tabs":3{proxy}}}}}"#
+            ))
+        };
+        // Интерфейс без поля адреса — не менять; прежнее поле ai_proxy просто не читается.
+        assert!(
+            matches!(save(""), Ok(UiCmd::SaveSettings { settings }) if settings.proxy.is_none())
+        );
+        assert!(matches!(
+            save(r#","ai_proxy":"socks5://a:1""#),
+            Ok(UiCmd::SaveSettings { settings }) if settings.proxy.is_none()
+        ));
+        let long = format!(r#","proxy":"socks5://{}:1""#, "a".repeat(600));
+        assert!(matches!(save(&long), Err(IpcError::Invalid("proxy"))));
     }
 
     #[test]

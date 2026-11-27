@@ -13,6 +13,7 @@ mod downloads;
 mod events;
 mod instance;
 mod ipc;
+mod net;
 mod plugins;
 mod reports;
 mod settings;
@@ -78,7 +79,13 @@ fn run() -> Result<()> {
         reports::heavy_crashes(&paths.root),
     );
     // Профиль уже открывала более новая версия: адреса — ей, а профиль не трогаем.
-    if !updated && !handed_off && system::handoff::to_newer(&paths, &urls) {
+    // `AXIOM_NO_HANDOFF` — для сборки из исходников на профиле, который уже открывала
+    // установленная бета: проверить свою сборку, а не отдать запуск бете.
+    if !updated
+        && !handed_off
+        && std::env::var_os(system::handoff::NO_HANDOFF).is_none()
+        && system::handoff::to_newer(&paths, &urls)
+    {
         return Ok(());
     }
     // Новую версию запустила старая: ждём, пока та закроется, иначе адреса ушли бы ей.

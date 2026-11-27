@@ -6,8 +6,7 @@
 use anyhow::{Context, Result};
 use tao::{event_loop::EventLoopProxy, window::Window};
 use wry::{
-    NewWindowResponse, PageLoadEvent, ProxyConfig, RGBA, Rect, Theme, WebContext, WebView,
-    WebViewBuilder,
+    NewWindowResponse, PageLoadEvent, RGBA, Rect, Theme, WebContext, WebView, WebViewBuilder,
 };
 
 use super::{TabId, omnibox};
@@ -27,24 +26,16 @@ pub struct Look {
 /// Общие настройки для всех webview: фон, тема и аргументы запуска WebView2.
 ///
 /// Аргументы обязаны совпадать у всех webview с одной папкой данных, поэтому
-/// задаём их явно и одинаково для интерфейса, вкладок и панели ИИ.
-pub fn styled<'a>(
-    builder: WebViewBuilder<'a>,
-    look: Look,
-    proxy: Option<&ProxyConfig>,
-) -> WebViewBuilder<'a> {
+/// задаём их явно и одинаково для интерфейса, вкладок и панели ИИ. Прокси у них
+/// тоже общий — релей `net` (на Linux его ставит `net::apply_to` на окружение).
+pub fn styled(builder: WebViewBuilder<'_>, look: Look) -> WebViewBuilder<'_> {
     let builder = builder.with_background_color(look.background);
     #[cfg(windows)]
     let builder = {
         use wry::WebViewBuilderExtWindows;
         builder
             .with_theme(look.theme)
-            .with_additional_browser_args(browser_args(look.force_dark, proxy))
-    };
-    #[cfg(not(windows))]
-    let builder = match proxy {
-        Some(proxy) => builder.with_proxy_config(proxy.clone()),
-        None => builder,
+            .with_additional_browser_args(browser_args(look.force_dark))
     };
     builder
 }
@@ -58,7 +49,7 @@ pub fn styled<'a>(
 /// `msWebOOUI`, в отличие от wry, не выключаем: без него WebView2 отказывает сайтам
 /// в полном экране (`requestFullscreen` → «not granted»), и видео не разворачивается.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
+pub fn browser_args(force_dark: bool) -> String {
     let mut args = String::from("--disable-features=msPdfOOUI,msSmartScreenProtection");
     // Отладка: тестовая копия стоит внизу стопки окон, под другими, и для Chromium она
     // «не видна» — страницы не рисуют кадров и не грузят видео. Пусть живёт как видимая
@@ -82,15 +73,9 @@ pub fn browser_args(force_dark: bool, proxy: Option<&ProxyConfig>) -> String {
     if std::env::var_os("AXIOM_FAKE_MEDIA").is_some() {
         args.push_str(" --use-fake-device-for-media-stream");
     }
-    if let Some(proxy) = proxy {
-        let (scheme, endpoint) = match proxy {
-            ProxyConfig::Http(e) => ("http", e),
-            ProxyConfig::Socks5(e) => ("socks5", e),
-        };
-        args.push_str(&format!(
-            " --proxy-server={scheme}://{}:{}",
-            endpoint.host, endpoint.port
-        ));
+    if let Some(proxy) = crate::net::browser_args() {
+        args.push(' ');
+        args.push_str(&proxy);
     }
     args
 }
@@ -124,8 +109,6 @@ pub struct TabSpec<'a> {
     pub bounds: Rect,
     pub visible: bool,
     pub look: Look,
-    /// Для вкладок, открытых из панели ИИ: тот же прокси, что у панели.
-    pub proxy: Option<ProxyConfig>,
     pub ai: bool,
     /// Звук вкладки выключен (после пробуждения — снова): кнопкой или громкостью 0 %.
     pub muted: bool,
@@ -211,7 +194,7 @@ pub fn build_tab(
             }
             NewWindowResponse::Deny
         });
-    let builder = styled(builder, spec.look, spec.proxy.as_ref());
+    let builder = styled(builder, spec.look);
     let builder = downloads::attach(builder, events);
 
     let webview = build_child(builder, window).context("не удалось создать webview вкладки")?;

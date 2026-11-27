@@ -49,12 +49,33 @@ impl Paths {
     pub fn webview_data(&self) -> PathBuf {
         self.root.join("webview")
     }
+}
 
-    /// Данные панели ИИ. Для каждого прокси — своя папка: WebView2 требует,
-    /// чтобы окружения с разными аргументами запуска не делили одну папку.
-    pub fn ai_data(&self, proxy_key: &str) -> PathBuf {
-        self.root.join(format!("ai-{proxy_key}"))
+/// Убирает в фоне папки `ai-*`: там жила панель ИИ со своим прокси, пока он был
+/// отдельным. Теперь панель в общей папке `webview`, а эти — по сотне мегабайт.
+/// Не вышло (папку ещё держит уходящий WebView2) — попробуем при следующем запуске.
+pub fn drop_ai_data(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    let old: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("ai-"))
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
+        .collect();
+    if old.is_empty() {
+        return;
     }
+    let _ = std::thread::Builder::new()
+        .name("axiom-ai-data".into())
+        .spawn(move || {
+            for dir in old {
+                if let Err(err) = fs::remove_dir_all(&dir) {
+                    eprintln!("не удалось убрать {}: {err}", dir.display());
+                }
+            }
+        });
 }
 
 /// Больше этого JSON из профиля не читаем. Настоящие файлы — килобайты,

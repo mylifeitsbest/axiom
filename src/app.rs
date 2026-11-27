@@ -26,7 +26,7 @@ use url::Url;
 use wry::{NewWindowResponse, RGBA, Rect, WebContext, WebView, WebViewBuilder};
 
 use crate::{
-    ai_panel::{AiPanel, proxy},
+    ai_panel::AiPanel,
     downloads::{self, DownloadEvent, Downloads, Status},
     events::{TICK, UserEvent},
     ipc::{self, DownloadView, Edge, TabView, ToUi, UiCmd, WindowAction},
@@ -130,6 +130,8 @@ pub struct App {
     market: crate::plugins::market::State,
     /// Блокировка рекламы: списки, сборка движка, обновления.
     adblock: crate::adblock::Manager,
+    /// Прокси для вкладок и панели ИИ (кнопка на панели).
+    net: crate::net::TabProxy,
 }
 
 impl App {
@@ -163,7 +165,11 @@ impl App {
         crate::ui::hotkeys::install_window(&window, events.clone());
         // Папку движок создал бы и сам, но на Linux — с открытыми правами.
         let _ = crate::storage::private_dir(&paths.webview_data());
+        // Прокси движка решается до первого webview: у всех он обязан быть одинаковым.
+        let net = crate::net::TabProxy::start(&settings.proxy, settings.proxy_on, &events);
         let mut context = WebContext::new(Some(paths.webview_data()));
+        // Папки прежнего «прокси только для ИИ» больше никому не нужны.
+        crate::storage::drop_ai_data(&paths.root);
         let force_dark = settings.force_dark;
         let ui_look = Look {
             background: ipc::parse_hex(&settings.colors.window).unwrap_or((20, 20, 24, 255)),
@@ -173,6 +179,9 @@ impl App {
         #[cfg(target_os = "linux")]
         tab_webview::apply_theme_globally(ui_look.theme);
         let ui = build_ui(&window, &mut context, &events, ui_look)?;
+        // Linux: прокси — на окружение WebKitGTK, общее для интерфейса и вкладок.
+        #[cfg(target_os = "linux")]
+        crate::net::apply_to(&ui);
         // Интерфейс ещё без подмены: его User-Agent — строка движка.
         crate::tabs::identity::remember_engine(&ui);
         crate::tabs::identity::install_ui(&ui);
@@ -187,7 +196,7 @@ impl App {
                 }
             });
         }
-        let ai = AiPanel::new(&settings.ai_proxy);
+        let ai = AiPanel::new();
 
         let mut app = Self {
             tabs: TabStore::default(),
@@ -229,6 +238,7 @@ impl App {
             plugin_pages: std::collections::HashMap::new(),
             market: crate::plugins::market::State::default(),
             adblock,
+            net,
         };
         app.sync_tracking();
         app.sync_identity();
@@ -262,6 +272,7 @@ impl App {
             UserEvent::Plugin(msg) => self.on_plugin(msg),
             UserEvent::Adblock(event) => self.on_adblock(event),
             UserEvent::Market(event) => self.on_market(event),
+            UserEvent::Proxy(health) => self.on_proxy_health(health),
             UserEvent::PluginMissed { tab, plugin } => self.plugin_missed(tab, &plugin),
             UserEvent::TabTitle(id, title) => self.on_title(id, title),
             UserEvent::TabLoad { id, started, url } => self.on_load(id, started, url),
@@ -362,6 +373,14 @@ impl App {
                     status: system::status(),
                 });
                 self.push_state();
+                self.push_proxy();
+                if std::mem::take(&mut self.settings.moved_ai_proxy) {
+                    // Записать без прежнего поля, чтобы перенос не повторялся.
+                    self.persist_settings();
+                    self.send(&ToUi::Toast {
+                        text: "Прокси для ИИ теперь общий для всех вкладок — включается кнопкой на панели",
+                    });
+                }
                 self.push_downloads();
                 self.push_permissions();
                 self.push_plugins();
@@ -433,6 +452,7 @@ impl App {
             UiCmd::AiPopOut => self.pop_out_ai(),
             UiCmd::Overlay { open } => self.set_overlay(open),
             UiCmd::OpenSettings => self.open_settings(),
+            UiCmd::Proxy { on } => self.toggle_proxy(on),
             UiCmd::SettingsLeft => self.settings_left(),
             UiCmd::OpenHistory => self.open_history(),
             UiCmd::History { q, offset, limit } => self.send_history(&q, offset, limit),
@@ -827,18 +847,12 @@ impl App {
             bounds: self.content.unwrap_or_default(),
             visible: shown && !self.covered() && !waking,
             look: self.look(),
-            proxy: if ai { self.ai.proxy_config() } else { None },
             ai,
             muted,
             zoom,
             plugins: self.plugins.scripts(),
         };
-        let webview = if ai {
-            let context = self.ai.context(&self.paths, &mut self.context);
-            tab_webview::build_tab(&self.window, context, &self.events, spec)?
-        } else {
-            tab_webview::build_tab(&self.window, &mut self.context, &self.events, spec)?
-        };
+        let webview = tab_webview::build_tab(&self.window, &mut self.context, &self.events, spec)?;
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.webview = Some(webview);
             tab.loading = true;
@@ -1141,7 +1155,6 @@ impl App {
         let bounds = self.ai_bounds();
         self.ai.show(
             &self.window,
-            &self.paths,
             &mut self.context,
             &self.events,
             query,
@@ -1422,13 +1435,13 @@ impl App {
     }
 
     fn save_settings(&mut self, mut incoming: ipc::SettingsIn) {
-        let old_proxy = self.settings.ai_proxy.clone();
-        let rejected = match proxy::parse(&incoming.ai_proxy) {
-            Ok(_) => None,
-            Err(err) => {
-                incoming.ai_proxy = old_proxy.clone();
+        let old_proxy = self.settings.proxy.clone();
+        let rejected = match incoming.proxy.as_deref().map(crate::net::address::parse) {
+            Some(Err(err)) => {
+                incoming.proxy = None;
                 Some(format!("Прокси не применён: {err}"))
             }
+            _ => None,
         };
         let engine = incoming.search_engine;
         let (agent, referer) = (incoming.user_agent, incoming.referer);
@@ -1465,8 +1478,8 @@ impl App {
         self.sync_tracking();
         self.sync_identity();
         self.sync_adblock();
-        if self.settings.ai_proxy != old_proxy {
-            self.apply_proxy_change();
+        if self.settings.proxy != old_proxy {
+            self.proxy_addr_changed();
         }
         if self.settings.no_sleep_sites != old_sites {
             self.sites_changed();
@@ -1489,37 +1502,68 @@ impl App {
         }
     }
 
-    fn apply_proxy_change(&mut self) {
-        let was_open = self.ai.open;
-        self.ai.set_proxy(&self.settings.ai_proxy);
-        // Вкладки «из ИИ» пересоздадутся с новым прокси при следующем открытии.
-        // Вкладки с недописанным текстом и «не усыплять» не трогаем (сменят прокси,
-        // когда уснут), а идущую загрузку не обрываем — webview паркуется до её конца.
-        let active = self.tabs.active;
-        let ids: Vec<TabId> = self
-            .tabs
-            .iter()
-            .filter(|t| t.ai && Some(t.id) != active && t.webview.is_some() && !t.keep_alive)
-            .filter(|t| !t.kept_awake(&self.settings.no_sleep_sites))
-            .map(|t| t.id)
-            .collect();
-        for id in ids {
-            self.park_if_busy(id);
-            if let Some(tab) = self.tabs.get_mut(id) {
-                tab.webview = None;
-                tab.sleep_requested = None;
-            }
-        }
-        if was_open && let Err(err) = self.open_ai(None) {
-            eprintln!("панель ИИ: {err:#}");
-        }
-        let text = if self.settings.ai_proxy.is_empty() {
-            "Панель ИИ работает без прокси"
+    // ---------- прокси ----------
+
+    /// Адрес прокси в настройках поменялся (уже проверен).
+    fn proxy_addr_changed(&mut self) {
+        self.net
+            .set_addr(&self.settings.proxy, self.settings.proxy_on);
+        let text = if self.net.env_override() {
+            "Сейчас действует AXIOM_PROXY — адрес из настроек применится, когда её не будет"
+        } else if self.settings.proxy.is_empty() {
+            "Прокси убран: вкладки ходят напрямую"
+        } else if self.net.needs_restart() {
+            "Адрес сохранён — прокси заработает после перезапуска Axiom"
+        } else if self.net.is_on() {
+            "Прокси применён: вкладки идут через него"
         } else {
-            "Прокси для панели ИИ применён"
+            "Адрес прокси сохранён — включается кнопкой на панели"
         };
         self.send(&ToUi::Toast { text });
-        self.push_state();
+        self.push_proxy();
+    }
+
+    /// Кнопка на панели.
+    fn toggle_proxy(&mut self, on: bool) {
+        if self.net.needs_restart() {
+            self.send(&ToUi::Toast {
+                text: "Прокси заработает после перезапуска Axiom",
+            });
+            self.push_proxy();
+            return;
+        }
+        if !self.net.set_on(on) {
+            self.push_proxy();
+            return;
+        }
+        // Адрес из AXIOM_PROXY — на один запуск: его «включён» тоже не сохраняем.
+        if !self.net.env_override() {
+            self.settings.proxy_on = on;
+            self.persist_settings();
+        }
+        let text = if on {
+            format!("Прокси включён: вкладки идут через {}", self.net.addr())
+        } else {
+            "Прокси выключен: вкладки идут напрямую".to_string()
+        };
+        self.send(&ToUi::Toast { text: &text });
+        self.push_proxy();
+    }
+
+    /// Релей заметил, что прокси перестал или снова начал отвечать.
+    fn on_proxy_health(&mut self, health: crate::net::Health) {
+        if health == crate::net::Health::Down && self.net.active() {
+            let text = format!(
+                "Прокси {} не отвечает — страницы не откроются, пока он не заработает или пока его не выключат",
+                self.net.addr()
+            );
+            self.send(&ToUi::Toast { text: &text });
+        }
+        self.push_proxy();
+    }
+
+    fn push_proxy(&self) {
+        self.send(&ToUi::Proxy(self.net.view()));
     }
 
     fn persist_settings(&self) {
@@ -2124,7 +2168,6 @@ impl App {
             tabs,
             active: self.tabs.active,
             ai_open: self.ai.open,
-            ai_proxy: self.ai.has_proxy(),
             can_restore: self.tabs.can_restore(),
             top_sites: on_newtab.then(|| self.history.top_sites(8)),
         });
@@ -2243,7 +2286,7 @@ fn build_ui(
             .with_browser_accelerator_keys(false)
             .with_default_context_menus(cfg!(debug_assertions))
     };
-    let builder = tab_webview::styled(builder, look, None);
+    let builder = tab_webview::styled(builder, look);
     // На Linux обработчик загрузок общий для всех webview, а путь выбирает первый
     // зарегистрированный — интерфейс создаётся раньше вкладок.
     let builder = downloads::attach(builder, events);

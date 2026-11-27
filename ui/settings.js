@@ -129,11 +129,12 @@ function createPanels(ax) {
   const SECTIONS = [
     { id: 'look', icon: 'palette', title: 'Внешний вид', desc: 'Тема, цвета и шрифт. Всё меняется сразу.' },
     { id: 'layout', icon: 'layout', title: 'Раскладка', desc: 'Где живут вкладки и сколько воздуха вокруг.' },
-    { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'Поисковая система, Google AI Mode и прокси только для ИИ.' },
+    { id: 'search', icon: 'sparkles', title: 'Поиск и ИИ', desc: 'Поисковая система и Google AI Mode.' },
     { id: 'translate', icon: 'translate', title: 'Перевод', desc: 'Страницы на других языках — в пару кликов.' },
     { id: 'memory', icon: 'cpu', title: 'Память', desc: 'Спящие вкладки не занимают ни мегабайта.' },
     { id: 'data', icon: 'database', title: 'Данные', desc: 'Закладки и история из Chrome, Edge, Firefox и других браузеров.' },
     { id: 'security', icon: 'shield', title: 'Безопасность', desc: 'Блокировка рекламы и что сайтам можно: микрофон, камера, место, уведомления и запуск приложений.' },
+    { id: 'network', icon: 'globe', title: 'Сеть', desc: 'Прокси для всех вкладок — например, WARP. Включается кнопкой на панели.' },
     { id: 'plugins', icon: 'puzzle', title: 'Плагины', desc: 'Свои скрипты и стили для сайтов — ваши или чужие.' },
     { id: 'system', icon: 'monitor', title: 'Система', desc: 'Установка, обновления и браузер по умолчанию.' },
     { id: 'keys', icon: 'keyboard', title: 'Клавиши', desc: 'Привычные сочетания плюс пара своих.' },
@@ -270,14 +271,19 @@ function createPanels(ax) {
           ${row('Подсказки поисковой системы', 'Набрали «пр» — под строкой «привет», «прогноз погоды»… Для этого набранное уходит в <span class="se-name">DuckDuckGo</span> ещё до Enter. Адреса сайтов не отправляются. Свои прошлые запросы из истории подсказываются и без этого', toggle('data-bkey', 'search_suggest'), 'data-kw="подсказки автодополнение предложения запросы дополнение популярные"')}
         </div>
         <h4>Панель ИИ</h4><div class="card">
-          ${row('Прокси только для AI Mode', 'Вкладки ходят напрямую. Пусто — без прокси.', '')}
-          <div class="srow"><span class="inline"><input type="text" id="proxyIn" placeholder="socks5://127.0.0.1:1080" spellcheck="false"><button class="btn primary" data-act="proxy">Применить</button></span></div>
           ${row('Ширина панели', 'Или потяните за край панели', `${range('min="280" max="900" step="10" data-key="aiWidth"')}<output data-out="aiWidth"></output>`)}
           ${row('Новый разговор при каждом открытии', 'Закрыли панель — в следующий раз AI Mode начнёт с чистого листа. Выключите, чтобы панель помнила прежний разговор', toggle('data-bkey', 'ai_new_chat'), 'data-kw="разговор чат контекст история очищать сбрасывать новый"')}
         </div>
         <div class="note">${icon('sparkles')}<span>В панели открывается только AI Mode. Ссылки из ответа, обычная выдача Google и другие сайты открываются в новой вкладке.</span></div>`,
       translate: ax.translate.sectionHtml(),
       security: ax.adblock.sectionHtml() + ax.perms.sectionHtml(),
+      network: `
+        <div class="card">
+          <div class="srow col" data-kw="прокси proxy warp vpn впн socks socks5 http usque masque cloudflare обход блокировок"><span class="sl"><b>Прокси для вкладок</b><small id="netNote"></small></span>
+            <span class="inline"><input type="text" id="proxyIn" placeholder="socks5://127.0.0.1:18080" spellcheck="false" maxlength="512"><button class="btn primary" data-act="proxy">Применить</button></span></div>
+        </div>
+        <div class="note">${icon('net')}<span>Включается и выключается кнопкой со щитом на панели — сразу, без перезапуска; правый клик по ней открывает этот раздел. Через прокси идут все вкладки и панель ИИ. Пока он включён, всё идёт только через него: не отвечает — страницы не откроются, а не пойдут мимо. Локальная сеть (роутер, localhost, 192.168.…) — всегда напрямую.</span></div>
+        <div class="note">${icon('globe')}<span>WARP без клиента Cloudflare: запустите <code>usque socks -b 127.0.0.1 -p 18080</code> и впишите сюда <code>socks5://127.0.0.1:18080</code>. Подойдёт и любой свой SOCKS5 или HTTP-прокси без логина и пароля.</span></div>`,
       plugins: ax.plugins.sectionHtml(),
       memory: `
         <div class="card">
@@ -471,7 +477,8 @@ function createPanels(ax) {
       el.textContent = k === 'speed' ? (ax.speed() ? `×${ax.speed()}` : 'выкл') : k === 'fontSize' ? `${A[k]}px` : String(A[k]);
     });
     const proxy = $('#proxyIn', box);
-    if (proxy && document.activeElement !== proxy) proxy.value = B.ai_proxy || '';
+    if (proxy && document.activeElement !== proxy) proxy.value = B.proxy || '';
+    syncNet(box);
     $$('[data-preset]', box).forEach((b) => b.classList.toggle('on', b.dataset.preset === A.preset));
     $$('[data-accent]', box).forEach((b) => b.classList.toggle('on', b.dataset.accent.toLowerCase() === String(A.accent).toLowerCase()));
     $$('[data-layout-pick]', box).forEach((b) => b.classList.toggle('on', b.dataset.layoutPick === A.layout));
@@ -994,8 +1001,25 @@ function createPanels(ax) {
 
   function applyProxy(scope) {
     const input = $('#proxyIn', scope) || $('#proxyIn');
-    ax.B.ai_proxy = input.value.trim();
+    ax.B.proxy = input.value.trim();
     ax.saveSettings(true);
+  }
+
+  // Состояние прокси от Rust (`net::View`): подпись к адресу в разделе «Сеть».
+  let NET = { shown: false, on: false, state: 'off', addr: '', env: false };
+  function onProxy(n) {
+    NET = n;
+    syncNet(sheet);
+  }
+  function syncNet(box) {
+    const note = $('#netNote', box);
+    if (!note) return;
+    note.textContent = NET.env ? `Сейчас действует адрес из переменной AXIOM_PROXY: ${NET.addr}`
+      : !NET.shown ? 'Пусто — вкладки ходят напрямую, кнопки на панели нет'
+      : NET.state === 'restart' ? 'Заработает после перезапуска Axiom: движок уже запущен без прокси'
+      : !NET.on ? 'Выключен: вкладки идут напрямую. Включается кнопкой на панели'
+      : NET.state === 'down' ? 'Включён, но не отвечает — страницы не открываются, пока он не заработает'
+      : 'Включён: вкладки и панель ИИ идут через него';
   }
 
   function importTheme() {
@@ -1232,7 +1256,6 @@ function createPanels(ax) {
           <p class="lead">Запрос из адресной строки уходит в <span class="se-name">DuckDuckGo</span>, а рядом сразу отвечает Google AI Mode. Поисковую систему можно сменить в настройках.</p>
           <div class="card onb-cardw">
             ${row('Двойной поиск', 'Можно переключать кнопкой ✦ в адресной строке', toggle('data-bkey', 'double_search'))}
-            ${row('Прокси для AI Mode', 'Необязательно. Только для панели ИИ.', '<span class="inline"><input type="text" id="proxyIn" placeholder="socks5://127.0.0.1:1080" spellcheck="false"><button class="btn" data-act="proxy">OK</button></span>')}
           </div>
         </section>
         <section class="step" data-step="system">
@@ -1387,5 +1410,5 @@ function createPanels(ax) {
     return many;
   }
 
-  return { open, hide, leave, close, isOpen, sync, openOnboarding, onImported, onInstalled, onSystem, importSoon, onReportInfo, onReported, onReportFile, bugSoon };
+  return { open, hide, leave, close, isOpen, sync, onProxy, openOnboarding, onImported, onInstalled, onSystem, importSoon, onReportInfo, onReported, onReportFile, bugSoon };
 }

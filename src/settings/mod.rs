@@ -64,8 +64,18 @@ pub struct Settings {
     /// Подсказки поисковой системы в адресной строке: набранное уходит в неё
     /// ещё до Enter (см. `suggest`, PRIVACY.md).
     pub search_suggest: bool,
-    /// Прокси только для панели ИИ: `http://host:port` или `socks5://host:port`.
-    pub ai_proxy: String,
+    /// Прокси для всех вкладок и панели ИИ: `socks5://host:port` или `http://host:port`
+    /// (см. `net`). Пусто — прокси нет, и кнопки на панели тоже.
+    pub proxy: String,
+    /// Прокси включён — кнопка на панели.
+    pub proxy_on: bool,
+    /// Прежний «прокси только для ИИ»: читается, чтобы перенести адрес в `proxy`,
+    /// и больше не записывается.
+    #[serde(skip_serializing)]
+    ai_proxy: String,
+    /// Адрес только что перенесён из `ai_proxy`: сказать об этом и записать настройки.
+    #[serde(skip)]
+    pub moved_ai_proxy: bool,
     /// Закрытая панель ИИ при следующем открытии начинает новый разговор,
     /// а не показывает прежний (см. `App::ai_step`).
     pub ai_new_chat: bool,
@@ -128,7 +138,10 @@ impl Default for Settings {
             search_custom: String::new(),
             double_search: true,
             search_suggest: true,
+            proxy: String::new(),
+            proxy_on: false,
             ai_proxy: String::new(),
+            moved_ai_proxy: false,
             ai_new_chat: true,
             sleep_minutes: 5,
             live_tabs: 3,
@@ -165,14 +178,22 @@ impl Settings {
         storage::write_json(&paths.root.join(FILE), self)
     }
 
-    /// Применяет присланные интерфейсом значения. Прокси проверяется отдельно.
+    /// Применяет присланные интерфейсом значения. Адрес прокси проверяется отдельно.
     pub fn apply(&mut self, incoming: SettingsIn) {
         self.appearance = incoming.appearance;
         self.search_engine = incoming.search_engine;
         self.search_custom = incoming.search_custom.trim().to_string();
         self.fix_search();
         self.double_search = incoming.double_search;
-        self.ai_proxy = incoming.ai_proxy.trim().to_string();
+        // Интерфейс без поля адреса его не шлёт — тогда не трогаем.
+        if let Some(proxy) = incoming.proxy {
+            let proxy = proxy.trim().to_string();
+            // Первый адрес сразу включён: его затем и вписали. Убрали — выключен.
+            if self.proxy.is_empty() || proxy.is_empty() {
+                self.proxy_on = !proxy.is_empty();
+            }
+            self.proxy = proxy;
+        }
         self.sleep_minutes = incoming.sleep_minutes.min(MAX_SLEEP_MINUTES);
         self.live_tabs = incoming.live_tabs.min(MAX_LIVE_TABS);
         // Интерфейс без списка сайтов поле не шлёт — тогда не трогаем.
@@ -300,8 +321,19 @@ impl Settings {
         self.adblock_sites = sleep::clean_sites(&self.adblock_sites);
         self.translate = self.translate.sanitized();
         self.fix_identity();
-        if crate::ai_panel::proxy::parse(&self.ai_proxy).is_err() {
-            self.ai_proxy.clear();
+        if crate::net::address::parse(&self.proxy).is_err() {
+            self.proxy.clear();
+        }
+        // Прокси только для ИИ больше нет: его адрес становится общим, но выключенным —
+        // вкладки не пойдут через прокси, пока человек сам не нажмёт кнопку.
+        let old = std::mem::take(&mut self.ai_proxy);
+        if self.proxy.is_empty() && matches!(crate::net::address::parse(&old), Ok(Some(_))) {
+            self.proxy = old.trim().to_string();
+            self.proxy_on = false;
+            self.moved_ai_proxy = true;
+        }
+        if self.proxy.is_empty() {
+            self.proxy_on = false;
         }
         if crate::ipc::parse_hex(&self.colors.window).is_none()
             || crate::ipc::parse_hex(&self.colors.page).is_none()
@@ -320,7 +352,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "appearance": {},
             "double_search": true,
-            "ai_proxy": "",
+            "proxy": "",
             "sleep_minutes": 5,
             "live_tabs": 3,
             "search_engine": engine,
@@ -355,7 +387,7 @@ mod tests {
     fn applies_identity() -> serde_json::Result<()> {
         let with = |extra: serde_json::Value| -> serde_json::Result<SettingsIn> {
             let mut v = serde_json::json!({
-                "appearance": {}, "double_search": true, "ai_proxy": "",
+                "appearance": {}, "double_search": true, "proxy": "",
                 "sleep_minutes": 5, "live_tabs": 3,
             });
             if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
@@ -410,7 +442,7 @@ mod tests {
     fn sanitises_sleep_settings() -> serde_json::Result<()> {
         let with = |extra: serde_json::Value| -> serde_json::Result<SettingsIn> {
             let mut v = serde_json::json!({
-                "appearance": {}, "double_search": true, "ai_proxy": "",
+                "appearance": {}, "double_search": true, "proxy": "",
                 "sleep_minutes": 5, "live_tabs": 3,
             });
             if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
@@ -492,6 +524,58 @@ mod tests {
         // Старый файл без поисковой системы.
         let old = serde_json::from_str::<Settings>(r#"{"double_search":false}"#)?;
         assert_eq!(old.search_engine, Engine::DuckDuckGo);
+        Ok(())
+    }
+
+    #[test]
+    fn ai_proxy_becomes_the_shared_one_switched_off() -> serde_json::Result<()> {
+        let file = r#"{"ai_proxy":" socks5://127.0.0.1:1080 "}"#;
+        let s = serde_json::from_str::<Settings>(file)?.sanitized();
+        assert_eq!(s.proxy, "socks5://127.0.0.1:1080");
+        // Вкладки не пойдут через прокси, пока человек сам не включит его.
+        assert!(!s.proxy_on);
+        assert!(s.moved_ai_proxy);
+        // Прежнее поле больше не записывается — перенос не повторится.
+        let saved = serde_json::to_value(&s)?;
+        assert!(saved.get("ai_proxy").is_none());
+        assert!(saved.get("moved_ai_proxy").is_none());
+        // Общий адрес уже есть — его не трогаем; негодный старый — забываем.
+        let both = r#"{"proxy":"http://a:1","proxy_on":true,"ai_proxy":"socks5://b:2"}"#;
+        let s = serde_json::from_str::<Settings>(both)?.sanitized();
+        assert_eq!(
+            (s.proxy.as_str(), s.proxy_on, s.moved_ai_proxy),
+            ("http://a:1", true, false)
+        );
+        let bad = serde_json::from_str::<Settings>(r#"{"ai_proxy":"ftp://x:1"}"#)?.sanitized();
+        assert!(bad.proxy.is_empty() && !bad.moved_ai_proxy);
+        // Включён без адреса не бывает.
+        let odd = serde_json::from_str::<Settings>(r#"{"proxy":"","proxy_on":true}"#)?.sanitized();
+        assert!(!odd.proxy_on);
+        Ok(())
+    }
+
+    #[test]
+    fn first_proxy_address_switches_it_on() -> serde_json::Result<()> {
+        let with = |proxy: Option<&str>| -> serde_json::Result<SettingsIn> {
+            let mut v = incoming("duckduckgo", "")?;
+            v.proxy = proxy.map(String::from);
+            Ok(v)
+        };
+        let mut s = Settings::default();
+        s.apply(with(Some(" socks5://127.0.0.1:18080 "))?);
+        assert_eq!(s.proxy, "socks5://127.0.0.1:18080");
+        assert!(s.proxy_on);
+        // Кнопкой выключили, потом сменили порт — так и остаётся выключенным.
+        s.proxy_on = false;
+        s.apply(with(Some("socks5://127.0.0.1:18081"))?);
+        assert!(!s.proxy_on);
+        // Без поля — не трогаем.
+        s.apply(with(None)?);
+        assert_eq!(s.proxy, "socks5://127.0.0.1:18081");
+        // Убрали адрес — выключен.
+        s.proxy_on = true;
+        s.apply(with(Some(""))?);
+        assert!(s.proxy.is_empty() && !s.proxy_on);
         Ok(())
     }
 }

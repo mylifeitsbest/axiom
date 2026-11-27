@@ -279,6 +279,7 @@ input,textarea,select{font:inherit;color:inherit}
 .ai-title .i{color:var(--acc)}
 .pdot{width:6px;height:6px;border-radius:50%;background:var(--t3);transition:background-color var(--d2)}
 .pdot.on{background:#2fb67c}
+.pdot.down{background:#e5484d}
 .ai-body{position:relative;flex:1;min-height:0;margin:0 4px 4px;border-radius:calc(var(--r) - 3px);background:var(--pg)}
 .ai-skel{position:absolute;inset:18px;display:flex;flex-direction:column;gap:12px}
 .ai-skel i{height:8px;border-radius:4px;background:var(--s2);animation:pulse 1.2s ease-in-out infinite}
@@ -632,6 +633,19 @@ kbd{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 
 /* Включено — кружка закрашена акцентом. */
 .awake.on .i .f{fill:currentColor}
 .omni.focus .awake,.omni.find .awake{display:none}
+
+/* ---------- прокси (кнопка на панели) ---------- */
+/* Включён — акцентная подложка, щит закрашен и зелёная точка; ждёт ответа прокси или
+   перезапуска — серая точка; не отвечает — всё красное, точка мигает. */
+.net{position:relative}
+.net .i .f{transition:fill var(--d2)}
+.acts .net.on .i .f{fill:color-mix(in oklab,currentColor 24%,transparent)}
+.net::after{content:'';position:absolute;right:3px;top:3px;width:6px;height:6px;border-radius:50%;background:var(--t3);box-shadow:0 0 0 1.5px var(--bg);opacity:0;transform:scale(.4);transition:opacity var(--d2),transform var(--d2) var(--sp),background-color var(--d2);pointer-events:none}
+.net.on::after{background:#2fb67c;opacity:1;transform:none}
+.net.wait::after{background:var(--t3);opacity:1;transform:none;animation:pulse calc(1.2s*max(var(--k),.5)) ease-in-out infinite}
+.acts .net.on.down,.acts .net.on.down:hover{color:#e5484d;background:color-mix(in oklab,#e5484d 16%,transparent)}
+.net.down::after{background:#e5484d;animation:pulse calc(1.2s*max(var(--k),.5)) ease-in-out infinite}
+.net.flip>.i{animation:pop var(--d2) var(--sp)}
 
 /* ---------- двойной поиск ---------- */
 /* Включён — акцентная подложка (как у переведённой страницы). */

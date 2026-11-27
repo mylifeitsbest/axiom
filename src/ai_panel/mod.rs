@@ -1,22 +1,21 @@
 //! Боковая панель Google AI Mode.
 //!
-//! Панель живёт в отдельном окружении WebView2 (своя папка данных),
-//! поэтому прокси применяется только к ней, а вкладки ходят напрямую.
+//! Панель живёт в общем окружении со вкладками (те же входы и тот же прокси —
+//! кнопка на панели, см. `net`): отдельное стоило бы целого набора служебных
+//! процессов WebView2 (~100 МБ).
 
 pub mod follow;
 pub mod pages;
-pub mod proxy;
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tao::{event_loop::EventLoopProxy, window::Window};
-use wry::{ProxyConfig, Rect, WebContext, WebView, WebViewBuilder};
+use wry::{Rect, WebContext, WebView, WebViewBuilder};
 
 use crate::{
     downloads,
     events::UserEvent,
-    storage::Paths,
     tabs::{
         omnibox,
         webview::{Look, styled},
@@ -33,63 +32,27 @@ pub struct AiPanel {
     pub mode: follow::Mode,
     /// Запрос, загруженный в панель (`None` — стартовая страница AI Mode).
     query: Option<String>,
-    context: Option<WebContext>,
-    proxy_raw: String,
+}
+
+impl Default for AiPanel {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AiPanel {
-    pub fn new(proxy_raw: &str) -> Self {
+    pub fn new() -> Self {
         Self {
             open: false,
             webview: None,
             hidden_since: None,
             mode: follow::Mode::Closed,
             query: None,
-            context: None,
-            proxy_raw: proxy_raw.to_string(),
         }
-    }
-
-    pub fn has_proxy(&self) -> bool {
-        !self.proxy_raw.is_empty()
-    }
-
-    pub fn proxy_config(&self) -> Option<ProxyConfig> {
-        proxy::parse(&self.proxy_raw).ok().flatten()
-    }
-
-    /// Меняет прокси: старое окружение уничтожается, новое создастся при открытии.
-    pub fn set_proxy(&mut self, proxy_raw: &str) {
-        if self.proxy_raw != proxy_raw {
-            self.proxy_raw = proxy_raw.to_string();
-            self.webview = None;
-            self.context = None;
-        }
-    }
-
-    /// Окружение панели ИИ, общее с вкладками «из ИИ».
-    ///
-    /// Без прокси панель живёт в общем окружении со вкладками: это экономит
-    /// целый набор служебных процессов WebView2 (~100 МБ). С прокси — отдельное
-    /// окружение со своей папкой данных, иначе прокси применился бы ко всем вкладкам.
-    pub fn context<'a>(
-        &'a mut self,
-        paths: &Paths,
-        shared: &'a mut WebContext,
-    ) -> &'a mut WebContext {
-        if self.proxy_raw.is_empty() {
-            return shared;
-        }
-        let key = proxy::data_key(&self.proxy_raw);
-        self.context.get_or_insert_with(|| {
-            let dir = paths.ai_data(&key);
-            let _ = crate::storage::private_dir(&dir);
-            WebContext::new(Some(dir))
-        })
     }
 
     /// Запрос, ответ на который сейчас в панели. Панель без webview (уснула,
-    /// сменился прокси, открепилась во вкладку) не показывает ничего.
+    /// открепилась во вкладку) не показывает ничего.
     pub fn shown_query(&self) -> Option<&str> {
         self.webview.as_ref().and(self.query.as_deref())
     }
@@ -100,8 +63,7 @@ impl AiPanel {
     pub fn show(
         &mut self,
         window: &Window,
-        paths: &Paths,
-        shared: &mut WebContext,
+        context: &mut WebContext,
         events: &EventLoopProxy<UserEvent>,
         query: Option<&str>,
         bounds: Option<Rect>,
@@ -118,9 +80,7 @@ impl AiPanel {
                 }
             }
             None => {
-                let proxy = self.proxy_config();
                 let start = query.map_or_else(|| omnibox::AI_HOME.to_string(), omnibox::ai_url);
-                let context = self.context(paths, shared);
                 // Адрес — после сборки: сначала должен встать запрет на локальную сеть.
                 let builder = WebViewBuilder::new_with_web_context(context)
                     .with_bounds(bounds.unwrap_or_default())
@@ -156,10 +116,10 @@ impl AiPanel {
                             wry::NewWindowResponse::Deny
                         }
                     });
-                let builder = styled(builder, look, proxy.as_ref());
+                let builder = styled(builder, look);
                 let builder = downloads::attach(builder, events);
                 // Linux: расширение веб-процесса не даёт панели обращаться к локальной сети
-                // (как и вкладкам). Без прокси окружение общее, и оно там уже есть.
+                // (как и вкладкам). Окружение общее, и оно там уже есть.
                 let builder = crate::tabs::identity::with_extension(builder);
                 let webview = crate::tabs::webview::build_child(builder, window)
                     .context("не удалось создать панель ИИ")?;

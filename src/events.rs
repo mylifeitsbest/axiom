@@ -25,6 +25,8 @@ pub enum UserEvent {
     Adblock(crate::adblock::Event),
     /// Магазин плагинов: каталог, скачанный плагин, итог публикации.
     Market(crate::plugins::market::Event),
+    /// Прокси вкладок перестал или снова начал отвечать (`net::relay`).
+    Proxy(crate::net::Health),
     /// Кнопку плагина нажали, а на странице активной вкладки его нет.
     PluginMissed {
         tab: TabId,

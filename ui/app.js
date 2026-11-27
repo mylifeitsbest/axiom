@@ -53,10 +53,10 @@
   const FAV_COLORS = ['#7F77DD', '#1D9E75', '#D85A30', '#378ADD', '#D4537E', '#BA7517', '#639922', '#534AB7'];
 
   // ---------- состояние ----------
-  const S = { tabs: [], active: null, aiOpen: false, aiProxy: false, canRestore: false, topSites: null, maximized: false };
+  const S = { tabs: [], active: null, aiOpen: false, canRestore: false, topSites: null, maximized: false };
   let A = { ...DEFAULTS };
   // no_sleep_sites: null — настройки ещё не пришли, Rust список не трогает.
-  let B = { double_search: true, ai_proxy: '', ai_new_chat: true, sleep_minutes: 5, live_tabs: 3, no_sleep_sites: null, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, usage_stats: true, adblock: true, adblock_updates: true, search_suggest: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
+  let B = { double_search: true, proxy: '', ai_new_chat: true, sleep_minutes: 5, live_tabs: 3, no_sleep_sites: null, onboarded: true, check_updates: true, strip_tracking: true, crash_reports: true, usage_stats: true, adblock: true, adblock_updates: true, search_suggest: true, search_engine: 'duckduckgo', search_custom: '', user_agent: 'default', user_agent_custom: '', referer: 'default', referer_custom: '' };
   let SYS = { installed: false, default_browser: false, chrome_found: false, can_install: false, version: '' };
   let aiReady = false;
   let prevActive = null;
@@ -374,7 +374,7 @@
         search_engine: String(B.search_engine || 'duckduckgo'),
         search_custom: String(B.search_custom || ''),
         double_search: !!B.double_search,
-        ai_proxy: String(B.ai_proxy || ''),
+        proxy: String(B.proxy || ''),
         ai_new_chat: B.ai_new_chat !== false,
         sleep_minutes: Math.round(clamp(B.sleep_minutes, 0, 1440, 5)),
         live_tabs: Math.round(clamp(B.live_tabs, 0, 30, 3)),
@@ -1035,13 +1035,50 @@
     findTimer = setTimeout(() => send({ cmd: 'find', q, backwards: !!backwards }), 60);
   }
 
+  // ---------- прокси ----------
+  // Кнопка видна, когда в «Настройки → Сеть» задан адрес. Нажатие включает и
+  // выключает прокси сразу (Rust переключает свой релей), правый клик — настройки.
+  let N = { shown: false, on: false, state: 'off', addr: '', env: false };
+  function renderNet() {
+    const b = $('#netBtn');
+    const restart = N.state === 'restart';
+    const down = N.on && N.state === 'down';
+    b.hidden = !N.shown;
+    b.classList.toggle('on', N.on && !restart);
+    b.classList.toggle('down', down);
+    b.classList.toggle('wait', restart || (N.on && N.state === 'checking'));
+    b.setAttribute('aria-pressed', String(N.on && !restart));
+    const addr = N.addr.replace(/^socks5h?:\/\//i, '').replace(/^http:\/\//i, '');
+    b.title = restart ? 'Прокси заработает после перезапуска Axiom'
+      : down ? `Прокси ${addr} не отвечает — страницы не откроются. Нажмите, чтобы выключить`
+      : N.on ? `Прокси включён: вкладки идут через ${addr}. Нажмите, чтобы выключить`
+      : `Прокси выключен: вкладки идут напрямую. Нажмите, чтобы пустить их через ${addr}`;
+    b.title += '\nПравый клик — настройки прокси';
+    // Панель ИИ ходит так же, как вкладки.
+    const via = N.on && !restart;
+    $('#pdot').classList.toggle('on', via && !down);
+    $('#pdot').classList.toggle('down', via && down);
+    $('#pdot').title = !via ? 'Без прокси' : down ? 'Прокси не отвечает' : 'Через прокси';
+  }
+  $('#netBtn').addEventListener('click', () => {
+    const b = $('#netBtn');
+    if (N.state !== 'restart') {
+      // Сразу видно нажатие; настоящее состояние Rust пришлёт следом.
+      N = { ...N, on: !N.on, state: N.on ? 'off' : 'checking' };
+      renderNet();
+      b.classList.remove('flip');
+      void b.offsetWidth;
+      b.classList.add('flip');
+    }
+    send({ cmd: 'proxy', on: N.on });
+  });
+  $('#netBtn').addEventListener('contextmenu', (e) => { e.preventDefault(); openSettings('network'); });
+
   // ---------- панель ИИ ----------
   let aiTimer;
   function renderAi() {
     $('#aiBtn').classList.toggle('on', S.aiOpen);
     $('#aiBtn').title = S.aiOpen ? 'Закрыть AI Mode (Ctrl+K)' : 'AI Mode: спросить ИИ (Ctrl+K)';
-    $('#pdot').classList.toggle('on', S.aiProxy);
-    $('#pdot').title = S.aiProxy ? 'Через прокси' : 'Без прокси';
     if (S.aiOpen === app.classList.contains('ai-open')) return;
     clearTimeout(aiTimer);
     aiReady = false;
@@ -1267,7 +1304,7 @@
     settings(m) {
       const s = m.settings || {};
       A = { ...DEFAULTS, ...(isObj(s.appearance) ? s.appearance : {}) };
-      B = { double_search: s.double_search !== false, ai_proxy: s.ai_proxy || '', ai_new_chat: s.ai_new_chat !== false, sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, no_sleep_sites: sitesIn(s.no_sleep_sites), onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, usage_stats: s.usage_stats !== false, adblock: s.adblock !== false, adblock_updates: s.adblock_updates !== false, search_suggest: s.search_suggest !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
+      B = { double_search: s.double_search !== false, proxy: s.proxy || '', ai_new_chat: s.ai_new_chat !== false, sleep_minutes: s.sleep_minutes ?? 5, live_tabs: s.live_tabs ?? 3, no_sleep_sites: sitesIn(s.no_sleep_sites), onboarded: !!s.onboarded, force_dark: !!s.force_dark, check_updates: s.check_updates !== false, strip_tracking: s.strip_tracking !== false, crash_reports: s.crash_reports !== false, usage_stats: s.usage_stats !== false, adblock: s.adblock !== false, adblock_updates: s.adblock_updates !== false, search_suggest: s.search_suggest !== false, beta: typeof s.beta === 'boolean' ? s.beta : null, gpu: s.gpu || 'auto', search_engine: s.search_engine || 'duckduckgo', search_custom: s.search_custom || '', user_agent: s.user_agent || 'default', user_agent_custom: s.user_agent_custom || '', referer: s.referer || 'default', referer_custom: s.referer_custom || '' };
       tr.onSettings(s.translate);
       applyAppearance();
       if (firstSettings) {
@@ -1296,7 +1333,6 @@
         tabs: Array.isArray(m.tabs) ? m.tabs : [],
         active: m.active,
         aiOpen: !!m.ai_open,
-        aiProxy: !!m.ai_proxy,
         canRestore: !!m.can_restore,
         // Плитки приходят только для новой вкладки (null — открыта страница).
         topSites: Array.isArray(m.top_sites) ? m.top_sites : S.topSites,
@@ -1313,6 +1349,11 @@
       if (m.q !== sugQ || mode !== 'url' || document.activeElement !== sugSrc) return;
       sugRemote = { q: m.q, items: m.items || [] };
       if (!sugNav) renderSug();
+    },
+    proxy(m) {
+      N = { shown: !!m.shown, on: !!m.on, state: String(m.state || 'off'), addr: String(m.addr || ''), env: !!m.env };
+      renderNet();
+      panels.onProxy(N);
     },
     hotkey(m) { hotkey(m.action); },
     find(m) { omni.classList.toggle('nf', !m.found); },

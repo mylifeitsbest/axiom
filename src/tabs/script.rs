@@ -23,7 +23,7 @@ use wry::WebView;
 /// Выполняет скрипт, ответ не нужен. `false` — до страницы не дошло.
 #[cfg(windows)]
 pub fn run(webview: &WebView, js: &str) -> bool {
-    evaluate(webview, js, false, |_| ())
+    evaluate(webview, js, false, false, |_| ())
 }
 
 /// Выполняет скрипт как действие пользователя. Только в ответ на клик человека в
@@ -32,7 +32,7 @@ pub fn run(webview: &WebView, js: &str) -> bool {
 /// Страница после этого несколько секунд считается «кликнутой» (см. описание модуля).
 #[cfg(windows)]
 pub fn run_as_click(webview: &WebView, js: &str) -> bool {
-    evaluate(webview, js, true, |_| ())
+    evaluate(webview, js, true, false, |_| ())
 }
 
 /// Выполняет скрипт и отдаёт его значение в JSON, как `evaluate_script_with_callback`:
@@ -40,7 +40,15 @@ pub fn run_as_click(webview: &WebView, js: &str) -> bool {
 /// `false` — до страницы не дошло, ответа не будет.
 #[cfg(windows)]
 pub fn ask(webview: &WebView, js: &str, reply: impl Fn(String) + Send + 'static) -> bool {
-    evaluate(webview, js, false, reply)
+    evaluate(webview, js, false, false, reply)
+}
+
+/// Как [`ask`], но если скрипт вернул обещание — ответ, когда оно исполнится (островок
+/// ждёт, пока страница нарисует видео). Обещание должно исполниться само, со своим
+/// пределом по времени.
+#[cfg(windows)]
+pub fn ask_after(webview: &WebView, js: &str, reply: impl Fn(String) + Send + 'static) -> bool {
+    evaluate(webview, js, false, true, reply)
 }
 
 #[cfg(not(windows))]
@@ -59,11 +67,18 @@ pub fn ask(webview: &WebView, js: &str, reply: impl Fn(String) + Send + 'static)
     webview.evaluate_script_with_callback(js, reply).is_ok()
 }
 
+/// WebKitGTK обещаний здесь не ждёт: ответ сразу, как у [`ask`].
+#[cfg(not(windows))]
+pub fn ask_after(webview: &WebView, js: &str, reply: impl Fn(String) + Send + 'static) -> bool {
+    ask(webview, js, reply)
+}
+
 #[cfg(windows)]
 fn evaluate(
     webview: &WebView,
     js: &str,
     gesture: bool,
+    wait: bool,
     reply: impl FnOnce(String) + 'static,
 ) -> bool {
     use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
@@ -84,7 +99,7 @@ fn evaluate(
     unsafe {
         webview.webview().CallDevToolsProtocolMethod(
             &HSTRING::from("Runtime.evaluate"),
-            &HSTRING::from(params(js, gesture)),
+            &HSTRING::from(params(js, gesture, wait)),
             &handler,
         )
     }
@@ -93,15 +108,15 @@ fn evaluate(
 
 /// Параметры `Runtime.evaluate`.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn params(js: &str, gesture: bool) -> String {
+fn params(js: &str, gesture: bool, wait: bool) -> String {
     serde_json::json!({
         "expression": js,
         // Главное: скрипт браузера — не действие человека (кроме `run_as_click`).
         "userGesture": gesture,
         // Ответ — сразу значением: в странице не остаются ссылки на объекты.
         "returnByValue": true,
-        // Как `ExecuteScript`: обещание отдаётся как есть, его не ждём.
-        "awaitPromise": false,
+        // Как `ExecuteScript`: обещание отдаётся как есть, его не ждём (кроме `ask_after`).
+        "awaitPromise": wait,
         // Ошибка в скрипте не останавливает отладчик и не пишется в консоль сайта.
         "silent": true,
     })
@@ -143,14 +158,20 @@ mod tests {
     #[test]
     fn params_without_gesture() {
         let js = r#"window.find("a\"b", false)"#;
-        let p: serde_json::Value = serde_json::from_str(&params(js, false)).unwrap_or_default();
+        let p: serde_json::Value =
+            serde_json::from_str(&params(js, false, false)).unwrap_or_default();
         assert_eq!(p["expression"], js);
         assert_eq!(p["userGesture"], false);
         assert_eq!(p["returnByValue"], true);
         assert_eq!(p["awaitPromise"], false);
         assert_eq!(p["silent"], true);
-        let click: serde_json::Value = serde_json::from_str(&params(js, true)).unwrap_or_default();
+        let click: serde_json::Value =
+            serde_json::from_str(&params(js, true, false)).unwrap_or_default();
         assert_eq!(click["userGesture"], true);
+        let wait: serde_json::Value =
+            serde_json::from_str(&params(js, false, true)).unwrap_or_default();
+        assert_eq!(wait["awaitPromise"], true);
+        assert_eq!(wait["userGesture"], false);
     }
 
     #[test]

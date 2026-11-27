@@ -967,6 +967,18 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 /* Под чёлкой видео (остров ставит src/tabs/mini.rs): чёлка шириной с него,
    его верх заходит под её скругление. Кнопки — прямо в чёлке. */
 .isl.vid{width:400px;border-radius:0 0 10px 10px}
+/* Чёлка раздаётся и сужается в такт острову с видео: те же длительность и кривая, что
+   у него (OPEN и CLOSE в src/tabs/mini.rs), и без пружинки — перелетев, чёлка стала бы
+   шире острова. Карточка в боковой панели (.isl.panel ниже) ширины не меняет. */
+.isl.vid,.isl.vid-out{transition:transform calc(420ms*var(--k)) var(--sp),opacity calc(220ms*var(--k)),width calc(var(--vd)*var(--k)) var(--ve),height calc(460ms*var(--k)) var(--sp),border-radius calc(var(--vd)*var(--k)) var(--ve),left calc(300ms*var(--k)) var(--e)}
+.isl.vid{--vd:460ms;--ve:cubic-bezier(.3,.3,0,1)}
+.isl.vid-out{--vd:300ms;--ve:cubic-bezier(.4,0,.2,1)}
+/* Кнопки видео появляются в чёлке, пока она раздаётся, а не разом (island.js: .swap). */
+.isl-r.swap>*{animation:islSwap calc(320ms*var(--k)) var(--e) both}
+.isl-r.swap>:nth-child(2){animation-delay:calc(30ms*var(--k))}
+.isl-r.swap>:nth-child(3){animation-delay:calc(60ms*var(--k))}
+.isl-r.swap>:nth-child(n+4){animation-delay:calc(90ms*var(--k))}
+@keyframes islSwap{from{opacity:0;transform:scale(.6)}}
 .isl.vid .isl-t{text-align:left}
 .isl.vid .isl-r{display:flex;align-items:center;gap:1px;width:auto;height:24px}
 /* Linux: чёлка раскрыта вширь — те же кнопки прямо в ней, но видео под ней нет:
@@ -1021,6 +1033,9 @@ button.trp-row .i{width:15px;height:15px;color:var(--t2)}
 .isl-p .ib.big{width:30px;height:30px;border-radius:50%}
 .isl-p .ib.big .i{width:17px;height:17px}
 .isl-gap{flex:none;height:30px;transition:width calc(420ms*var(--k)) var(--e)}
+/* Вкладки расступаются под видео и смыкаются в такт чёлке (.isl.vid и .isl.vid-out). */
+.isl-gap.vid{transition:width calc(460ms*var(--k)) cubic-bezier(.3,.3,0,1)}
+.isl-gap.vid-out{transition:width calc(300ms*var(--k)) cubic-bezier(.4,0,.2,1)}
 /* Вкладки сбоку, островок «Сверху»: страница опускается на полосу под чёлку. */
 .app.isl-strip .content{margin-top:32px}
 .app.isl-strip-mini .content{margin-top:10px}

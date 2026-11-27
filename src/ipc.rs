@@ -68,7 +68,9 @@ impl Rect {
 }
 
 /// Чёлка островка в окне (логические px): середина, верх острова с видео и его ширина,
-/// верх самой чёлки (у карточки в боковой панели — не край окна).
+/// верх самой чёлки (у карточки в боковой панели — не край окна), ширина чёлки, пока
+/// видео нет (`from`, 0 — как у острова: из неё остров раздаётся вширь), и скорость
+/// анимаций интерфейса (`speed`, 0 — без анимаций): остров выезжает в такт чёлке.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct IslandDock {
     pub cx: f64,
@@ -76,14 +78,25 @@ pub struct IslandDock {
     pub width: f64,
     #[serde(default)]
     pub notch_top: f64,
+    #[serde(default)]
+    pub from: f64,
+    #[serde(default = "one")]
+    pub speed: f64,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 impl IslandDock {
     fn validate(&self) -> Result<(), IpcError> {
-        let ok = [self.cx, self.top, self.width, self.notch_top]
+        let ok = [self.cx, self.top, self.width, self.notch_top, self.from]
             .iter()
             .all(|v| v.is_finite() && (0.0..=100_000.0).contains(v))
             && (120.0..=2000.0).contains(&self.width)
+            && self.from <= 2000.0
+            && self.speed.is_finite()
+            && (0.0..=3.0).contains(&self.speed)
             && self.notch_top <= self.top;
         if ok {
             Ok(())
@@ -1194,6 +1207,25 @@ mod tests {
         ));
         assert!(
             parse(r#"{"cmd":"island_dock","dock":{"cx":120,"top":80,"width":228,"notch_top":86}}"#)
+                .is_err()
+        );
+        // Ширина чёлки без видео и скорость анимаций; без них — как раньше (скорость 1).
+        match parse(
+            r#"{"cmd":"island_dock","dock":{"cx":960,"top":22,"width":400,"from":240,"speed":0}}"#,
+        ) {
+            Ok(UiCmd::IslandDock { dock: Some(d) }) => assert_eq!((d.from, d.speed), (240.0, 0.0)),
+            other => panic!("{other:?}"),
+        }
+        match parse(r#"{"cmd":"island_dock","dock":{"cx":960,"top":22,"width":400}}"#) {
+            Ok(UiCmd::IslandDock { dock: Some(d) }) => assert_eq!((d.from, d.speed), (0.0, 1.0)),
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            parse(r#"{"cmd":"island_dock","dock":{"cx":960,"top":22,"width":400,"speed":9}}"#)
+                .is_err()
+        );
+        assert!(
+            parse(r#"{"cmd":"island_dock","dock":{"cx":960,"top":22,"width":400,"from":-1}}"#)
                 .is_err()
         );
     }
